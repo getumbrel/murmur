@@ -20,9 +20,9 @@
      stay far enough apart to read as two steps of hierarchy. */
   --ink-2: rgb(14 14 16 / 0.7);
   --ink-3: rgb(14 14 16 / 0.58);
-  --fill-1: rgb(0 0 0 / 0.035);
-  --fill-2: rgb(0 0 0 / 0.06);
-  --fill-3: rgb(0 0 0 / 0.1);
+  --fill-1: rgb(0 0 0 / 0.05);
+  --fill-2: rgb(0 0 0 / 0.075);
+  --fill-3: rgb(0 0 0 / 0.11);
   /* An opaque fill (for disabled buttons that float over content). */
   --fill-solid: color-mix(in oklab, var(--ink) 9%, var(--bg));
   --line: rgb(0 0 0 / 0.08);
