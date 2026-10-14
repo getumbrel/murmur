@@ -9,6 +9,7 @@ import { api, HermesError } from '@/hermes/rest'
 import { rpc } from '@/hermes/gateway'
 import type { ApiKeyService, ChatGPTFlow, LocalModel, LocalServer } from '@/features/onboarding/connect'
 import { readinessKey, type RuntimeCheck } from './readiness'
+import { freshenModels } from '@/features/model/use-models'
 
 // ── What's connected ────────────────────────────────────────────────────────
 
@@ -52,9 +53,12 @@ const NAMES: Record<string, string> = {
 export const modelsKey = ['models'] as const
 
 export function useModels() {
+  const qc = useQueryClient()
   return useQuery({
     queryKey: modelsKey,
     queryFn: async (): Promise<Models> => {
+      // A first look can be an hour old (see freshenModels): fetch them fresh too, then show those.
+      freshenModels('/api/model/options', () => void qc.invalidateQueries({ queryKey: modelsKey }))
       const [options, oauth, env, custom] = await Promise.all([
         api.get<Options>('/api/model/options'),
         api.get<{ providers: OAuthRow[] }>('/api/providers/oauth').catch(() => ({ providers: [] })),

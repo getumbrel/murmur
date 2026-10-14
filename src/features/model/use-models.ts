@@ -5,6 +5,21 @@ import { serviceName } from './names'
 
 export type ModelPick = { model: string; provider: string }
 
+// Hermes answers a plain /api/model/options from each provider's model list
+// as it last saw it (kept on disk for an hour) and only refreshes stale lists
+// in the background, so a first look can miss models a service added since:
+// the newest ChatGPT ones, say. The first time each list is shown, Murmur also
+// asks Hermes to fetch them fresh, then shows what came back.
+const freshened = new Set<string>()
+
+/** Ask Hermes once per page load to fetch a list's models fresh, then reload it. */
+export function freshenModels(path: string, reload: () => void) {
+  if (freshened.has(path)) return
+  freshened.add(path)
+  const join = path.includes('?') ? '&' : '?'
+  void api.get(`${path}${join}refresh=true`).then(reload, () => freshened.delete(path))
+}
+
 export type ModelGroup = {
   provider: string
   name: string
@@ -25,12 +40,15 @@ type Options = {
 
 /** Every model this agent can use right now, grouped by the service it comes from. */
 export function useModelOptions(profile: string | undefined) {
+  const qc = useQueryClient()
   return useQuery({
     queryKey: ['model-options', profile],
     enabled: Boolean(profile),
     staleTime: 5 * 60_000,
     queryFn: async () => {
-      const res = await api.get<Options>(`/api/model/options?profile=${encodeURIComponent(profile!)}`)
+      const path = `/api/model/options?profile=${encodeURIComponent(profile!)}`
+      const res = await api.get<Options>(path)
+      freshenModels(path, () => void qc.invalidateQueries({ queryKey: ['model-options', profile] }))
       const groups: ModelGroup[] = res.providers
         // "moa" is a virtual blend of other models, not something to pick.
         .filter((p) => p.slug !== 'moa' && p.authenticated !== false && p.models.length > 0)
