@@ -8,7 +8,7 @@ import { MurmurMark } from '@/ui/brand'
 import { startGateway } from '@/hermes/gateway'
 import { wireChats } from '@/state/chats'
 import { wireSessionLists } from '@/state/sync'
-import { useReadiness } from '@/state/readiness'
+import { markWelcomed, useReadiness } from '@/state/readiness'
 import { useAgents, useFreshAgents } from '@/state/agents'
 import { usePicturesSync } from '@/state/pictures'
 import { useUmbrelContextSync } from '@/state/umbrel-context'
@@ -132,13 +132,20 @@ function Gate({ children }: { children: ReactNode }) {
   const [location, navigate] = useLocation()
   // Settings → Hermes stays open during setup: it's how you leave a Hermes that has no model yet.
   const onboarding = location.startsWith('/welcome') || location === '/settings/hermes'
-  const away = (readiness === 'needs-setup' || readiness === 'needs-welcome') && !onboarding
-  useEffect(() => {
-    if (away) navigate('/welcome', { replace: true })
-  }, [away, navigate])
   // Hold for the roster too, so the app arrives whole and the splash mark has somewhere to land.
   // Groups are part of it (or they'd push rows down a beat later), but never worth a long wait.
   const agents = useAgents()
+  // The welcome is for someone new to Murmur. A Hermes already in use (set up
+  // on another device, or in Hermes's own apps) goes straight in here too.
+  const inUse = agents.data && (agents.data.length > 1 || agents.data.some((a) => a.lastChat))
+  useEffect(() => {
+    if (readiness === 'needs-welcome' && inUse) markWelcomed()
+  }, [readiness, inUse])
+  const welcome = readiness === 'needs-welcome' && agents.data !== undefined && !inUse
+  const away = (readiness === 'needs-setup' || welcome) && !onboarding
+  useEffect(() => {
+    if (away) navigate('/welcome', { replace: true })
+  }, [away, navigate])
   const groups = useGroupSummaries()
   const [groupsLate, setGroupsLate] = useState(false)
   useEffect(() => {
