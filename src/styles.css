@@ -790,3 +790,44 @@ html[data-desktop] [data-sidebar] ~ [role='main'] [data-window-gap='start'] {
 @utility hairline-r {
   box-shadow: inset -0.5px 0 0 var(--line-strong);
 }
+
+/* The link drawn between an Umbrel and its agents (Settings → Umbrel, the
+   chat's connect card). Not yet joined: a dotted line drifting toward the
+   agents. Joined: solid accent, with a glint that runs along it now and then. */
+.umbrel-link {
+  background-image: linear-gradient(90deg, var(--line-strong) 50%, transparent 0);
+  background-size: 6px 100%;
+  animation: umbrel-drift 1.4s linear infinite;
+}
+@keyframes umbrel-drift {
+  to {
+    background-position: 6px 0;
+  }
+}
+.umbrel-link-fill {
+  background: var(--accent);
+}
+.umbrel-link-fill::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  width: 45%;
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.9), transparent);
+  transform: translateX(-120%);
+  animation: umbrel-glint 3.6s cubic-bezier(0.45, 0, 0.55, 1) 0.8s infinite;
+}
+@keyframes umbrel-glint {
+  0% {
+    transform: translateX(-120%);
+  }
+  30%,
+  100% {
+    transform: translateX(260%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .umbrel-link,
+  .umbrel-link-fill::after {
+    animation: none;
+  }
+}

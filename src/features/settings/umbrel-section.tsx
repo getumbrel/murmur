@@ -127,19 +127,20 @@ function Hero({ agents, on }: { agents: Agent[]; on: boolean }) {
     <div className="flex flex-col items-center pt-2 text-center">
       <div className="flex items-center">
         <UmbrelIcon size={64} className="drop-shadow-[0_6px_14px_rgb(91_66_255/0.28)]" />
-        {/* The link between them: dotted while it's only a promise, solid once it's real. */}
-        <span
-          aria-hidden
-          className={cn(
-            'mx-3 h-0.5 w-10 rounded-full transition-colors duration-500',
-            on ? 'bg-accent' : 'bg-[length:6px_2px] bg-[linear-gradient(90deg,var(--line-strong)_50%,transparent_0)]',
-          )}
-        />
+        {/* The link between them: dotted and drifting while it's only a promise, drawn solid once it's real. */}
+        <span aria-hidden className="umbrel-link relative mx-3.5 h-[3px] w-12 overflow-hidden rounded-full">
+          <motion.span
+            className="umbrel-link-fill absolute inset-0 origin-left rounded-full"
+            initial={false}
+            animate={{ scaleX: on ? 1 : 0 }}
+            transition={{ type: 'spring', duration: 0.7, bounce: 0 }}
+          />
+        </span>
         <OrbStack
           hues={agents.map((a) => a.hue)}
           seeds={agents.map((a) => a.id)}
           states={agents.map(() => (on ? 'done' : 'idle'))}
-          size={56}
+          size={64}
         />
       </div>
       <h2 className="mt-5 text-title font-semibold tracking-[-0.02em]">
@@ -179,9 +180,7 @@ function ConnectForm({
     <div className="space-y-6">
       <ListGroup footer="Turn it on, choose what agents can use, then copy what it shows.">
         <ListRow
-          icon={
-            <UmbrelIcon size={29} />
-          }
+          icon={<UmbrelIcon size={29} />}
           title="Open AI agents in umbrelOS"
           onClick={openUmbrelOS}
           trailing={<ArrowUpRight size={18} className="-mr-1 flex-none text-ink-3" />}
@@ -273,7 +272,15 @@ function AgentList({ agents, has, working }: { agents: Agent[]; has: (id: string
             title={a.name}
             trailing={
               done ? (
-                <Check size={18} strokeWidth={2.5} className="flex-none text-success" aria-label="Connected" />
+                <motion.span
+                  // Each check lands as its agent connects; ones already there just are.
+                  initial={working ? { scale: 0.4, opacity: 0 } : false}
+                  animate={{ scale: 1, opacity: 1 }}
+                  transition={{ type: 'spring', duration: 0.45, bounce: 0.45 }}
+                  className="flex flex-none"
+                >
+                  <Check size={18} strokeWidth={2.5} className="text-success" aria-label="Connected" />
+                </motion.span>
               ) : working ? (
                 <Spinner />
               ) : (

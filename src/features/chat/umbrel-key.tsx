@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import { useQueryClient } from '@tanstack/react-query'
 import { ArrowUpRight, Check, X } from 'lucide-react'
@@ -160,15 +160,19 @@ function UmbrelKeyCard({
       {/* The Umbrel, the agent, and the link drawn between them. */}
       <div className="flex flex-none items-center" aria-hidden>
         <UmbrelIcon size={36} />
-        <span className="relative mx-1 h-0.5 w-4 overflow-hidden rounded-full bg-[length:5px_2px] bg-[linear-gradient(90deg,var(--line-strong)_50%,transparent_0)]">
+        <span className="umbrel-link relative mx-1 h-0.5 w-4 overflow-hidden rounded-full">
           <motion.span
-            className="absolute inset-0 origin-left rounded-full bg-accent"
+            className="umbrel-link-fill absolute inset-0 origin-left rounded-full"
             initial={false}
             animate={{ scaleX: progress }}
             transition={{ type: 'spring', duration: 0.6, bounce: 0 }}
           />
         </span>
-        <span className="relative">
+        {/* While it offers, the agent glances over at the Umbrel. */}
+        <span
+          className="relative"
+          style={phase === null ? ({ '--bd-gaze-x': -0.06, '--bd-lean': '-5deg' } as CSSProperties) : undefined}
+        >
           <Orb
             hue={agent.hue}
             seed={agent.id}
