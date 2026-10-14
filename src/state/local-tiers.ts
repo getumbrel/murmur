@@ -200,7 +200,7 @@ export const usable = (hw: Hardware) => (hw.uma ? hw.vramUsable : hw.vramUsable 
 //   the model's own 256K) as far as its estimate fits 80% of the RAM the
 //   machine has (hardware.probe_budget(planning=True)). Upstream stops there,
 //   so a 16 GB machine starts the 4B at 256K however little is free.
-//   Umbrel's image (hermes-agent-umbrel v0.22.0-3, which Murmur ships) also
+//   Umbrel's image (hermes-agent-umbrel v0.22.0-4, which Murmur ships) also
 //   narrows unified memory to 80% of what's free, never below 64K, and grows
 //   the window again when memory frees up.
 // - What that window really costs. llama.cpp zeroes the whole KV cache when it
