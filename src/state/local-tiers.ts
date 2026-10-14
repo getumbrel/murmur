@@ -21,12 +21,12 @@ const MIB = 1 << 20
 const GIB = 1 << 30
 
 /** Hermes's minimum window (context_policy.FLOOR). */
-const FLOOR = 64 * 1024
+export const FLOOR = 64 * 1024
 /** q8_0 KV with flash attention, per f16 byte (estimator.kv_dtype_factor). */
-const Q8 = 34 / 32 / 2
+export const Q8 = 34 / 32 / 2
 const RECURRENT_STATE = 4 * MIB
 /** context_policy.RUNTIME_OVERHEAD_BYTES. */
-const OVERHEAD = 1.5 * GIB
+export const OVERHEAD = 1.5 * GIB
 
 export type Speed = 'Fastest' | 'Fast' | 'Steady' | 'Slow'
 export type Smarts = 'Basic' | 'Good' | 'Smart' | 'Smarter' | 'Smartest'
@@ -34,8 +34,8 @@ export type Smarts = 'Basic' | 'Good' | 'Smart' | 'Smarter' | 'Smartest'
 export type Source =
   /** A Hermes catalog entry: one quickstart job installs, downloads and switches to it. */
   | { catalog: string }
-  /** A file from Hugging Face, through Hermes's download-browsed. */
-  | { repo: string; file: string }
+  /** A file from Hugging Face, through Hermes's download-browsed; `parts` are every file of a split one, in order. */
+  | { repo: string; file: string; parts?: string[] }
 
 export type ModelPick = {
   id: string
@@ -183,6 +183,9 @@ export const PICKS: ModelPick[] = [
   },
 ]
 
+/** What memory math needs of a model: a pick, or one found by name (local-hf.ts). */
+export type Shape = Pick<ModelPick, 'weights' | 'kvPerToken' | 'recurrentLayers' | 'draft'>
+
 /** Hermes's /api/local-models/hardware, as Murmur reads it. */
 export type Hardware = {
   uma: boolean
@@ -192,14 +195,59 @@ export type Hardware = {
   gpuName?: string | null
 }
 
+/** What grows with the window: the q8 KV cache over the attending layers, and the recurrent layers' state. */
+const windowBytes = (pick: Shape, window: number) =>
+  pick.kvPerToken * window * Q8 * (pick.draft ? 1.2 : 1) + pick.recurrentLayers * RECURRENT_STATE
+
 /** Memory a pick needs to start, as Hermes reckons it. */
-export function need(pick: ModelPick) {
-  const kv = pick.kvPerToken * FLOOR * Q8 * (pick.draft ? 1.2 : 1)
-  return pick.weights + kv + pick.recurrentLayers * RECURRENT_STATE + OVERHEAD
+export function need(pick: Shape) {
+  return pick.weights + windowBytes(pick, FLOOR) + OVERHEAD
 }
 
 /** What Hermes lets a model use right now. */
 export const usable = (hw: Hardware) => (hw.uma ? hw.vramUsable : hw.vramUsable + hw.ramAvailable)
+
+// On a CPU or integrated graphics (most Umbrels) the model lives in system
+// RAM, beside every other app, and two things about Hermes 0.22 decide whether
+// it survives there:
+//
+// - The window it starts at. Hermes climbs its ladder (64K, 96K, 144K, 216K,
+//   the model's own 256K) as far as its estimate fits 80% of the RAM the
+//   machine *has*, not what's free (hardware.probe_budget(planning=True);
+//   launch_budget() never narrows unified memory). So a 16 GB Umbrel starts
+//   the 2B and 4B at their full 256K, however little is free.
+// - What that window really costs. llama.cpp zeroes the whole KV cache when it
+//   loads, so all of it is held from the first token. Hermes's estimate adds
+//   1.5 GiB for graphics-card contexts and a 2 GB logits buffer that a CPU
+//   never fills; what's held is the weights, the window, and about RUNTIME
+//   more (measured: Qwen3.5 0.8B and 2B, llama.cpp b11370's CPU build, with
+//   Hermes's flags, at 64K and 256K).
+//
+// Murmur prices a pick at that window as it's really held, against what's
+// free now, so a pick that fits starts and stays up. If Hermes ever sizes the
+// window to free memory (as it does for graphics cards), only `startWindow`
+// changes: smaller windows, more that fits.
+
+/** The ladder Hermes climbs (context_policy.ladder): 64K, then half as much again, up to the model's own. */
+const NATIVE = 256 * 1024
+const LADDER = [FLOOR, FLOOR * 1.5, FLOOR * 2.25, FLOOR * 3.375, NATIVE]
+/** The logits buffer Hermes prices for its 2048-token microbatch (context_policy.ub_logits_bytes), at Qwen's 248K vocabulary. */
+const LOGITS = 2048 * 248_320 * 4
+/** What llama.cpp holds beyond the weights and window: compute buffers, slots, the process itself. */
+const RUNTIME = 0.8 * GB
+
+/** The window Hermes starts a pick at on this machine (context_policy.initial_window, with the capacity budget). */
+export function startWindow(pick: Shape, hw: Hardware) {
+  const budget = hw.uma ? hw.ramTotal * 0.8 : hw.vramUsable
+  const estimate = (window: number) => pick.weights + windowBytes(pick, window) + OVERHEAD + LOGITS
+  return LADDER.filter((w) => estimate(w) <= budget).at(-1) ?? FLOOR
+}
+
+/** The memory a pick really holds once started on a CPU or integrated graphics. */
+export const held = (pick: Shape, hw: Hardware) => pick.weights + windowBytes(pick, startWindow(pick, hw)) + RUNTIME
+
+/** Runs out of system RAM: no graphics card, nor unified memory with an NVIDIA chip behind it. */
+export const inRam = (hw: Hardware) => hw.uma && !hw.gpuName
 
 /**
  * Whether a pick runs on a graphics processor: a card it fits on, or unified
@@ -232,7 +280,9 @@ export type Offers = {
  * Up to two picks for this machine. The suggestion is the best one that fits
  * and isn't slow here; the other is the best one above it that fits too (a
  * trade of speed for smarts, e.g. the 27B on a machine without a graphics
- * card), else the next one down. When nothing fits, the smallest, marked tight.
+ * card), else the next one down. When nothing fits with room to spare, the
+ * smallest that still fits in what's free, marked tight; when even that won't,
+ * nothing: an offer that falls over mid-reply is worse than none.
  *
  * `vetoed` holds picks Hermes's catalog says can't run here.
  */
@@ -240,7 +290,10 @@ export function offersFor(hw: Hardware, vetoed: ReadonlySet<string> = new Set())
   const room = usable(hw)
   const picks = PICKS.filter((p) => !vetoed.has(p.id)).sort((a, b) => a.rank - b.rank)
   if (!picks.length) return { offers: [], tight: null }
-  const fits = (p: ModelPick) => need(p) <= room
+  // In RAM: what it really holds, with Hermes's 20% to spare to fit, or just inside what's free to squeeze.
+  const fits = (p: ModelPick) => (inRam(hw) ? held(p, hw) : need(p)) <= room
+  const squeezes = (p: ModelPick) => !inRam(hw) || held(p, hw) <= hw.ramAvailable
+  if (!squeezes(picks[0])) return { offers: [], tight: null }
   const good = picks.filter((p) => fits(p) && speedOn(p, hw) !== 'Slow')
   const first = good.at(-1) ?? picks[0]
   const i = picks.indexOf(first)
@@ -265,8 +318,12 @@ export function offersFor(hw: Hardware, vetoed: ReadonlySet<string> = new Set())
   }
 }
 
-/** Hermes's name for a downloaded file: its name without `.gguf`. */
-export const stagedId = (file: string) => file.replace(/\.gguf$/i, '')
+/** Hermes's name for a downloaded file: its name without folder, `.gguf`, or a split's `-00001-of-00003`. */
+export const stagedId = (file: string) =>
+  file
+    .split('/')
+    .at(-1)!
+    .replace(/(?:-\d{5}-of-\d{5})?\.gguf$/i, '')
 
 /** "2.7 GB"; under a gigabyte, "530 MB". */
 export function formatSize(bytes: number) {

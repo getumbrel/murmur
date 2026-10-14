@@ -78,7 +78,8 @@ describe('what Hermes says, as offers', () => {
   })
 
   it('marks what’s already downloaded', () => {
-    const out = deviceModels(status, hw(8e9), [])
+    // An 8 GB machine with 6 free: Hermes starts the 4B at 64K there.
+    const out = deviceModels(status, { ...hw(6e9), ram_total_bytes: 8e9 }, [])
     expect(out.models.map((m) => [m.id, m.downloaded, m.recommended])).toEqual([
       ['qwen3.5-4b', false, true],
       ['qwen3.5-2b', true, false],

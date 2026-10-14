@@ -10,7 +10,7 @@ import {
   useRefreshModels,
   type Confirm,
 } from '@/state/models'
-import { useDeviceModels, useDeviceSetup } from '@/state/local-runtime'
+import { useDeviceModels, useDeviceSetup, useFindModel } from '@/state/local-runtime'
 import { useHermesConnection, type HermesConnection } from '@/state/connection'
 import { isBuiltinHermes, useOnUmbrel } from '@/features/connection/hermes-connection-form'
 import { ask } from './ask'
@@ -62,10 +62,11 @@ export function ConnectFlow({ onConnected, onSkip, embedded, options }: Props) {
   const [validating, setValidating] = useState(false)
   const [keyError, setKeyError] = useState<string | null>(null)
   const deviceModels = useDeviceModels()
+  const found = useFindModel()
   const device = useDeviceSetup(async () => {
     await Promise.all([refresh(), new Promise((done) => setTimeout(done, READY_BEAT_MS))])
     onConnected()
-  })
+  }, found.model)
 
   const state: ConnectState = {
     options,
@@ -85,6 +86,13 @@ export function ConnectFlow({ onConnected, onSkip, embedded, options }: Props) {
       models: deviceModels.data?.models ?? [],
       tight: deviceModels.data?.tight,
       setup: device.setup,
+      custom: {
+        query: found.query,
+        finding: found.finding,
+        error: found.error,
+        // While one typed in by name sets up (found again after a reload, say), that one.
+        model: device.setup && device.custom?.id === device.setup.id ? device.custom : found.model,
+      },
     },
   }
 
@@ -100,6 +108,7 @@ export function ConnectFlow({ onConnected, onSkip, embedded, options }: Props) {
       onPauseDevice={() => void device.pause()}
       onResumeDevice={device.resume}
       onCancelDevice={() => void device.cancel()}
+      onFindDevice={(query) => void found.find(query)}
       onChooseLocal={async (server, model) => {
         setConnecting(model.id)
         try {

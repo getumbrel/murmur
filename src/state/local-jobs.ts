@@ -45,6 +45,7 @@ export type DeviceModel = {
   id: string
   name: string
   bytes: number
+  /** Empty for a model typed in by name: nobody's measured it. */
   speed: string
   smarts: string
   hue: number
@@ -52,6 +53,21 @@ export type DeviceModel = {
   fits: boolean
   /** Already on the machine: no download. */
   downloaded: boolean
+  /** A model from Hugging Face, typed in by name (local-hf.ts). */
+  hf?: HFDetails
+}
+
+/** How a model fits: it does; it might, if its window stays small; it can't. */
+export type Fit = 'fits' | 'tight' | 'too-big'
+
+export type HFDetails = {
+  repo: string
+  /** "Q4_K_M", or the file's name when it doesn't say. */
+  quant: string
+  fit: Fit
+  /** The memory it needs here (local-hf.ts `heldOf`), and what's free for it now. */
+  least: number
+  room: number
 }
 
 export type DeviceModels = {
@@ -64,20 +80,22 @@ export type DeviceModels = {
 
 export const UNSUPPORTED: DeviceModels = { supported: false, models: [], tight: null }
 
+/** Hermes's hardware answer, as local-tiers.ts reads it. */
+export const hardwareOf = (hw: HardwareRow): Hardware => ({
+  uma: hw.uma,
+  vramUsable: hw.vram_usable_bytes,
+  ramAvailable: hw.ram_available_bytes,
+  ramTotal: hw.ram_total_bytes,
+  gpuName: hw.gpu_name,
+})
+
 /** Hermes's answers → the offers, with the catalog's own verdicts and sizes where it has them. */
 export function deviceModels(status: Status, hw: HardwareRow, catalog: CatalogRow[]): DeviceModels {
   const rows = new Map(catalog.map((r) => [r.id, r]))
   const vetoed = new Set(
     PICKS.filter((p) => 'catalog' in p.source && rows.get(p.source.catalog)?.fits === false).map((p) => p.id),
   )
-  const hardware: Hardware = {
-    uma: hw.uma,
-    vramUsable: hw.vram_usable_bytes,
-    ramAvailable: hw.ram_available_bytes,
-    ramTotal: hw.ram_total_bytes,
-    gpuName: hw.gpu_name,
-  }
-  const { offers, tight }: Offers = offersFor(hardware, vetoed)
+  const { offers, tight }: Offers = offersFor(hardwareOf(hw), vetoed)
   const staged = new Set(status.models.map((m) => m.id))
   return {
     supported: true,
@@ -153,6 +171,8 @@ export function plainError(raw: string | null | undefined): string {
   if (/no space|ENOSPC|disk (is )?full|not enough (disk|storage|space)/i.test(text)) return 'Not enough storage space.'
   if (/needs ~|VRAM\+RAM|could not start|out of memory|OOM|cannot allocate/i.test(text))
     return 'Not enough free memory to start it.'
+  // A gated or private model on Hugging Face: Hermes downloads without a sign-in.
+  if (/HTTP Error 40[13]|Unauthorized|Forbidden|gated|restricted/i.test(text)) return 'That model needs a Hugging Face sign-in.'
   if (
     /hugging ?face|urlopen|timed? ?out|connection|resolve|network|unreachable|HTTP Error 5|SSL|getaddrinfo/i.test(text)
   )
@@ -162,7 +182,7 @@ export function plainError(raw: string | null | undefined): string {
 }
 
 /** Hermes's job for this pick, if one is under way (running or paused) or just finished. */
-export function jobFor(jobs: Job[], pick: ModelPick, kinds: string[]): Job | undefined {
+export function jobFor(jobs: Job[], pick: Pick<ModelPick, 'source'>, kinds: string[]): Job | undefined {
   const target = 'catalog' in pick.source ? pick.source.catalog : stagedId(pick.source.file)
   return jobs.find((j) => kinds.includes(j.kind) && j.model_id === target && j.status !== 'error')
 }

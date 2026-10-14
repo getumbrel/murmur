@@ -4,7 +4,7 @@ import { Button } from '@/ui/button'
 import { AgentEditorSheet } from '@/features/agents/agent-editor'
 import { NewGroupSheet } from '@/features/agents/new-group'
 import type { DeviceModel, DeviceSetup } from '@/state/local-jobs'
-import { ConnectModel, type ChatGPTFlow, type ConnectOption, type ConnectState } from './connect'
+import { ConnectModel, type ChatGPTFlow, type ConnectOption, type ConnectState, type FindState } from './connect'
 import { Done } from './done'
 import { FirstAgent } from './first-agent'
 import { Welcome } from './welcome'
@@ -17,7 +17,9 @@ import { SetupPlayground } from './setup-playground'
 // "Your agents are here": ?screen=where|ready|here (see setup-playground.tsx).
 // A model on this Umbrel: ?screen=connect&open=device&device=idle|tight|one|
 // preparing|downloading|paused|starting|ready|error|none (&umbrel=0 for "this
-// computer"); an Ollama with no models yet: &local=empty&open=local.
+// computer"); a model typed in by name there: &custom=resolved|tight|toobig|
+// finding|error (type "nope/…" to see an error, anything else finds one); an
+// Ollama with no models yet: &local=empty&open=local.
 
 const params = new URLSearchParams(location.search)
 const param = (k: string) => params.get(k) ?? undefined
@@ -63,6 +65,50 @@ const DEVICE_MODELS: DeviceModel[] = [
   { id: 'qwen3.5-4b', name: 'Qwen3.5 4B', bytes: 2_740_937_888, speed: 'Fast', smarts: 'Good', hue: 278, recommended: true, fits: true, downloaded: false },
   { id: 'qwen3.5-2b', name: 'Qwen3.5 2B', bytes: 1_280_835_840, speed: 'Fastest', smarts: 'Basic', hue: 192, recommended: false, fits: true, downloaded: false },
 ]
+
+// Models typed in by name, as Hermes's file list and the same machine turn them into cards (local-hf.ts).
+const FOUND = {
+  fits: { id: 'hf:Qwen3.5-0.8B-Q4_K_M', name: 'Qwen3.5 0.8B', bytes: 532_517_120, speed: '', smarts: '', hue: 314, recommended: false, fits: true, downloaded: false, hf: { repo: 'unsloth/Qwen3.5-0.8B-GGUF', quant: 'Q4_K_M', fit: 'fits', least: 2_143_129_856, room: 6_400_000_000 } },
+  tight: { id: 'hf:Meta-Llama-3.1-8B-Instruct-Q3_K_M', name: 'Meta Llama 3.1 8B Instruct', bytes: 4_018_918_656, speed: '', smarts: '', hue: 236, recommended: false, fits: true, downloaded: false, hf: { repo: 'bartowski/Meta-Llama-3.1-8B-Instruct-GGUF', quant: 'Q3_K_M', fit: 'tight', least: 5_629_531_392, room: 6_400_000_000 } },
+  toobig: { id: 'hf:Qwen3.8-27B-Q8_0', name: 'Qwen3.8 27B', bytes: 29_047_086_048, speed: '', smarts: '', hue: 192, recommended: false, fits: false, downloaded: false, hf: { repo: 'unsloth/Qwen3.8-27B-GGUF', quant: 'Q8_0', fit: 'too-big', least: 30_657_698_784, room: 6_400_000_000 } },
+} satisfies Record<string, DeviceModel>
+
+type CustomKey = 'none' | 'resolved' | 'tight' | 'toobig' | 'finding' | 'error'
+
+const findFor = (k: CustomKey): FindState | null => {
+  switch (k) {
+    case 'resolved':
+      return { query: 'unsloth/Qwen3.5-0.8B-GGUF', finding: false, model: FOUND.fits, error: null }
+    case 'tight':
+      return { query: 'bartowski/Meta-Llama-3.1-8B-Instruct-GGUF:Q3_K_M', finding: false, model: FOUND.tight, error: null }
+    case 'toobig':
+      return { query: 'unsloth/Qwen3.8-27B-GGUF:Q8_0', finding: false, model: FOUND.toobig, error: null }
+    case 'finding':
+      return { query: 'unsloth/Qwen3.5-0.8B-GGUF', finding: true, model: null, error: null }
+    case 'error':
+      return { query: 'meta-llama/Llama-3.1-8B-Instruct', finding: false, model: null, error: 'That repo has no models Hermes can run.' }
+    default:
+      return null
+  }
+}
+
+/** A pretend lookup: a beat, then a model, or an error for "nope/…". */
+function useFakeFind(key: CustomKey) {
+  const [state, setState] = useState(() => findFor(key))
+  const [shown, setShown] = useState(key)
+  if (shown !== key) {
+    setShown(key)
+    setState(findFor(key))
+  }
+  const find = (query: string) => {
+    setState((s) => ({ query, finding: true, model: s?.model ?? null, error: null }))
+    setTimeout(() => {
+      const nope = /^nope\//i.test(query)
+      setState((s) => ({ query, finding: false, model: nope ? (s?.model ?? null) : FOUND.fits, error: nope ? 'No public model by that name.' : null }))
+    }, 900)
+  }
+  return { state, find }
+}
 
 type DeviceKey = 'idle' | 'tight' | 'one' | 'none' | 'loading' | DeviceSetup['stage']
 const DEVICE_KEYS: DeviceKey[] = ['idle', 'tight', 'one', 'preparing', 'downloading', 'paused', 'starting', 'ready', 'error', 'loading', 'none']
@@ -116,7 +162,8 @@ function useFakeSetup(key: DeviceKey, onReady: () => void) {
   return {
     setup,
     start: (id: string) => {
-      const s: DeviceSetup = { id, stage: 'preparing', done: 0, total: DEVICE_MODELS.find((m) => m.id === id)?.bytes ?? 0, eta: null, canPause: false }
+      const all = [...DEVICE_MODELS, ...Object.values(FOUND)]
+      const s: DeviceSetup = { id, stage: 'preparing', done: 0, total: all.find((m) => m.id === id)?.bytes ?? 0, eta: null, canPause: false }
       setSetup(s)
       tick(s)
     },
@@ -149,6 +196,8 @@ export function Playground() {
   const local = param('local') ?? 'found'
   const [deviceKey, setDeviceKey] = useState<DeviceKey>((param('device') as DeviceKey) ?? 'idle')
   const umbrel = param('umbrel') !== '0'
+  const [customKey, setCustomKey] = useState<CustomKey>((param('custom') as CustomKey) ?? 'none')
+  const found = useFakeFind(customKey)
   const [keyState, setKeyState] = useState<ConnectState['apiKey']>({
     validating: param('key') === 'validating',
     error: param('key') === 'error' ? 'That key didn’t work. Check it and try again.' : null,
@@ -172,6 +221,7 @@ export function Playground() {
       models: deviceKey === 'one' || deviceKey === 'tight' ? DEVICE_MODELS.slice(deviceKey === 'tight' ? 1 : 0).slice(0, 1).map((m) => ({ ...m, recommended: true, fits: deviceKey !== 'tight' })) : DEVICE_MODELS,
       tight: deviceKey === 'tight' ? { free: 3_100_000_000 } : null,
       setup: fake.setup,
+      custom: found.state,
     },
   }
 
@@ -189,7 +239,7 @@ export function Playground() {
       {(screen === 'where' || screen === 'ready' || screen === 'here') && <SetupPlayground key={screen} screen={screen} />}
       {screen === 'connect' && (
         <ConnectModel
-          key={deviceKey}
+          key={`${deviceKey}-${customKey}`}
           state={state}
           umbrel={umbrel}
           onAddServer={() => {}}
@@ -197,6 +247,7 @@ export function Playground() {
           onPauseDevice={fake.pause}
           onResumeDevice={fake.resume}
           onCancelDevice={fake.cancel}
+          onFindDevice={found.find}
           defaultOpen={param('open') as ConnectOption | undefined}
           onChooseChatGPT={() => {
             setFlow('starting')
@@ -257,6 +308,13 @@ export function Playground() {
           {screen === 'connect' && (
             <select className="h-7 rounded-lg bg-fill-2 px-2" value={deviceKey} onChange={(e) => setDeviceKey(e.target.value as DeviceKey)} aria-label="Model on this Umbrel">
               {DEVICE_KEYS.map((k) => (
+                <option key={k}>{k}</option>
+              ))}
+            </select>
+          )}
+          {screen === 'connect' && (
+            <select className="h-7 rounded-lg bg-fill-2 px-2" value={customKey} onChange={(e) => setCustomKey(e.target.value as CustomKey)} aria-label="Model typed in by name">
+              {(['none', 'resolved', 'tight', 'toobig', 'finding', 'error'] as const).map((k) => (
                 <option key={k}>{k}</option>
               ))}
             </select>

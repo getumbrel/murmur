@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import {
+  ArrowRight,
   Check,
   ChevronDown,
   ChevronRight,
@@ -21,6 +22,7 @@ import { cn } from '@/lib/cn'
 import type { DeviceModel, DeviceSetup } from '@/state/local-jobs'
 import { overall } from '@/state/local-jobs'
 import { formatSize } from '@/state/local-tiers'
+import { fitLine } from '@/state/local-hf'
 import { Bloom } from './bloom'
 import { emptyLine } from './connect-copy'
 import { STEP_COLUMN, StepHeader } from './step'
@@ -78,8 +80,12 @@ export type ConnectState = {
     /** Even the suggestion is a squeeze: what's free right now. */
     tight?: { free: number } | null
     setup?: DeviceSetup | null
+    /** Any other model on Hugging Face, typed in by name: being looked up, found, or not. */
+    custom?: FindState | null
   }
 }
+
+export type FindState = { query: string; finding: boolean; model: DeviceModel | null; error: string | null }
 
 export const API_KEY_SERVICES: { id: ApiKeyService; label: string; placeholder: string; keysUrl: string }[] = [
   { id: 'openrouter', label: 'OpenRouter', placeholder: 'sk-or-…', keysUrl: 'https://openrouter.ai/keys' },
@@ -117,6 +123,8 @@ type Props = {
   onPauseDevice?: () => void
   onResumeDevice?: () => void
   onCancelDevice?: () => void
+  /** Look a model up on Hugging Face by what someone typed. Absent: no "Use another model". */
+  onFindDevice?: (query: string) => void
 }
 
 export function ConnectModel({
@@ -134,6 +142,7 @@ export function ConnectModel({
   onPauseDevice,
   onResumeDevice,
   onCancelDevice,
+  onFindDevice,
 }: Props) {
   const device = state.device?.supported && onRunDevice ? state.device : null
   const options = (state.options ?? ['chatgpt', 'device', 'local', 'api-key']).filter((o) => o !== 'device' || device)
@@ -225,7 +234,7 @@ export function ConnectModel({
         key="device"
         glyph={setup ? <ProgressGlyph setup={setup} /> : <Cpu size={20} strokeWidth={1.75} />}
         // While a model sets up, the tile wears its colour.
-        hue={setup ? device.models.find((m) => m.id === setup.id)?.hue : undefined}
+        hue={setup ? [...device.models, device.custom?.model].find((m) => m?.id === setup.id)?.hue : undefined}
         title={`Run a model on ${device.place}`}
         subtitle={
           device.loading ? (
@@ -235,7 +244,7 @@ export function ConnectModel({
           ) : setup ? (
             <span className="tabular-nums">{setupLine(setup)}</span>
           ) : (
-            'Private and free, just slower'
+            'Private and free'
           )
         }
         open={open === 'device'}
@@ -247,7 +256,9 @@ export function ConnectModel({
           models={device.models}
           tight={device.tight}
           setup={setup}
+          custom={device.custom}
           onRun={onRunDevice!}
+          onFind={onFindDevice}
           onPause={onPauseDevice}
           onResume={onResumeDevice}
           onCancel={onCancelDevice}
@@ -733,7 +744,9 @@ function DevicePanel({
   models,
   tight,
   setup,
+  custom,
   onRun,
+  onFind,
   onPause,
   onResume,
   onCancel,
@@ -742,18 +755,45 @@ function DevicePanel({
   models: DeviceModel[]
   tight?: { free: number } | null
   setup: DeviceSetup | null
+  custom?: FindState | null
   onRun: (id: string) => void
+  onFind?: (query: string) => void
   onPause?: () => void
   onResume?: () => void
   onCancel?: () => void
 }) {
-  const [chosen, setChosen] = useState<string | null>(null)
-  const selected = models.find((m) => m.id === (setup?.id ?? chosen)) ?? models[0]
+  // A model found by name joins the list, chosen.
+  const found = custom?.model ?? null
+  const [chosen, setChosen] = useState<string | null>(found?.id ?? null)
+  const [lastFound, setLastFound] = useState(found)
+  if (found !== lastFound) {
+    setLastFound(found)
+    if (found) setChosen(found.id)
+  }
+  const all = found && !models.some((m) => m.id === found.id) ? [...models, found] : models
+  const selected = all.find((m) => m.id === (setup?.id ?? chosen)) ?? all[0]
   // A setup for a model no longer offered (the machine changed) still shows.
-  const running = setup ? (models.find((m) => m.id === setup.id) ?? null) : null
+  const running = setup ? (all.find((m) => m.id === setup.id) ?? null) : null
   const where = place.replace(/^this /, 'your ')
-  if (!selected) return <p className="text-subhead text-pretty text-ink-2">Nothing fits {place} right now.</p>
-  const list = running ? [running] : models
+  const finder = onFind && !setup && <FindModel state={custom} onFind={onFind} collapsed={all.length > 0} />
+  if (!selected)
+    return (
+      <div className="space-y-3">
+        <p className="text-subhead text-pretty text-ink-2">Nothing fits {place} right now.</p>
+        {finder}
+      </div>
+    )
+  const list = running ? [running] : all
+  const fit = selected.hf?.fit
+  // What to say above the button: a squeeze, or why it can't be.
+  const note =
+    fit && fit !== 'fits'
+      ? fitLine(selected.hf!)
+      : !fit && tight
+        ? `About ${formatSize(tight.free)} free right now. Closing an app or two helps.`
+        : null
+  // A long name found by name would wrap the button; the card above says which.
+  const label = selected.name.length > 20 ? '' : ` ${selected.name}`
   return (
     <div>
       <div role={running ? undefined : 'radiogroup'} aria-label="Model" className="space-y-2">
@@ -816,25 +856,109 @@ function DevicePanel({
         ) : (
           <motion.div
             key="go"
-            className="hue-scope mt-4"
+            className="hue-scope mt-2"
             style={{ '--hue': selected.hue } as React.CSSProperties}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0, transition: { duration: 0.12 } }}
           >
-            {tight && (
-              <p className="mb-3 px-1 text-footnote text-pretty text-ink-2" aria-live="polite">
-                <span className="mr-1.5 inline-block size-1.5 -translate-y-px rounded-full bg-warning align-middle" />
-                About {formatSize(tight.free)} free right now. Closing an app or two helps.
+            {finder}
+            {note && (
+              <p className="mt-2 px-1 text-footnote text-pretty text-ink-2" aria-live="polite">
+                <span
+                  className={cn(
+                    'mr-1.5 inline-block size-1.5 -translate-y-px rounded-full align-middle',
+                    fit === 'too-big' ? 'bg-danger' : 'bg-warning',
+                  )}
+                />
+                {note}
               </p>
             )}
-            <Button size="lg" variant="accent" onClick={() => onRun(selected.id)}>
-              {selected.downloaded ? `Use ${selected.name}` : `Download ${selected.name}`}
+            <Button
+              size="lg"
+              variant="accent"
+              className="mt-3"
+              disabled={fit === 'too-big'}
+              onClick={() => onRun(selected.id)}
+            >
+              {selected.downloaded ? `Use${label || ' it'}` : `Download${label}`}
             </Button>
           </motion.div>
         )}
       </AnimatePresence>
     </div>
+  )
+}
+
+/**
+ * "Use another model": any GGUF on Hugging Face, by name. A link until
+ * asked for; once a model's found, its card above is the answer and this
+ * folds away again.
+ */
+function FindModel({
+  state,
+  onFind,
+  collapsed,
+}: {
+  state?: FindState | null
+  onFind: (query: string) => void
+  collapsed: boolean
+}) {
+  const [open, setOpen] = useState(!collapsed || Boolean(state?.finding || state?.error))
+  const [query, setQuery] = useState(state?.query ?? '')
+  const finding = Boolean(state?.finding)
+  const error = state?.error ?? null
+  const [wasFinding, setWasFinding] = useState(finding)
+  if (finding !== wasFinding) {
+    setWasFinding(finding)
+    if (!finding && !error && state?.model) setOpen(false)
+  }
+  if (!open)
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="pressable -ml-1 flex h-10 items-center rounded-md px-1 text-subhead font-medium text-ink-2 select-none hover:text-ink"
+      >
+        Use another model
+      </button>
+    )
+  return (
+    <form
+      className="animate-fade pt-1"
+      onSubmit={(e) => {
+        e.preventDefault()
+        if (query.trim()) onFind(query.trim())
+      }}
+    >
+      <div className="relative">
+        <TextField
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="unsloth/Qwen3.5-9B-GGUF:Q4_K_M"
+          aria-label="Model on Hugging Face"
+          aria-invalid={!!error}
+          inputMode="url"
+          autoComplete="off"
+          autoCapitalize="off"
+          autoCorrect="off"
+          spellCheck={false}
+          autoFocus={collapsed && !state?.query}
+          className={cn('pr-12 text-subhead', error && 'ring-danger/60! focus:ring-danger/70!')}
+        />
+        <button
+          type="submit"
+          disabled={!query.trim() || finding}
+          aria-label="Find this model"
+          className="absolute top-0 right-0 grid size-12 place-items-center rounded-xl text-ink transition-colors select-none focus-visible:-outline-offset-2 disabled:text-ink-3"
+        >
+          {finding ? <Spinner size={16} className="text-ink-2" /> : <ArrowRight size={18} strokeWidth={2} />}
+        </button>
+      </div>
+      <p className={cn('mt-2 px-1 text-footnote text-pretty', error ? 'text-danger' : 'text-ink-3')} aria-live="polite">
+        {error ?? 'Any GGUF model on Hugging Face.'}
+      </p>
+    </form>
   )
 }
 
@@ -877,12 +1001,24 @@ function ModelCard({
         <span className="mt-1.5 flex flex-wrap items-center gap-1.5">
           {/* While it downloads, the bar says the size. */}
           {!busy && <Chip>{model.downloaded ? 'Downloaded' : formatSize(model.bytes)}</Chip>}
-          <Chip>{model.speed}</Chip>
-          <Chip>{model.smarts}</Chip>
-          {model.recommended && model.fits && !busy && (
+          {model.hf && <Chip>{model.hf.quant}</Chip>}
+          {model.speed && <Chip>{model.speed}</Chip>}
+          {model.smarts && <Chip>{model.smarts}</Chip>}
+          {((model.recommended && model.fits) || model.hf?.fit === 'fits') && !busy && (
             <span className="inline-flex h-6 items-center gap-1 pl-0.5 text-caption font-medium text-success">
               <Check size={13} strokeWidth={2.5} />
               Fits {where}
+            </span>
+          )}
+          {model.hf && model.hf.fit !== 'fits' && !busy && (
+            <span
+              className={cn(
+                'inline-flex h-6 items-center gap-1.5 pl-0.5 text-caption font-medium',
+                model.hf.fit === 'tight' ? 'text-warning' : 'text-danger',
+              )}
+            >
+              <span className="size-1.5 rounded-full bg-current" />
+              {model.hf.fit === 'tight' ? 'Tight fit' : 'Too big'}
             </span>
           )}
         </span>

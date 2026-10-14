@@ -3,12 +3,15 @@
 // (local-tiers.ts) and drives one setup: get the runtime if it's missing,
 // download the model, switch the main agent to it. Each leg is a Hermes job,
 // so a reload or a dropped connection finds it again in /jobs and carries on.
+// Any other model on Hugging Face can be asked for by name (local-hf.ts) and
+// set up the same way.
 
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, HermesError } from '@/hermes/rest'
 import {
   deviceModels,
+  hardwareOf,
   jobFor,
   plainError,
   stageOf,
@@ -21,6 +24,7 @@ import {
   type HardwareRow,
 } from './local-jobs'
 import { PICKS, stagedId, type ModelPick } from './local-tiers'
+import { hfModel, lookupError, parseModelRef, pickFile, type FileGroup, type HFModel } from './local-hf'
 
 export type { DeviceModel, DeviceModels, DeviceSetup, SetupStage } from './local-jobs'
 
@@ -54,27 +58,35 @@ export function useDeviceModels(enabled = true) {
   })
 }
 
+/** What a setup needs to know about a model: one of the picks, or one typed in by name. */
+type Target = Pick<ModelPick, 'id' | 'source' | 'bytes'>
+
 const POLL_MS = 900
 const INTENT = 'murmur:local-setup'
 
-/** The pick being set up, so a reload can carry on. Best effort. */
+/** The model being set up, so a reload can carry on: a pick's id, or the whole of one typed in. Best effort. */
 const intent = {
-  get: () => {
+  get: (): Target | null => {
     try {
-      return localStorage.getItem(INTENT)
+      const saved = localStorage.getItem(INTENT)
+      if (saved?.startsWith('{')) return JSON.parse(saved) as HFModel
+      return PICKS.find((p) => p.id === saved) ?? null
     } catch {
       return null
     }
   },
-  set: (id: string | null) => {
+  set: (target: Target | null) => {
     try {
-      if (id) localStorage.setItem(INTENT, id)
-      else localStorage.removeItem(INTENT)
+      if (!target) localStorage.removeItem(INTENT)
+      else localStorage.setItem(INTENT, PICKS.includes(target as ModelPick) ? target.id : JSON.stringify(target))
     } catch {
       // Private mode: no carrying on after a reload, that's all.
     }
   },
 }
+
+/** The model typed in by name that's being set up (from before a reload, say), for its card. */
+const customOf = (target: Target | null) => (target && 'hf' in target ? (target as HFModel) : null)
 
 class Paused extends Error {}
 class Stopped extends Error {}
@@ -84,18 +96,23 @@ const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms))
 /**
  * Drives a setup. `onReady` runs once Hermes has switched to the model.
  * Leaving the screen stops watching, not the download: Hermes keeps going,
- * and coming back picks it up again.
+ * and coming back picks it up again. `found` is a model typed in by name,
+ * which `start` can then set up too.
  */
-export function useDeviceSetup(onReady: () => Promise<void> | void) {
+export function useDeviceSetup(onReady: () => Promise<void> | void, found?: HFModel | null) {
   const qc = useQueryClient()
   const [setup, setSetup] = useState<DeviceSetup | null>(null)
+  const [custom, setCustom] = useState<HFModel | null>(null)
+  // What `start` can set up: the picks, one just found, and one found before a reload that's being set up.
+  const targets = useRef<Target[]>(PICKS)
+  targets.current = [...PICKS, ...[found, custom].filter((m): m is HFModel => Boolean(m))]
   const run = useRef(0)
   const job = useRef<string | null>(null)
   const ready = useRef(onReady)
   ready.current = onReady
 
   /** Polls a job until it settles, reporting as it goes. */
-  const follow = useCallback(async (id: string, pick: ModelPick, token: number): Promise<Job> => {
+  const follow = useCallback(async (id: string, pick: Target, token: number): Promise<Job> => {
     job.current = id
     for (;;) {
       if (run.current !== token) throw new Stopped()
@@ -128,9 +145,10 @@ export function useDeviceSetup(onReady: () => Promise<void> | void) {
 
   /** The setup, from wherever it is. Each leg looks for Hermes's job first and only starts one when there's none. */
   const go = useCallback(
-    async (pick: ModelPick, resumePaused: boolean) => {
+    async (pick: Target, resumePaused: boolean) => {
       const token = ++run.current
-      intent.set(pick.id)
+      intent.set(pick)
+      setCustom(customOf(pick))
       setSetup((s) => ({
         id: pick.id,
         stage: s?.id === pick.id && s.stage === 'downloading' ? 'downloading' : 'preparing',
@@ -162,7 +180,7 @@ export function useDeviceSetup(onReady: () => Promise<void> | void) {
             api.post<{ job_id: string }>(`${M}/quickstart`, { model_id: id }),
           )
         } else {
-          const { repo, file } = pick.source
+          const { repo, file, parts } = pick.source
           const model = stagedId(file)
           let status = await api.get<Status>(`${M}/status`)
           if (!status.runtime_installed) {
@@ -175,7 +193,7 @@ export function useDeviceSetup(onReady: () => Promise<void> | void) {
           if (!status.models.some((m) => m.id === model)) {
             const downloading = jobFor(jobs, pick, ['model-download'])
             await leg(downloading?.status === 'done' ? undefined : downloading, () =>
-              api.post<{ job_id: string | null }>(`${M}/download-browsed`, { repo, paths: [file] }),
+              api.post<{ job_id: string | null }>(`${M}/download-browsed`, { repo, paths: parts ?? [file] }),
             )
           }
           if (run.current !== token) return
@@ -212,7 +230,7 @@ export function useDeviceSetup(onReady: () => Promise<void> | void) {
 
   const start = useCallback(
     (id: string) => {
-      const pick = PICKS.find((p) => p.id === id)
+      const pick = targets.current.find((p) => p.id === id)
       if (pick) void go(pick, true)
     },
     [go],
@@ -223,7 +241,7 @@ export function useDeviceSetup(onReady: () => Promise<void> | void) {
   }, [])
 
   const resume = useCallback(() => {
-    const pick = PICKS.find((p) => p.id === setup?.id)
+    const pick = targets.current.find((p) => p.id === setup?.id)
     if (pick) void go(pick, true)
   }, [go, setup?.id])
 
@@ -234,6 +252,7 @@ export function useDeviceSetup(onReady: () => Promise<void> | void) {
     const id = job.current
     job.current = null
     setSetup(null)
+    setCustom(null)
     if (id) await api.post(`${M}/download/pause`, { job_id: id }).catch(() => {})
   }, [])
 
@@ -249,9 +268,9 @@ export function useDeviceSetup(onReady: () => Promise<void> | void) {
       if (cancelled || !jobs) return
       const live = (j: Job | undefined) => j?.status === 'running' || j?.status === 'paused'
       const kinds = ['quickstart', 'model-download', 'model-activate']
-      const active = PICKS.find((p) => live(jobFor(jobs, p, kinds)))
+      const active = [...PICKS, ...(wanted ? [wanted] : [])].find((p) => live(jobFor(jobs, p, kinds)))
       const installing = jobs.some((j) => j.kind === 'runtime-install' && live(j))
-      const pick = active ?? PICKS.find((p) => p.id === wanted)
+      const pick = active ?? wanted
       if (!pick) return
       if (!active && !installing) {
         // Asked for before a reload, with nothing running now: carry on unless it's done already.
@@ -267,5 +286,49 @@ export function useDeviceSetup(onReady: () => Promise<void> | void) {
     }
   }, [go])
 
-  return { setup, start, pause, resume, cancel }
+  return { setup, custom, start, pause, resume, cancel }
+}
+
+// ── Any model on Hugging Face, by name ──────────────────────────────────────
+
+export type FindModel = {
+  /** What was last looked up. */
+  query: string
+  finding: boolean
+  model: HFModel | null
+  error: string | null
+}
+
+/**
+ * Looks a model up by what someone typed: Hermes lists the repo's files
+ * (Hugging Face is asked by Hermes, never by the browser), and local-hf.ts
+ * picks one for what's free right now.
+ */
+export function useFindModel() {
+  const [state, setState] = useState<FindModel>({ query: '', finding: false, model: null, error: null })
+  const latest = useRef(0)
+  const find = useCallback(async (query: string) => {
+    const token = ++latest.current
+    const settle = (next: Partial<FindModel>) =>
+      latest.current === token && setState((s) => ({ ...s, finding: false, ...next }))
+    setState((s) => ({ ...s, query, finding: true, error: null }))
+    const ref = parseModelRef(query)
+    if (!ref) return settle({ error: lookupError('unreadable') })
+    try {
+      const [{ files }, hw, status] = await Promise.all([
+        api.get<{ files: FileGroup[] }>(`${M}/search/files?repo=${encodeURIComponent(ref.repo)}`),
+        api.get<HardwareRow>(`${M}/hardware`),
+        api.get<Status>(`${M}/status`),
+      ])
+      const hardware = hardwareOf(hw)
+      const choice = pickFile(files ?? [], ref, hardware)
+      if ('error' in choice) return settle({ error: lookupError(choice.error, ref) })
+      settle({ model: hfModel(ref.repo, choice, hardware, new Set(status.models.map((m) => m.id))) })
+    } catch (e) {
+      const status = e instanceof HermesError ? e.status : 0
+      const message = e instanceof Error ? e.message : ''
+      settle({ error: lookupError({ status, message: status === 0 && !message ? 'Can’t reach Hermes.' : message }) })
+    }
+  }, [])
+  return { ...state, find }
 }
