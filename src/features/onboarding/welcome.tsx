@@ -1,20 +1,19 @@
 import { motion, type Variants } from 'motion/react'
-import { useEffect, useRef, useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { Button } from '@/ui/button'
-import { BRAND, ByUmbrel, MurmurMark } from '@/ui/brand'
+import { ByUmbrel, MurmurMark } from '@/ui/brand'
 import { usePrefersReducedMotion } from '@/lib/use-media'
 import { startMurmuration, type MurmurStage } from './murmuration'
 import { STEP_COLUMN } from './step'
 import './welcome.css'
 
 // First run. A murmuration swirls, violet on one wing and coral on the other;
-// as it condenses each half finds its own buddy, the two of them land shoulder
-// to shoulder as the Murmur mark, blink, and Murmur introduces itself. Tap
-// anywhere to skip.
+// each wing spirals down into a dotted buddy, the dots swell into two soft
+// bodies, the two lean in and bump shoulders into the Murmur mark, open their
+// eyes, and Murmur introduces itself. Tap anywhere to skip.
 
-/** The mark's height here, and where its two buddies stand (fractions of its width from centre). */
+/** The mark's height here. */
 const MARK = 88
-const BUDDY_X = 0.2313
 
 type Stage = 'flock' | MurmurStage
 
@@ -34,32 +33,17 @@ export function Welcome({ onContinue, hue = 278, settled = false }: { onContinue
   const still = reduced || settled
   const [stage, setStage] = useState<Stage>(still ? 'text' : 'flock')
   const canvas = useRef<HTMLCanvasElement>(null)
-  const home = useRef<HTMLDivElement>(null)
+  const mark = useRef<HTMLDivElement>(null)
   const glow = useRef<HTMLDivElement>(null)
   const skip = useRef<() => void>(undefined)
 
-  useEffect(() => {
-    if (still || !canvas.current) return setStage('text')
-    const el = canvas.current
-    const run = startMurmuration(el, {
-      colors: [BRAND.violet, BRAND.coral],
-      glow: glow.current,
-      targets: () => {
-        const a = el.getBoundingClientRect()
-        const b = home.current!.getBoundingClientRect()
-        const x = b.left - a.left + b.width / 2
-        const y = b.top - a.top + b.height / 2
-        const d = ((MARK * 83) / 58) * BUDDY_X
-        return [
-          { x: x - d, y },
-          { x: x + d, y },
-        ]
-      },
-      onStage: setStage,
-    })
+  // Before paint, so the mark never shows for a frame ahead of the flock.
+  useLayoutEffect(() => {
+    if (still || !canvas.current || !mark.current) return setStage('text')
+    const run = startMurmuration(canvas.current, { mark: mark.current, glow: glow.current, onStage: setStage })
     skip.current = run.skip
     return run.stop
-  }, [still, hue])
+  }, [still])
 
   const shown = stage === 'text'
 
@@ -69,27 +53,20 @@ export function Welcome({ onContinue, hue = 278, settled = false }: { onContinue
       style={{ '--hue': hue } as React.CSSProperties}
       onPointerDown={shown ? undefined : () => skip.current?.()}
     >
-      <canvas ref={canvas} className="pointer-events-none absolute inset-0 size-full" aria-hidden />
+      {/* Above the glow (so the buddies it draws aren't tinted by it), under the mark it hands over to. */}
+      <canvas ref={canvas} className="pointer-events-none absolute inset-0 z-1 size-full" aria-hidden />
 
       <div className="relative flex flex-1 flex-col items-center justify-center px-5 pt-16 text-center md:flex-none md:pt-0">
-        <div ref={home} className="relative grid h-32 w-40 place-items-center">
+        <div className="relative grid h-32 w-40 place-items-center">
           <div
             ref={glow}
             className="pointer-events-none absolute size-96 rounded-full bg-[radial-gradient(closest-side,color-mix(in_oklch,var(--accent)_20%,transparent),transparent)] transition-opacity duration-500"
             style={{ opacity: still ? 1 : 0 }}
             aria-hidden
           />
-          {stage !== 'flock' && (
-            <motion.div
-              data-hero="brand"
-              className="welcome-mark relative flex origin-bottom"
-              initial={still ? false : { opacity: 0, scale: 0.5 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ type: 'spring', duration: 0.75, bounce: 0.3 }}
-            >
-              <MurmurMark size={MARK} breathe />
-            </motion.div>
-          )}
+          <div ref={mark} className="welcome-mark relative z-2 flex">
+            <MurmurMark size={MARK} breathe />
+          </div>
         </div>
 
         <motion.h1

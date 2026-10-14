@@ -1,14 +1,55 @@
-/* Once the mark has formed, each buddy blinks once, one just after the other,
-   then they fall back into their own rhythms (src/ui/brand.css). */
-.welcome-mark .mm-eyes-left {
+/* The welcome mark (welcome.tsx). While the murmuration is still making it
+   (murmuration.ts sets data-forming) it holds its breath and keeps its eyes
+   shut; once the two buddies have bumped shoulders it sets data-eyes="open"
+   and they wake, one just after the other, blink once a moment later, then
+   fall back into their own rhythms (src/ui/brand.css). */
+
+.welcome-mark {
+  will-change: transform, opacity;
+}
+.welcome-mark[data-forming] .murmur-mark[data-breathe] {
+  animation: none;
+}
+.welcome-mark[data-eyes='closed'] .mm-eyes {
+  animation: none;
+  transform: scaleY(0.1);
+}
+.welcome-mark[data-eyes='open'] .mm-eyes-left {
+  animation:
+    mm-blink 6.2s ease-in-out 1.4s infinite,
+    welcome-wake 340ms ease-out backwards,
+    welcome-blink 280ms ease-in-out 1.05s 1;
+}
+.welcome-mark[data-eyes='open'] .mm-eyes-right {
+  animation:
+    mm-blink 7.4s ease-in-out 3.1s infinite,
+    welcome-wake 340ms ease-out 90ms backwards,
+    welcome-blink 280ms ease-in-out 1.2s 1;
+}
+
+/* Coming back to it (or skipping): already awake, one blink to say hello. */
+.welcome-mark:not([data-eyes]) .mm-eyes-left {
   animation:
     mm-blink 6.2s ease-in-out infinite,
     welcome-blink 300ms ease-in-out 520ms 1;
 }
-.welcome-mark .mm-eyes-right {
+.welcome-mark:not([data-eyes]) .mm-eyes-right {
   animation:
     mm-blink 7.4s ease-in-out -2.9s infinite,
     welcome-blink 300ms ease-in-out 680ms 1;
+}
+
+/* Lids up, a touch wide with surprise, then settled. */
+@keyframes welcome-wake {
+  0% {
+    transform: scaleY(0.1);
+  }
+  55% {
+    transform: scaleY(1.14);
+  }
+  100% {
+    transform: scaleY(1);
+  }
 }
 
 @keyframes welcome-blink {
