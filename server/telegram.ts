@@ -63,6 +63,11 @@ export type Deps = {
 /** How often to ask Hermes while waiting, and the most to back off to when it isn't answering. */
 export const POLL_MS = 2500
 export const MAX_BACKOFF_MS = 30_000
+/** The setup service saying no this many times in a row means it won't finish this code. */
+export const SERVICE_TRIES = 4
+/** How often to try starting Telegram again when Hermes was busy restarting another agent's. */
+export const RESTART_TRIES = 3
+const RESTART_GAP_MS = 5000
 /** Finished setups are forgotten after this, if nobody dismissed them. */
 const KEEP_MS = 24 * 60 * 60_000
 const META_KEY = 'murmur-telegram'
@@ -74,6 +79,7 @@ const COPY = {
   notSaved: 'Hermes couldn’t save the bot.',
   unreachable: 'Can’t reach Hermes. Check that it’s running, then try again.',
   service: 'Telegram setup isn’t reachable right now. Try again in a moment.',
+  refused: 'Telegram couldn’t finish making the bot. Get a new code to try again.',
   unknown: 'Something went wrong setting up Telegram. Try again.',
 }
 
@@ -99,6 +105,8 @@ export function createPairings(deps: Deps) {
   /** Pairing ids being looked at right now. */
   const busy = new Set<string>()
   const failures = new Map<string, number>()
+  /** The setup service's refusals in a row, per code. */
+  const refusals = new Map<string, number>()
   let stopped = false
 
   // ── Keeping ───────────────────────────────────────────────────────────────
@@ -182,8 +190,10 @@ export function createPairings(deps: Deps) {
     } finally {
       busy.delete(p.id)
     }
-    if (next === null) failures.delete(key)
-    else if (all.get(key)?.id === p.id && !terminal(all.get(key)!.phase)) schedule(key, next)
+    if (next === null) {
+      failures.delete(key)
+      refusals.delete(key)
+    } else if (all.get(key)?.id === p.id && !terminal(all.get(key)!.phase)) schedule(key, next)
   }
 
   /** Hermes or the setup service didn't answer: wait longer each time, up to a limit. */
@@ -222,7 +232,20 @@ export function createPairings(deps: Deps) {
       const expired = /expired/i.test(detailOf(res.body) ?? '') || late
       return settle(key, p.id, expired ? 'expired' : 'failed', expired ? undefined : COPY.claimed)
     }
-    if (res.status < 200 || res.status >= 300) return late ? finishLate(key, p, hermes) : backoff(key)
+    if (res.status < 200 || res.status >= 300) {
+      if (late) return finishLate(key, p, hermes)
+      // Hermes says "unavailable" when it couldn't reach the setup service at all, which passes;
+      // anything else is the service turning this code down, and asking again doesn't change that.
+      const detail = detailOf(res.body) ?? ''
+      if (res.status === 502 && !/unavailable/i.test(detail)) {
+        const n = (refusals.get(key) ?? 0) + 1
+        refusals.set(key, n)
+        console.warn(`Murmur: Telegram setup service refused a code for ${p.profile} (${detail || res.status}).`)
+        if (n >= SERVICE_TRIES) return settle(key, p.id, 'failed', COPY.refused)
+      }
+      return backoff(key)
+    }
+    refusals.delete(key)
 
     const body = (res.body ?? {}) as { status?: unknown; bot_username?: unknown; owner_user_id?: unknown }
     if (body.status === 'waiting') return late ? settle(key, p.id, 'expired') : steady(key)
@@ -248,8 +271,12 @@ export function createPairings(deps: Deps) {
       return backoff(key)
     }
     if (res.status >= 200 && res.status < 300) {
-      const name = (res.body as { bot_username?: unknown } | null)?.bot_username
-      return connected(key, p, hermes, (typeof name === 'string' && name) || p.username)
+      const body = (res.body ?? {}) as { bot_username?: unknown; restart_started?: unknown; needs_restart?: unknown }
+      // Hermes restarts messaging for the agent itself; when it couldn't (another agent's restart was
+      // under way, say), the bot is saved but nobody listens to it until someone does.
+      if (body.restart_started === false || (body.needs_restart === true && body.restart_started !== true))
+        void restartMessaging(hermes, p.profile)
+      return connected(key, p, hermes, (typeof body.bot_username === 'string' && body.bot_username) || p.username)
     }
     if (res.status === 404 && /setup session/i.test(detailOf(res.body) ?? '')) {
       if (await landed(hermes, p.profile)) return connected(key, p, hermes, p.username)
@@ -259,6 +286,15 @@ export function createPairings(deps: Deps) {
     if (res.status === 409) return steady(key)
     if (res.status >= 400 && res.status < 500) return settle(key, p.id, 'failed', detailOf(res.body) ?? COPY.notSaved)
     return backoff(key)
+  }
+
+  async function restartMessaging(hermes: TelegramHermes, profile: string) {
+    for (let i = 0; i < RESTART_TRIES && !stopped; i++) {
+      if (i) await new Promise((done) => setTimeout(done, RESTART_GAP_MS))
+      const res = await hermes.send('POST', `/api/gateway/restart?profile=${encodeURIComponent(profile)}`).catch(() => null)
+      if (res && res.status >= 200 && res.status < 300) return
+    }
+    console.warn(`Murmur: couldn’t restart Hermes’s messaging for ${profile} after saving its Telegram bot.`)
   }
 
   /** Past the code's time without an answer: Hermes has let it go, so this is the last look. */
@@ -339,6 +375,7 @@ export function createPairings(deps: Deps) {
     }
     all.set(key, pairing)
     failures.delete(key)
+    refusals.delete(key)
     save()
     schedule(key, POLL_MS)
     // Whether Telegram was on already, so a code Hermes forgets is never taken
@@ -363,6 +400,7 @@ export function createPairings(deps: Deps) {
     clearTimeout(timers.get(key))
     timers.delete(key)
     failures.delete(key)
+    refusals.delete(key)
     save()
     if (p.phase === 'waiting') void release(connection, p.id)
   }

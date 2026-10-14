@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createHermes } from './hermes.ts'
-import { createPairings, MAX_BACKOFF_MS, POLL_MS, type TelegramHermes } from './telegram.ts'
+import { createPairings, MAX_BACKOFF_MS, POLL_MS, SERVICE_TRIES, type TelegramHermes } from './telegram.ts'
 
 // A Hermes dashboard's Telegram onboarding routes (hermes_cli/web_routers/messaging.py,
 // the same in 0.21.5 and 0.22), reached through fetch with the shapes it answers.
@@ -21,6 +21,11 @@ function fakeHermes() {
     calls: [] as string[],
     up: true,
     failApply: 0,
+    /** What the setup service says about codes (through Hermes's 502s). */
+    service: null as null | 'refuses' | 'unreachable',
+    /** What apply says about restarting messaging. */
+    restart: { restart_started: true } as Record<string, unknown>,
+    restarts: [] as string[],
     next: 0,
   }
   const json = (status: number, body: unknown) =>
@@ -36,6 +41,10 @@ function fakeHermes() {
     // Hermes forgets codes past their time.
     for (const [id, code] of state.codes) if (code.expiresAt <= Date.now()) state.codes.delete(id)
 
+    if (url.pathname === '/api/gateway/restart' && method === 'POST') {
+      state.restarts.push(url.searchParams.get('profile') ?? '')
+      return json(200, { ok: true, name: 'gateway-restart' })
+    }
     if (url.pathname === '/api/messaging/platforms') {
       const on = state.telegram.get(url.searchParams.get('profile') ?? 'default') ?? false
       return json(200, { platforms: [{ id: 'telegram', enabled: on, configured: on, gateway_running: true, state: null }] })
@@ -61,6 +70,8 @@ function fakeHermes() {
       return json(200, { ok: true })
     }
     if (!code) return json(404, { detail: NOT_FOUND })
+    if (!match[2] && state.service === 'refuses') return json(502, { detail: 'Telegram setup service returned an error.' })
+    if (!match[2] && state.service === 'unreachable') return json(502, { detail: 'Telegram setup service is unavailable. Try again shortly.' })
     const expires_at = new Date(code.expiresAt).toISOString()
     if (match[2]) {
       if (!code.ready) return json(409, { detail: 'Telegram setup is not ready yet.' })
@@ -72,7 +83,7 @@ function fakeHermes() {
       state.applied.push({ id, query: url.search, body })
       state.telegram.set(body.profile, true)
       state.codes.delete(id)
-      return json(200, { ok: true, platform: 'telegram', bot_username: code.ready.username, needs_restart: false })
+      return json(200, { ok: true, platform: 'telegram', bot_username: code.ready.username, needs_restart: !state.restart.restart_started, ...state.restart })
     }
     if (code.ready) return json(200, { status: 'ready', bot_username: code.ready.username, owner_user_id: code.ready.owner, expires_at })
     return json(200, { status: 'waiting', expires_at })
@@ -182,6 +193,73 @@ describe('a pairing', () => {
     await wait(POLL_MS)
     expect(store.list('main')[0].phase).toBe('connected')
     store.stop()
+  })
+})
+
+describe('when the setup service says no', () => {
+  it('stops waiting and says so once it keeps refusing a code, instead of showing it until it expires', async () => {
+    const store = open()
+    await store.start('main', 'default', 'Iris')
+    fake.state.service = 'refuses'
+    await wait(MAX_BACKOFF_MS * SERVICE_TRIES)
+    expect(store.list('main')[0]).toMatchObject({ phase: 'failed', message: expect.stringContaining('new code') })
+    const looks = fake.looks()
+    await wait(MAX_BACKOFF_MS * 4)
+    expect(fake.looks()).toBe(looks)
+  })
+
+  it('keeps waiting while the service is only unreachable', async () => {
+    const store = open()
+    await store.start('main', 'default', 'Iris')
+    fake.state.service = 'unreachable'
+    await wait(MAX_BACKOFF_MS * SERVICE_TRIES * 2)
+    expect(store.list('main')[0].phase).toBe('waiting')
+    fake.state.service = null
+    fake.finish('pair-1')
+    await wait(MAX_BACKOFF_MS)
+    expect(store.list('main')[0].phase).toBe('connected')
+  })
+
+  it('a refusal or two in a row is not the end', async () => {
+    const store = open()
+    await store.start('main', 'default', 'Iris')
+    fake.state.service = 'refuses'
+    await wait(POLL_MS * 2 + POLL_MS * 4)
+    fake.state.service = null
+    fake.finish('pair-1')
+    await wait(MAX_BACKOFF_MS)
+    expect(store.list('main')[0].phase).toBe('connected')
+  })
+})
+
+describe('starting the bot', () => {
+  it('leaves messaging alone when Hermes restarted it', async () => {
+    const store = open()
+    await store.start('main', 'atlas', 'Atlas')
+    fake.finish('pair-1')
+    await wait(POLL_MS * 2)
+    expect(store.list('main')[0].phase).toBe('connected')
+    expect(fake.state.restarts).toEqual([])
+  })
+
+  it('restarts messaging for the agent when Hermes couldn’t, and tries again while it’s busy', async () => {
+    fake.state.restart = { restart_started: false, restart_error: 'gateway restart already in progress for another profile' }
+    let busy = 1
+    const real = fake.fetch.getMockImplementation()!
+    fake.fetch.mockImplementation(async (input, init = {}) => {
+      if (String(input).includes('/api/gateway/restart') && busy-- > 0) {
+        fake.state.calls.push('POST /api/gateway/restart')
+        return new Response(JSON.stringify({ detail: 'Failed to restart gateway' }), { status: 500 })
+      }
+      return real(input, init)
+    })
+    const store = open()
+    await store.start('main', 'atlas', 'Atlas')
+    fake.finish('pair-1')
+    await wait(POLL_MS * 2)
+    expect(store.list('main')[0].phase).toBe('connected')
+    await wait(10_000)
+    expect(fake.state.restarts).toEqual(['atlas'])
   })
 })
 
