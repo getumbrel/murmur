@@ -62,21 +62,6 @@ export type ModelPick = {
 
 export const PICKS: ModelPick[] = [
   {
-    id: 'qwen3.5-2b',
-    name: 'Qwen3.5 2B',
-    line: 'qwen3.5-2b',
-    source: { repo: 'unsloth/Qwen3.5-2B-GGUF', file: 'Qwen3.5-2B-Q4_K_M.gguf' },
-    bytes: 1_280_835_840,
-    weights: 1_280_835_840,
-    // 6 of 24 layers attend, 2 KV heads × (256 + 256) dims × 2 bytes.
-    kvPerToken: 6 * 2048,
-    recurrentLayers: 18,
-    rank: 1,
-    smarts: 'Basic',
-    speed: { cpu: 'Fastest', gpu: 'Fastest' },
-    hue: 192,
-  },
-  {
     id: 'qwen3.5-4b',
     name: 'Qwen3.5 4B',
     line: 'qwen3.5-4b',
@@ -214,7 +199,7 @@ export const usable = (hw: Hardware) => (hw.uma ? hw.vramUsable : hw.vramUsable 
 // - The window it starts at. Hermes climbs its ladder (64K, 96K, 144K, 216K,
 //   the model's own 256K) as far as its estimate fits 80% of the RAM the
 //   machine has (hardware.probe_budget(planning=True)). Upstream stops there,
-//   so a 16 GB machine starts the 2B and 4B at 256K however little is free.
+//   so a 16 GB machine starts the 4B at 256K however little is free.
 //   Umbrel's image (hermes-agent-umbrel v0.22.0-3, which Murmur ships) also
 //   narrows unified memory to 80% of what's free, never below 64K, and grows
 //   the window again when memory frees up.

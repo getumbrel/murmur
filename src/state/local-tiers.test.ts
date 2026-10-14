@@ -34,43 +34,45 @@ describe('the window Hermes starts at, in RAM', () => {
   const pick = (id: string) => PICKS.find((p) => p.id === id)!
 
   it('narrows to what’s free, never below 64K, as Umbrel’s Hermes image does', () => {
-    expect(startWindow(pick('qwen3.5-2b'), cpu(3))).toBe(64 * 1024)
-    expect(startWindow(pick('qwen3.5-2b'), cpu(8))).toBe(144 * 1024)
+    expect(startWindow(pick('qwen3.5-4b'), cpu(3))).toBe(64 * 1024)
     expect(startWindow(pick('qwen3.5-4b'), cpu(8))).toBe(64 * 1024)
     expect(startWindow(pick('qwen3.5-9b'), cpu(3))).toBe(64 * 1024)
   })
 
   it('climbs to the model’s own 256K when there’s room', () => {
-    expect(startWindow(pick('qwen3.5-2b'), cpu(30, 32))).toBe(256 * 1024)
+    expect(startWindow(pick('qwen3.5-4b'), cpu(30, 32))).toBe(256 * 1024)
   })
 
-  it('holds the weights, the whole q8 window and llama.cpp’s buffers: the 2B at 64K is the 2.4–2.6 GB measured', () => {
-    const twoB = pick('qwen3.5-2b')
-    expect(held(twoB, cpu(3))).toBe(twoB.weights + 12288 * 65536 * (34 / 64) + 18 * 4 * 2 ** 20 + 0.8 * GB)
-    expect(held(twoB, cpu(3)) / GB).toBeCloseTo(2.58, 2)
+  it('holds the weights, the whole q8 window and llama.cpp’s buffers', () => {
+    const fourB = pick('qwen3.5-4b')
+    expect(held(fourB, cpu(3))).toBe(
+      fourB.weights + fourB.kvPerToken * 65536 * (34 / 64) + fourB.recurrentLayers * 4 * 2 ** 20 + 0.8 * GB,
+    )
+    expect(held(fourB, cpu(3)) / GB).toBeCloseTo(4.78, 2)
   })
 })
 
 describe('what to offer', () => {
-  it('a busy 16 GB Umbrel with about 3 GB free: the 2B at 64K, and says it’s tight', () => {
-    const { offers, tight } = offersFor(cpu(3))
-    expect(offers.map((o) => o.pick.id)).toEqual(['qwen3.5-2b'])
-    expect(offers[0]).toMatchObject({ recommended: true, fits: false, speed: 'Fastest' })
-    expect(tight).toEqual({ free: 3 * GB })
+  it('a busy 16 GB Umbrel with 4 GB free or less: nothing, since even the 4B needs about 4.8', () => {
+    expect(offersFor(cpu(3))).toEqual({ offers: [], tight: null })
+    expect(offersFor(cpu(4))).toEqual({ offers: [], tight: null })
   })
 
-  it('a 16 GB Umbrel with 4 GB free: the 2B fits', () => {
-    expect(ids(cpu(4))).toEqual(['qwen3.5-2b'])
-    expect(offersFor(cpu(4)).tight).toBeNull()
+  it('a 16 GB Umbrel with 5 GB free: the 4B, and says it’s tight', () => {
+    const { offers, tight } = offersFor(cpu(5))
+    expect(offers.map((o) => o.pick.id)).toEqual(['qwen3.5-4b'])
+    expect(offers[0]).toMatchObject({ recommended: true, fits: false, speed: 'Fast' })
+    expect(tight).toEqual({ free: 5 * GB })
   })
 
-  it('a 16 GB Umbrel with room: the 4B, with the 2B as the quicker one', () => {
-    expect(ids(cpu(8))).toEqual(['qwen3.5-4b', 'qwen3.5-2b'])
+  it('a 16 GB Umbrel with room: the 4B', () => {
+    expect(ids(cpu(6))).toEqual(['qwen3.5-4b'])
+    expect(ids(cpu(8))).toEqual(['qwen3.5-4b'])
     expect(offersFor(cpu(8)).tight).toBeNull()
   })
 
-  it('an 8 GB machine starts models at smaller windows, so the 4B fits in less', () => {
-    expect(ids(cpu(6, 8))).toEqual(['qwen3.5-4b', 'qwen3.5-2b'])
+  it('an 8 GB machine with 6 free: the 4B', () => {
+    expect(ids(cpu(6, 8))).toEqual(['qwen3.5-4b'])
   })
 
   it('plenty free, no graphics card: the 9B, never a slow 27B first', () => {

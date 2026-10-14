@@ -250,12 +250,12 @@ describe('fit', () => {
   })
 
   it('says what it really needs when it’s too big', () => {
-    const c = pickFile([one('Qwen3.5-2B-Q4_K_M.gguf', 1_280_835_840)], { repo: 'unsloth/Qwen3.5-2B-GGUF' }, cpu(2))
-    const model = hfModel('unsloth/Qwen3.5-2B-GGUF', c as Extract<typeof c, { group: unknown }>, cpu(2), new Set())
+    const c = pickFile([one('Qwen3.5-4B-Q4_K_M.gguf', 2_740_937_888)], { repo: 'unsloth/Qwen3.5-4B-GGUF' }, cpu(3))
+    const model = hfModel('unsloth/Qwen3.5-4B-GGUF', c as Extract<typeof c, { group: unknown }>, cpu(3), new Set())
     expect(model.hf.fit).toBe('too-big')
     expect(model.fits).toBe(false)
     // Sizes keep their unit on the same line (a no-break space).
-    expect(fitLine(model.hf).replace(/\s/g, ' ')).toBe('Needs about 2.6 GB of memory; 2.0 GB is free.')
+    expect(fitLine(model.hf).replace(/\s/g, ' ')).toBe('Needs about 4.8 GB of memory; 3.0 GB is free.')
   })
 
   it('with a graphics card, as Hermes reckons it', () => {

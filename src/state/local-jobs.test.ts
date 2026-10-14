@@ -67,7 +67,7 @@ describe('what Hermes says, as offers', () => {
   const status = {
     runtime_installed: true,
     active_model_id: null,
-    models: [{ id: 'Qwen3.5-2B-Q4_K_M', size_bytes: 1 }],
+    models: [{ id: 'Qwen3.5-4B-Q4_K_M', size_bytes: 1 }],
   }
   const hw = (free: number) => ({
     uma: true,
@@ -78,11 +78,11 @@ describe('what Hermes says, as offers', () => {
   })
 
   it('marks what’s already downloaded', () => {
-    // An 8 GB machine with 6 free: Hermes starts the 4B at 64K there.
-    const out = deviceModels(status, { ...hw(6e9), ram_total_bytes: 8e9 }, [])
+    // 12 GB free on 16: the 9B leads, and the 4B (already here) is the quicker one.
+    const out = deviceModels(status, hw(12e9), [])
     expect(out.models.map((m) => [m.id, m.downloaded, m.recommended])).toEqual([
-      ['qwen3.5-4b', false, true],
-      ['qwen3.5-2b', true, false],
+      ['qwen3.5-9b-q6', false, true],
+      ['qwen3.5-4b', true, false],
     ])
   })
 

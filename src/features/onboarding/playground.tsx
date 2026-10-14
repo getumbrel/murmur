@@ -60,10 +60,10 @@ const SERVERS = [
 
 const EMPTY_OLLAMA = [{ name: 'Ollama', baseUrl: 'http://ollama_ollama_1:11434/v1', models: [] }]
 
-// What Hermes's hardware answer turns into on a 16 GB Umbrel with about 8 GB free (local-tiers.ts).
+// What Hermes's hardware answer turns into on a 16 GB Umbrel with about 12 GB free (local-tiers.ts).
 const DEVICE_MODELS: DeviceModel[] = [
-  { id: 'qwen3.5-4b', name: 'Qwen3.5 4B', bytes: 2_740_937_888, speed: 'Fast', smarts: 'Good', hue: 278, recommended: true, fits: true, downloaded: false },
-  { id: 'qwen3.5-2b', name: 'Qwen3.5 2B', bytes: 1_280_835_840, speed: 'Fastest', smarts: 'Basic', hue: 192, recommended: false, fits: true, downloaded: false },
+  { id: 'qwen3.5-9b-q6', name: 'Qwen3.5 9B', bytes: 7_458_301_152, speed: 'Steady', smarts: 'Smart', hue: 222, recommended: true, fits: true, downloaded: false },
+  { id: 'qwen3.5-4b', name: 'Qwen3.5 4B', bytes: 2_740_937_888, speed: 'Fast', smarts: 'Good', hue: 278, recommended: false, fits: true, downloaded: false },
 ]
 
 // Models typed in by name, as Hermes's file list and the same machine turn them into cards (local-hf.ts).
