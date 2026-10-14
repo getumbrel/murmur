@@ -5,7 +5,14 @@ import { Sheet } from '@/ui/sheet'
 // A yes/no question in a sheet: `if (await ask({...})) …`. Render <AskHost />
 // once on any screen that asks.
 
-type Question = { title: string; body?: string; action: string; destructive?: boolean }
+type Question = {
+  title: string
+  body?: string
+  action: string
+  destructive?: boolean
+  /** Just saying something: the one button, no Cancel. */
+  notice?: boolean
+}
 type Pending = Question & { answer: (yes: boolean) => void }
 
 const useAsk = create<{ pending: Pending | null; open: boolean }>(() => ({ pending: null, open: false }))
@@ -29,9 +36,11 @@ export function AskHost() {
         <Button size="lg" variant={pending?.destructive ? 'danger' : 'accent'} onClick={() => close(true)}>
           {pending?.action}
         </Button>
-        <Button size="lg" variant="ghost" className="text-ink-2" onClick={() => close(false)}>
-          Cancel
-        </Button>
+        {!pending?.notice && (
+          <Button size="lg" variant="ghost" className="text-ink-2" onClick={() => close(false)}>
+            Cancel
+          </Button>
+        )}
       </div>
     </Sheet>
   )

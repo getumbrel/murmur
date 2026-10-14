@@ -4,6 +4,7 @@ import { useLocation } from 'wouter'
 import { toast } from 'sonner'
 import { Welcome } from '@/features/onboarding/welcome'
 import { Done } from '@/features/onboarding/done'
+import { Arrived, clearArrived, readArrived } from '@/features/onboarding/arrived'
 import { FirstAgent } from '@/features/onboarding/first-agent'
 import { STEP_COLUMN } from '@/features/onboarding/step'
 import { ConnectFlow } from '@/features/settings/connect-flow'
@@ -18,13 +19,16 @@ import { WindowControlsGap } from '@/ui/titlebar'
 
 // First run: welcome → connect a model → shape the first agent → done.
 // People who already use Hermes see the welcome once and go straight in.
+// Having just chosen a Hermes that already has agents (the setup flow in
+// front of the app, features/onboarding/setup-flow.tsx), they're greeted
+// instead: "Your agents are here".
 // With more than one Hermes, the switcher sits top-left on every step, so a
 // Hermes that has no model yet is never a dead end.
 
-type Step = 'welcome' | 'connect' | 'agent' | 'done'
+type Step = 'welcome' | 'connect' | 'agent' | 'done' | 'here'
 
 export function OnboardingScreen({ step: param }: { step?: string }) {
-  const step: Step = param === 'connect' || param === 'agent' || param === 'done' ? param : 'welcome'
+  const step: Step = param === 'connect' || param === 'agent' || param === 'done' || param === 'here' ? param : 'welcome'
   const [, navigate] = useLocation()
   const readiness = useReadiness()
   const welcomed = useWelcomed()
@@ -33,13 +37,20 @@ export function OnboardingScreen({ step: param }: { step?: string }) {
   const reduced = usePrefersReducedMotion()
   const switching = useSwitcherShown()
 
+  // Just chose a Hermes with agents in it: they're greeted once.
+  const [arrived] = useState(readArrived)
+
   const ready = readiness === 'ready' || readiness === 'needs-welcome'
-  const afterReady = () => navigate(fresh ? '/welcome/agent' : '/', { replace: true })
+  // A brand-new Hermes shapes its first agent; one with agents already greets them.
+  const afterReady = () => navigate(fresh ? '/welcome/agent' : arrived ? '/welcome/here' : '/', { replace: true })
 
   // Past the welcome, the steps are for a new Hermes (or one with no model yet).
   // Anywhere else they'd overwrite someone's main agent, so they lead home.
   const [cleared, setCleared] = useState(false)
-  const allowed = step === 'welcome' || cleared || (step === 'connect' ? readiness === 'needs-setup' || fresh : fresh)
+  const allowed =
+    (step === 'welcome' && !welcomed) ||
+    cleared ||
+    (step === 'here' ? !!arrived : step === 'connect' ? readiness === 'needs-setup' || fresh : step !== 'welcome' && fresh)
   useEffect(() => {
     if (step === 'welcome' || cleared) return
     if (allowed) setCleared(true)
@@ -49,9 +60,10 @@ export function OnboardingScreen({ step: param }: { step?: string }) {
   // Someone who has seen the welcome before only needs what's missing.
   useEffect(() => {
     if (step !== 'welcome' || !welcomed) return
-    if (ready) navigate('/', { replace: true })
+    if (ready && fresh !== undefined) afterReady()
     else if (readiness === 'needs-setup') navigate('/welcome/connect', { replace: true })
-  }, [step, welcomed, ready, readiness, navigate])
+    else if (readiness === 'unknown') navigate('/', { replace: true })
+  }, [step, welcomed, ready, readiness, fresh, navigate])
 
   const screen = {
     welcome: (
@@ -83,6 +95,7 @@ export function OnboardingScreen({ step: param }: { step?: string }) {
       />
     ),
     done: <DoneStep onStart={() => navigate('/chat/default', { replace: true })} />,
+    here: <HereStep chats={arrived?.chats} onStart={() => navigate('/', { replace: true })} />,
   }[step]
 
   return (
@@ -199,6 +212,22 @@ async function personalize(main: Agent | undefined, d: AgentDraft) {
       soul: composeSoul(d.name, d.role, d.personality, d.custom),
       template: d.template,
     },
+  )
+}
+
+// ── Your agents are here ────────────────────────────────────────────────────
+
+function HereStep({ chats, onStart }: { chats?: number; onStart: () => void }) {
+  // Plays once.
+  useEffect(clearArrived, [])
+  const agents = useAgents().data ?? []
+  if (!agents.length) return null
+  return (
+    <Arrived
+      agents={agents.map((a) => ({ id: a.id, name: a.name, hue: a.hue, isDefault: a.isDefault, at: a.lastChat?.at ?? a.mainChatAt }))}
+      chats={chats}
+      onStart={onStart}
+    />
   )
 }
 

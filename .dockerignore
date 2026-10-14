@@ -17,3 +17,6 @@ README.md
 data
 desktop/app
 desktop/release
+.env
+.env.example
+docker-compose.yml

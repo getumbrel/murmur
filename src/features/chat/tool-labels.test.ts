@@ -23,3 +23,12 @@ describe('tools from connected servers', () => {
     expect(didSummary(['web_search', 'mcp__umbrel__list_files'])).toBe('Searched the web and used your Umbrel')
   })
 })
+
+describe('tools Hermes renamed', () => {
+  it('read like their old names', () => {
+    expect(toolLabel('todo_list', {}).label).toBe('Planning')
+    expect(toolLabel('process_manage', {}).label).toBe('Checking on a task')
+    expect(toolLabel('cronjob_manage', { name: 'Morning briefing' })).toMatchObject({ label: 'Scheduling', detail: 'Morning briefing' })
+    expect(didSummary(['cronjob_manage'])).toBe('Set up a routine')
+  })
+})

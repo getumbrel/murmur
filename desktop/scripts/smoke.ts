@@ -1,9 +1,9 @@
 // node desktop/scripts/smoke.ts <executable> [screenshot.png]
 //
-// Launches a packaged Murmur on fresh, throwaway data, waits for its first
-// screen ("Connect to Hermes"), checks the page sees the desktop app, and saves
-// a screenshot. It connects to nothing. CI runs it on Linux under xvfb-run; it
-// works on any desktop with a display.
+// Launches a packaged Murmur on fresh, throwaway data, goes past the welcome to
+// "Connect to Hermes" (the desktop app has no built-in Hermes), checks the
+// page sees the desktop app, and saves a screenshot. It connects to nothing.
+// CI runs it on Linux under xvfb-run; it works on any desktop with a display.
 //
 // Playwright's _electron can't drive a release build (its fuses turn off the
 // Node inspector), so this attaches over Chromium's DevTools protocol instead.
@@ -58,6 +58,8 @@ try {
     failed = true
     console.error('Page error:', error.message)
   })
+  // A first run opens on the welcome; past it, a Murmur without a Hermes of its own asks for one.
+  await page.getByRole('button', { name: 'Get started' }).click({ timeout: 60_000 })
   await page.getByLabel('Hermes address').waitFor({ timeout: 60_000 })
   const desktop = await page.evaluate(() => {
     const bridge = (window as { murmurDesktop?: { version?: string } }).murmurDesktop

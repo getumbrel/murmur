@@ -248,7 +248,7 @@ export function createHermes(target: Target) {
   async function check(): Promise<ConnectionInfo> {
     const info: ConnectionInfo = {
       url: target.url,
-      managed: target.source === 'env',
+      managed: target.source === 'env' || target.source === 'builtin',
       source: target.source,
       mode,
       status: 'connected',
@@ -285,7 +285,88 @@ export function createHermes(target: Target) {
   const status = (): Promise<ConnectionInfo> =>
     checked && Date.now() - checked.at < FRESH_MS ? Promise.resolve(checked.info) : once('check', check)
 
-  return { url: base, prefix, target, check: () => once('check', check), status, restAuth, socketAuth, reject }
+  // ── A quick look ──────────────────────────────────────────────────────────
+
+  /** A signed-in REST read, or null when it didn't answer with JSON (setup.ts). */
+  async function read<T>(path: string, timeout = 3000): Promise<T | null> {
+    try {
+      const { headers } = await restAuth()
+      const res = await call(path, { headers }, timeout)
+      return res.ok ? ((await res.json()) as T) : null
+    } catch {
+      return null
+    }
+  }
+
+  /** A signed-in JSON write: whether Hermes took it. */
+  async function write(method: string, path: string, body: unknown, timeout = 8000): Promise<boolean> {
+    try {
+      const { headers } = await restAuth()
+      const res = await call(path, { method, headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify(body) }, timeout)
+      return res.ok
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * A few JSON-RPC calls over one short-lived socket, then it closes: what
+   * only the socket tells (agents' colours, whether a model is set up). Each
+   * answer is its result, or null when it failed or time ran out.
+   */
+  async function peek(calls: [method: string, params?: Record<string, unknown>][], timeout = 3000): Promise<unknown[]> {
+    const results: unknown[] = calls.map(() => null)
+    const deadline = Date.now() + timeout
+    let auth: Awaited<ReturnType<typeof socketAuth>>
+    try {
+      auth = await Promise.race([socketAuth(), new Promise<never>((_, fail) => setTimeout(fail, timeout))])
+    } catch {
+      return results
+    }
+    const url = new URL(endpoint('/api/ws'))
+    url.protocol = base.protocol === 'https:' ? 'wss:' : 'ws:'
+    url.searchParams.set(...auth.param)
+    return new Promise((done) => {
+      const answered = new Set<number>()
+      let socket: WebSocket | undefined
+      const finish = () => {
+        clearTimeout(timer)
+        try {
+          socket?.close()
+        } catch {
+          // Already gone.
+        }
+        done(results)
+      }
+      const timer = setTimeout(finish, Math.max(0, deadline - Date.now()))
+      try {
+        socket = new WebSocket(url)
+      } catch {
+        return finish()
+      }
+      socket.addEventListener('open', () => {
+        calls.forEach(([method, params = {}], i) => socket?.send(JSON.stringify({ jsonrpc: '2.0', id: i + 1, method, params })))
+      })
+      socket.addEventListener('message', (event) => {
+        let data: { id?: unknown; method?: unknown; result?: unknown } | null
+        try {
+          data = JSON.parse(String(event.data)) as typeof data
+        } catch {
+          return
+        }
+        // Answers only: Hermes's own requests and events carry a method.
+        const i = typeof data?.id === 'number' && data.method === undefined ? data.id - 1 : -1
+        if (!data || i < 0 || i >= calls.length || answered.has(i)) return
+        answered.add(i)
+        if ('result' in data) results[i] = data.result
+        if (answered.size === calls.length) finish()
+      })
+      socket.addEventListener('error', finish)
+      socket.addEventListener('close', finish)
+    })
+  }
+
+  return { url: base, prefix, target, check: () => once('check', check), status, restAuth, socketAuth, reject, read, write, peek }
 }
 
 function readCookies(lines: string[]) {

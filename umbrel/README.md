@@ -4,11 +4,12 @@
 
 | File | Purpose |
 |---|---|
-| `murmur/umbrel-app.yml` | Store listing. It depends on `hermes-agent` and uses port `18793`, which no other store app uses. `version` matches `package.json`. |
-| `murmur/docker-compose.yml` | `app_proxy` plus one `web` container (`murmur_web_1:3000`, running as user 1000:1000). It mounts `${APP_DATA_DIR}/data` at `/data` for `murmur.json`, which holds any other Hermes added in Settings → Hermes (with their sign-ins) and a new name for "This Umbrel". With `HERMES_URL` pinned and no `MURMUR_PASSWORD`, nothing else is written there. |
-| `murmur/data/.gitkeep` | Ships the data folder so umbrelOS creates it owned by the app user, not root. |
+| `murmur/umbrel-app.yml` | Store listing. It needs no other app, uses port `18793`, which no other store app uses, and lets umbrelOS move its data (`storage.dataRoot`). `version` matches `package.json`. |
+| `murmur/docker-compose.yml` | `app_proxy`, Murmur's `web` container (`murmur_web_1:3000`, running as user 1000:1000) and its own Hermes (`murmur_hermes_1:9119`). `web` mounts `${APP_DATA_DIR}/data/murmur` at `/data` for `murmur.json`: which Hermes was chosen, any others added in Settings → Server (with their sign-ins), and their names. Hermes keeps its agents, chats and API keys in `${APP_DATA_DIR}/data/hermes`, a folder Murmur's container can't see. Both sit under `data/`, so they move together when umbrelOS relocates the app's data. |
+| `murmur/exports.sh` | The built-in Hermes's dashboard password and session secret, derived per install. Only Murmur and its Hermes see them. |
+| `murmur/data/murmur/.gitkeep`, `murmur/data/hermes/.gitkeep` | Ship the data folders so umbrelOS creates them owned by the app user, not root. |
 | `gallery/murmur/icon.svg` | 256×256 square icon with no rounded corners. umbrelOS applies its own mask. |
-| `gallery/murmur/1.jpg`–`5.jpg` | 1440×900 store screenshots, in the order `gallery:` lists them: home, a chat asking for approval, a group, the agent templates and the welcome. |
+| `gallery/murmur/1.jpg`–`5.jpg` | 1440×900 screenshots for the Umbrel team's App Store images: home, a chat asking for approval, a group, the agent templates and the welcome. |
 
 ## Store screenshots
 
@@ -34,43 +35,28 @@ It needs Docker and Playwright's Chromium, takes about two minutes and removes e
    ```
 3. Pin that digest in `murmur/docker-compose.yml`, for example `ghcr.io/getumbrel/murmur:v0.1.0@sha256:…`.
 
-> **Release blockers.** Two placeholders are left on purpose, each marked with a `TODO(…)` comment. Fill them before the folder goes into `umbrel-apps`. Check with `grep -rn '<digest>\|/pull/TODO' murmur/`, which must print nothing:
-> - `TODO(digest)`: `image: …@sha256:<digest>` in `docker-compose.yml` (step 3 above). v0.1.0 has not been pushed yet.
-> - `TODO(submission)`: `submission: …/pull/TODO` in `umbrel-app.yml` (the PR URL, once it's open).
-
 ## Submitting to the store
 
-1. Copy `murmur/` into a branch of `getumbrel/umbrel-apps`.
-2. Test it on a real Umbrel. Install it from a community app store, or copy the folder into a dev Umbrel's app store. Check the following:
+Murmur was submitted in [getumbrel/umbrel-apps#6196](https://github.com/getumbrel/umbrel-apps/pull/6196). For a new version:
+
+1. Copy `murmur/` over the app's folder in a branch of `getumbrel/umbrel-apps`, with the new digest and `releaseNotes`.
+2. Run the store's linter there: `node .tools/lint-apps.mjs murmur --check-images`.
+3. Test it on a real Umbrel. Install it from a community app store, or copy the folder into a dev Umbrel's app store. Check the following:
    - Murmur opens behind the Umbrel login.
+   - On first run it asks where your agents should live. With the Hermes Agent app installed, it offers that app with its agents; without it, "Start fresh" readies the built-in Hermes (the first start takes a minute or two on a small Umbrel).
+   - An update from a version that used the Hermes Agent app carries on with it, without asking.
    - Chats stream.
    - Approvals work.
    - "Add to Home Screen" picks up the icon and name (those files are on `PROXY_AUTH_WHITELIST`).
-3. Open the PR:
-   - Attach `gallery/murmur/` (the icon and `1.jpg`–`5.jpg`). The Umbrel team uploads them to the gallery repo under `murmur/`, where `gallery:` in the manifest points.
-   - Fill in `submission` with the PR URL and remove its `TODO(submission)` comment.
+4. Open the PR with the store's template.
 
-## How Murmur reaches Hermes (and a follow-up for the Hermes app)
+A new app ships with `gallery: []` and no `icon`. The Umbrel team makes the App Store images and hosts them, with the icon, in [getumbrel/umbrel-apps-gallery](https://github.com/getumbrel/umbrel-apps-gallery). `gallery/murmur/` keeps the screenshots and `icon.svg` to hand over.
 
-All apps share `umbrel_main_network`. Murmur's server talks directly to `http://hermes-agent_web_1:18789` (`HERMES_URL`). It does not go through Hermes's app proxy.
+## How Murmur reaches Hermes
 
-The Hermes Agent app runs with `HERMES_UMBREL_APP_PROXY_AUTH=1`, which means Hermes trusts every request that reaches its port and puts its per-start dashboard session token into the page. Murmur reads the token from that page and attaches it to REST and WebSocket calls. When Hermes restarts and rejects the old token, Murmur fetches a fresh one.
+All apps share `umbrel_main_network`, and Murmur's server talks to Hermes directly, never through an app proxy.
 
-This works today, but it relies on Hermes's app-proxy auth bypass. The cleaner setup is for the Hermes Agent app to export a dedicated token:
+- **The built-in Hermes** (`murmur_hermes_1:9119`) runs Hermes's dashboard and messaging gateway, like the Hermes Agent app, but gated by Hermes's own username and password sign-in. The password and the key that signs its sessions come from `exports.sh`, so only Murmur can get in. It has no `app_proxy` and no published port, and other apps on the network get `401` from everything but Hermes's public status and health checks. Murmur signs in like any password-protected Hermes: a short-lived access token for REST, and a single-use ticket for each live connection.
+- **The Hermes Agent app** (`hermes-agent_web_1:18789`), when it's installed, is offered on first run (`MURMUR_FIND_HERMES`). It runs with `HERMES_UMBREL_APP_PROXY_AUTH=1`, so it trusts every request that reaches its port and puts its per-start dashboard session token in its page. Murmur reads the token from that page, as before, and fetches a fresh one when Hermes restarts.
 
-```sh
-# hermes-agent/exports.sh
-export APP_HERMES_AGENT_TOKEN="$(derive_entropy "hermes-agent-dashboard-token")"
-```
-
-```yaml
-# hermes-agent/docker-compose.yml (web.environment)
-HERMES_DASHBOARD_SESSION_TOKEN: ${APP_HERMES_AGENT_TOKEN}
-```
-
-```yaml
-# murmur/docker-compose.yml (web.environment)
-HERMES_TOKEN: ${APP_HERMES_AGENT_TOKEN}
-```
-
-Murmur's server already supports `HERMES_TOKEN`: it uses that token and stops reading the page. Once the Hermes app ships the export, add the line above.
+A session token alone can't gate a Hermes dashboard any more (from 0.22, Hermes won't serve a gated dashboard without a sign-in provider), so the old plan for the Hermes Agent app to export one no longer applies. If it ever drops its app-proxy bypass for a password, Murmur can sign in to it as it does to the built-in.

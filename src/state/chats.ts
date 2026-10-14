@@ -991,6 +991,7 @@ function onServerRequest(req: ServerRequest) {
           kind: 'approval',
           id: uid('ap'),
           requestId: req.id,
+          ...(typeof params.request_id === 'string' && params.request_id && { approvalId: params.request_id }),
           ...text,
           status: 'pending',
           speaker,
@@ -1363,6 +1364,28 @@ export function friendlyError(raw: string) {
 
 // ── Wiring ──────────────────────────────────────────────────────────────────
 
+/**
+ * Hermes dropped a chat's waiting approvals (Hermes 0.22: the turn was
+ * stopped, or the chat let go) and treated them as a no. A tab still attached
+ * also gets request.cancel; this catches cards brought back by a replay or a
+ * reload. It names approvals by their own id, or none for all of the chat's.
+ */
+function cancelApprovals(payload: P) {
+  const id = runtimeToStored.get(String(payload.session_id ?? '')) ?? (typeof payload.stored_session_id === 'string' ? payload.stored_session_id : '')
+  if (!id || !getChat(id)) return
+  const named = Array.isArray(payload.request_ids) ? payload.request_ids.map(String) : []
+  const hit = (i: ChatItem): i is Extract<ChatItem, { kind: 'approval' }> =>
+    i.kind === 'approval' && i.status === 'pending' && (!named.length || (!!i.approvalId && named.includes(i.approvalId)))
+  const items = getChat(id)!.items
+  if (!items.some(hit)) return
+  for (const i of items) if (hit(i)) requests.delete(i.requestId)
+  patch(id, (c) => {
+    const next = c.items.map((i): ChatItem => (hit(i) ? { ...i, status: 'expired' } : i))
+    const stillAsking = next.some((i) => (i.kind === 'approval' || i.kind === 'clarify') && i.status === 'pending')
+    return { status: c.status === 'waiting' && !stillAsking ? 'working' : c.status, items: next }
+  })
+}
+
 let wired = false
 
 export function wireChats() {
@@ -1377,6 +1400,7 @@ export function wireChats() {
       runtimeToStored.delete(runtimeId)
       if (id) patch(id, () => ({ runtimeId: undefined }))
     }
+    if (ev.type === 'approval.cancelled') cancelApprovals(((ev as { payload?: P }).payload ?? {}) as P)
   })
   // After a reconnect, re-attach the chat on screen and any that are busy, so
   // their events flow again (Hermes's client replays anything we missed). The

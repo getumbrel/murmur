@@ -1,0 +1,52 @@
+# Murmur with its own Hermes, on any machine with Docker.
+#
+#   cp .env.example .env    # then set MURMUR_HERMES_PASSWORD
+#   docker compose up -d    # Murmur on http://localhost:3000
+#
+# Hermes isn't published on any port: only Murmur can reach it, and it signs
+# in with the password in .env. See docs/STANDALONE.md.
+name: murmur
+
+services:
+  murmur:
+    image: ghcr.io/getumbrel/murmur:0.2
+    # In a checkout of this repo, `docker compose up --build` builds it from source instead.
+    build: .
+    init: true
+    restart: on-failure
+    ports:
+      - "3000:3000"
+    volumes:
+      - murmur-data:/data
+    environment:
+      MURMUR_BUILTIN_HERMES_URL: "http://hermes:9119"
+      MURMUR_BUILTIN_HERMES_USERNAME: "murmur"
+      MURMUR_BUILTIN_HERMES_PASSWORD: ${MURMUR_HERMES_PASSWORD:?Set MURMUR_HERMES_PASSWORD in .env (see .env.example)}
+      # A Hermes dashboard already running on this computer is offered too.
+      MURMUR_FIND_HERMES: "http://host.docker.internal:9119"
+      # Optional: a password for Murmur itself. Set one before opening it beyond this computer.
+      MURMUR_PASSWORD: ${MURMUR_PASSWORD:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  hermes:
+    image: ghcr.io/getumbrel/hermes-agent-umbrel:v0.22.0@sha256:3377aa4f92d91408c6267991c3a6d167d3d064a1df8ea2efb754406ae5861d93
+    restart: on-failure
+    stop_grace_period: 1m
+    volumes:
+      - hermes-data:/opt/data
+    environment:
+      HERMES_UID: "1000"
+      HERMES_GID: "1000"
+      HERMES_DASHBOARD: "1"
+      HERMES_DASHBOARD_BASIC_AUTH_USERNAME: "murmur"
+      HERMES_DASHBOARD_BASIC_AUTH_PASSWORD: ${MURMUR_HERMES_PASSWORD:?Set MURMUR_HERMES_PASSWORD in .env (see .env.example)}
+      # Optional: keeps Murmur signed in across Hermes restarts. At least 16 characters.
+      HERMES_DASHBOARD_BASIC_AUTH_SECRET: ${MURMUR_HERMES_SECRET:-}
+      # Routines and Telegram run in Hermes's messaging gateway.
+      HERMES_GATEWAY_BOOTSTRAP_STATE: "running"
+    command: ["gateway", "run"]
+
+volumes:
+  murmur-data:
+  hermes-data:

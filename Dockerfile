@@ -36,8 +36,9 @@ COPY server ./server
 COPY LICENSE ./LICENSE
 COPY src/hermes/vendor/LICENSE ./licenses/hermes-agent.LICENSE
 
-# HERMES_URL is left unset so a standalone install can pick its Hermes in the
-# app; umbrelOS sets it in the app's compose file.
+# HERMES_URL is left unset so the app asks where agents live on first run: the
+# built-in Hermes (MURMUR_BUILTIN_HERMES_URL, set by docker-compose.yml and the
+# umbrelOS compose) or one Murmur finds or is given.
 ENV NODE_ENV=production \
     PORT=3000 \
     DATA_DIR=/data

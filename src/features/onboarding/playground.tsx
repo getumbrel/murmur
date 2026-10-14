@@ -7,16 +7,18 @@ import { ConnectModel, type ChatGPTFlow, type ConnectOption, type ConnectState }
 import { Done } from './done'
 import { FirstAgent } from './first-agent'
 import { Welcome } from './welcome'
+import { SetupPlayground } from './setup-playground'
 
 // Dev playground for onboarding and agent screens, at /onboarding.html.
 // Everything is fake. Query params pick a starting point so screenshots can
 // land on any state: ?screen=connect&flow=waiting&open=chatgpt&chrome=0,
-// ?screen=done&name=Juniper&hue=28
+// ?screen=done&name=Juniper&hue=28. Where your agents live, Getting ready and
+// "Your agents are here": ?screen=where|ready|here (see setup-playground.tsx).
 
 const params = new URLSearchParams(location.search)
 const param = (k: string) => params.get(k) ?? undefined
 
-type Screen = 'welcome' | 'connect' | 'first-agent' | 'done' | 'agents'
+type Screen = 'welcome' | 'where' | 'ready' | 'here' | 'connect' | 'first-agent' | 'done' | 'agents'
 type FlowKey = 'idle' | 'starting' | 'code' | 'waiting' | 'success' | 'disabled' | 'expired' | 'other'
 
 const FLOWS: FlowKey[] = ['idle', 'starting', 'code', 'waiting', 'success', 'disabled', 'expired', 'other']
@@ -88,7 +90,8 @@ export function Playground() {
 
   return (
     <MotionConfig reducedMotion="user">
-      {screen === 'welcome' && <Welcome key={welcomeKey} onContinue={() => setScreen('connect')} />}
+      {screen === 'welcome' && <Welcome key={welcomeKey} onContinue={() => setScreen('where')} />}
+      {(screen === 'where' || screen === 'ready' || screen === 'here') && <SetupPlayground key={screen} screen={screen} />}
       {screen === 'connect' && (
         <ConnectModel
           state={state}
@@ -133,7 +136,7 @@ export function Playground() {
       {param('chrome') !== '0' && (
         <div className="fixed top-[max(8px,env(safe-area-inset-top))] right-2 z-[60] flex max-w-[calc(100vw-16px)] flex-wrap justify-end gap-1 rounded-2xl bg-glass p-1 text-caption shadow-float ring-1 ring-line glass">
           <select className="h-7 rounded-lg bg-fill-2 px-2" value={screen} onChange={(e) => setScreen(e.target.value as Screen)}>
-            {(['welcome', 'connect', 'first-agent', 'done', 'agents'] as const).map((s) => (
+            {(['welcome', 'where', 'ready', 'here', 'connect', 'first-agent', 'done', 'agents'] as const).map((s) => (
               <option key={s}>{s}</option>
             ))}
           </select>

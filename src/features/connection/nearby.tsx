@@ -2,15 +2,20 @@ import { useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import { Check, Monitor, Server } from 'lucide-react'
 import { Spinner } from '@/ui/spinner'
+import { BuddyStack } from '@/ui/buddy'
 import { cn } from '@/lib/cn'
 import { connectionApi, type HermesConnection } from '@/state/connection'
+import { orderedAgents, plural, type FoundHermes } from '@/state/setup'
 import { Tile } from '@/features/settings/page'
+import { agentHue } from '@/features/onboarding/setup-copy'
 
 // Hermes people are likely to have, offered above the address field so most
 // never type one: the dashboard on this computer (its default port, or the
 // Umbrel app's), and an Umbrel on the network. Each is checked once, all at
 // the same time, through Murmur's server (POST /murmur/connection/test, which
 // saves nothing); whatever answers in time is listed, and the rest stay quiet.
+// What Murmur's server found on its own (GET /murmur/setup: the Hermes Agent
+// app on an Umbrel, say) joins the list too, with its agents' faces.
 
 const CANDIDATES = [
   'http://localhost:9119',
@@ -30,12 +35,16 @@ export type NearbyHermes = {
   connection: HermesConnection
   /** Too old for Murmur: shown, but it can't be picked. */
   outdated: boolean
+  /** Found by Murmur's server: chosen by this id, never by typing its address. */
+  foundId?: string
+  /** Its first agents, when known: the row's icon. */
+  faces?: { hue: number; seed: string }[]
 }
 
 const isLoopback = (host: string) => host === 'localhost' || /^127\./.test(host) || host === '[::1]'
 
 /** One Hermes may answer at several of the addresses (localhost and 127.0.0.1): list it once. */
-function placeOf(url: string) {
+export function placeOf(url: string) {
   try {
     const u = new URL(url)
     return `${isLoopback(u.hostname) ? 'loopback' : u.hostname}:${u.port}`
@@ -67,13 +76,43 @@ function describe(c: HermesConnection): NearbyHermes {
   }
 }
 
+/** A Hermes Murmur's server found, as a row: its agents' faces, how many, and where. */
+export function fromFound(f: FoundHermes): NearbyHermes {
+  const agents = orderedAgents(f)
+  const count = Math.max(f.agentCount ?? 0, agents.length)
+  return {
+    url: f.url,
+    title: f.name,
+    detail: [
+      f.needsSignIn && 'Needs a password',
+      count > 0 && plural(count, 'agent'),
+      f.where === 'umbrel' ? 'On this Umbrel' : f.host,
+      f.version && `Hermes ${f.version}`,
+    ]
+      .filter(Boolean)
+      .join(' · '),
+    connection: {
+      url: f.url,
+      managed: false,
+      source: 'saved',
+      mode: f.needsSignIn ? 'password' : 'token',
+      status: f.needsSignIn ? 'needs-login' : 'connected',
+      hermesVersion: f.version,
+      outdated: f.outdated,
+    },
+    outdated: !!f.outdated,
+    foundId: f.id,
+    faces: agents.slice(0, 3).map((a) => ({ hue: agentHue(a), seed: a.id })),
+  }
+}
+
 /** Answers from the last few seconds, so a form that opens twice in a row (or React's dev double run) asks once. */
 const recent = new Map<string, { at: number; answer: Promise<HermesConnection | null> }>()
 const REUSE_MS = 10_000
 
-function probe(url: string) {
+function probe(url: string, fresh = false) {
   const hit = recent.get(url)
-  if (hit && Date.now() - hit.at < REUSE_MS) return hit.answer
+  if (hit && !fresh && Date.now() - hit.at < REUSE_MS) return hit.answer
   const answer = ask(url)
   recent.set(url, { at: Date.now(), answer })
   return answer
@@ -90,14 +129,17 @@ async function ask(url: string): Promise<HermesConnection | null> {
   }
 }
 
-/** Looks once, when `enabled`; lists what it finds as it finds it, in the order above, less those at `known` addresses. */
-export function useNearbyHermes(enabled: boolean, known: string[] = []) {
+/**
+ * Looks once, when `enabled` (and again when `round` changes); lists what it
+ * finds as it finds it, in the order above, less those at `known` addresses.
+ */
+export function useNearbyHermes(enabled: boolean, known: string[] = [], round = 0) {
   const [found, setFound] = useState<{ order: number; connection: HermesConnection }[]>([])
   useEffect(() => {
     if (!enabled) return
     let live = true
     CANDIDATES.forEach((url, order) => {
-      void probe(url).then((connection) => {
+      void probe(url, round > 0).then((connection) => {
         if (!live || !connection) return
         setFound((list) =>
           list.some((f) => placeOf(f.connection.url) === placeOf(connection.url))
@@ -109,7 +151,7 @@ export function useNearbyHermes(enabled: boolean, known: string[] = []) {
     return () => {
       live = false
     }
-  }, [enabled])
+  }, [enabled, round])
   const taken = new Set(known.map(placeOf))
   return found.filter((f) => !taken.has(placeOf(f.connection.url))).map((f) => describe(f.connection))
 }
@@ -191,7 +233,16 @@ function NearbyRow({
       )}
     >
       <span className={cn('flex size-7 flex-none items-center justify-center', n.outdated && 'opacity-50')}>
-        <Tile>{local ? <Monitor size={16} strokeWidth={2} /> : <Server size={16} strokeWidth={2} />}</Tile>
+        {n.faces?.length ? (
+          <BuddyStack
+            size={28}
+            hues={n.faces.map((f) => f.hue)}
+            seeds={n.faces.map((f) => f.seed)}
+            states={n.faces.map(() => (n.outdated ? 'offline' : 'idle'))}
+          />
+        ) : (
+          <Tile>{local ? <Monitor size={16} strokeWidth={2} /> : <Server size={16} strokeWidth={2} />}</Tile>
+        )}
       </span>
       <span className="min-w-0 flex-1">
         <span className={cn('block truncate text-body', n.outdated && 'opacity-50')}>{n.title}</span>

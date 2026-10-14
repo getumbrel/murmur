@@ -29,7 +29,19 @@ export function useRuntimeCheck(profile?: string) {
 // Give up waiting after a few seconds so a missing Hermes shows the app (and
 // the connection banner) instead of an endless splash.
 const useBoot = create(() => ({ late: false }))
-setTimeout(() => useBoot.setState({ late: true }), 6000)
+const BOOT_MS = 6000
+let bootTimer = setTimeout(() => useBoot.setState({ late: true }), BOOT_MS)
+
+/**
+ * The app proper starts now, after a first-run step in front of it (choosing
+ * a Hermes, Getting ready) that can take far longer than the wait: Hermes
+ * gets its few seconds again, rather than counting as not answering.
+ */
+export function restartBoot() {
+  clearTimeout(bootTimer)
+  useBoot.setState({ late: false })
+  bootTimer = setTimeout(() => useBoot.setState({ late: true }), BOOT_MS)
+}
 
 // The welcome plays once per browser.
 const WELCOMED = 'murmur:welcomed'

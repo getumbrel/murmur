@@ -6,7 +6,7 @@ import { connectionApi, connectionKey, useHermesList } from '@/state/connection'
 import { Spinner } from '@/ui/spinner'
 import { Orb } from '@/ui/orb'
 import { cn } from '@/lib/cn'
-import { isUmbrelHermes } from '@/features/connection/hermes-connection-form'
+import { isBuiltinHermes, isUmbrelHermes } from '@/features/connection/hermes-connection-form'
 import { HermesPicker } from '@/features/connection/switcher'
 
 // A Dynamic Island for the connection. It only speaks up when Hermes has been
@@ -82,14 +82,15 @@ export function Island({ phase, inset = 0 }: { phase: Phase; inset?: number }) {
 
   // The Umbrel's own Hermes app, not merely an address from the environment:
   // a standalone Docker run sets HERMES_URL too, and has no Umbrel to check.
-  const umbrel = isUmbrelHermes(
-    useQuery({
-      queryKey: connectionKey,
-      queryFn: connectionApi.get,
-      enabled: visible,
-      staleTime: 60_000,
-    }).data,
-  )
+  const current = useQuery({
+    queryKey: connectionKey,
+    queryFn: connectionApi.get,
+    enabled: visible,
+    staleTime: 60_000,
+  }).data
+  const umbrel = isUmbrelHermes(current)
+  // Murmur's own: nothing to check but Murmur itself.
+  const builtin = isBuiltinHermes(current)
 
   // With another Hermes to go to, the island offers the way there: it hangs
   // where the phone's home keeps its switcher, and a chat has none.
@@ -146,10 +147,14 @@ export function Island({ phase, inset = 0 }: { phase: Phase; inset?: number }) {
                               elsewhere ? 'max-w-[12.25rem]' : 'max-w-[15.5rem]',
                             )}
                           >
-                            <span className="block text-white">Can’t reach Hermes</span>
-                            {umbrel
-                              ? 'Make sure the Hermes Agent app is running on your Umbrel.'
-                              : 'Make sure Hermes is running. Murmur keeps trying.'}
+                            <span className="block text-white">
+                              {builtin ? 'Murmur’s built-in Hermes isn’t responding' : 'Can’t reach Hermes'}
+                            </span>
+                            {builtin
+                              ? 'Try restarting Murmur.'
+                              : umbrel
+                                ? 'Make sure the Hermes Agent app is running on your Umbrel.'
+                                : 'Make sure Hermes is running. Murmur keeps trying.'}
                           </Hug>
                           {elsewhere && (
                             <button

@@ -7,6 +7,8 @@
 //                          browser uses (connection.ts). /murmur/connection
 //                          is the older single-Hermes API, still answered.
 //   /murmur/login …      → Murmur's own optional password (access.ts).
+//   /murmur/setup        → where agents live, asked once: the Hermes built
+//                          into Murmur, or one it found (setup.ts).
 //   /murmur/local        → finds OpenAI-compatible model servers on this Umbrel
 //                          (the browser can't reach other containers directly).
 //   everything else      → the built web app, with SPA fallback.
@@ -16,10 +18,18 @@
 
 import { accessRequired } from './access.ts'
 import { startServer } from './app.ts'
-import { dataDir } from './config.ts'
+import { builtinConfig, dataDir, decided } from './config.ts'
 import { firstTarget } from './connection.ts'
+import { setupSettled } from './setup.ts'
 
 const { port } = await startServer()
+// An update's first start may still be settling on the Hermes it used before.
+await setupSettled()
 const target = firstTarget()
-console.log(`Murmur listening on :${port} → Hermes at ${target.url} (${target.source})`)
+const builtin = builtinConfig()
+console.log(
+  decided()
+    ? `Murmur listening on :${port} → Hermes at ${target.url} (${target.source})`
+    : `Murmur listening on :${port}; the app will ask where agents live${builtin ? ` (built-in Hermes at ${builtin.url})` : ''}`,
+)
 console.log(`Data in ${dataDir()}${accessRequired() ? '; sign-in required' : ''}`)

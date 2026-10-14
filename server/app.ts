@@ -11,6 +11,7 @@ import { memo, setting, useEnv, type Env } from './config.ts'
 import { handleConnection, hermesFor, onDrop, syncHermesCookie } from './connection.ts'
 import { hostAllowed, originAllowed, requestUrl, sendJson } from './http.ts'
 import { createProxy, refuse } from './proxy.ts'
+import { handleSetup, setupSettled, startSetup } from './setup.ts'
 
 // Model servers commonly installed alongside Hermes on umbrelOS.
 const localCandidates = memo(() =>
@@ -210,6 +211,7 @@ export function startServer(options: ServerOptions = {}): Promise<RunningServer>
     env = { ...env, ...(options.dataDir && { DATA_DIR: options.dataDir }), ...(options.staticDir && { STATIC_DIR: options.staticDir }) }
   }
   useEnv(env)
+  startSetup()
   const staticDir = resolve(env.STATIC_DIR ?? 'dist')
   const carriesHeader = headerCheck(options.requireHeader)
 
@@ -226,9 +228,11 @@ export function startServer(options: ServerOptions = {}): Promise<RunningServer>
     if (path === '/healthz') return void res.writeHead(200).end('ok')
     if (!hostAllowed(req)) return blockedHost(res, req.headers.host)
     if (!carriesHeader(req)) return void res.writeHead(403).end()
-    syncHermesCookie(req, res)
 
     try {
+      // An update's first start may still be settling which Hermes this Murmur uses (setup.ts).
+      await setupSettled()
+      syncHermesCookie(req, res)
       if (!isHermes(path) && !path.startsWith('/murmur/')) return serveStatic(staticDir, req, res, url)
       const mutating = req.method !== 'GET' && req.method !== 'HEAD'
       if ((isHermes(path) || mutating) && !originAllowed(req)) return sendJson(res, 403, { error: 'cross_origin' })
@@ -236,6 +240,7 @@ export function startServer(options: ServerOptions = {}): Promise<RunningServer>
       if (await handleAccess(req, res, path)) return
       if (!isSignedIn(req)) return sendJson(res, 401, { error: 'signed_out' })
       if (isHermes(path)) return await proxy.proxyHttp(req, res, url)
+      if (await handleSetup(req, res, path)) return
       if (await handleConnection(req, res, path)) return
       if (path === '/murmur/local') return sendJson(res, 200, { servers: await discoverLocal() })
       sendJson(res, 404, { error: 'not_found' })
@@ -254,10 +259,12 @@ export function startServer(options: ServerOptions = {}): Promise<RunningServer>
     if (!isHermesApi(url.pathname)) return refuse(socket, 404, 'Not Found')
     if (!carriesHeader(req) || !hostAllowed(req) || !originAllowed(req)) return refuse(socket, 403, 'Forbidden')
     if (!isSignedIn(req)) return refuse(socket, 401, 'Unauthorized')
-    proxy.proxyUpgrade(req, socket, head, url, cookieValue(req)).catch((error) => {
-      console.error(error)
-      socket.destroy()
-    })
+    setupSettled()
+      .then(() => proxy.proxyUpgrade(req, socket, head, url, cookieValue(req)))
+      .catch((error) => {
+        console.error(error)
+        socket.destroy()
+      })
   })
 
   // Long-lived streams must never time out at this hop.

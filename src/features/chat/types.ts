@@ -69,6 +69,8 @@ export type ChatItem =
       kind: 'approval'
       id: string
       requestId: string
+      /** Hermes's own id for the approval (params.request_id), which approval.cancelled names. */
+      approvalId?: string
       /** What the agent wants to do, in plain words. */
       title: string
       /** The exact command or action, shown on request. */

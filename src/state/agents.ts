@@ -11,7 +11,8 @@ import { api } from '@/hermes/rest'
 import { useEffect } from 'react'
 import { gateway, rpc } from '@/hermes/gateway'
 import { ensureAgentTimezone } from '@/state/timezone'
-import { HUES, hueFor } from '@/lib/hues'
+import { hideDesktopToolsets } from '@/state/toolsets'
+import { hexHue, hueFor } from '@/lib/hues'
 import { personalityPrompt, type Personality } from '@/features/agents/agent-editor'
 import { parseUserMessage } from '@/features/media/parse'
 import type { Speaker } from '@/features/chat/types'
@@ -109,28 +110,6 @@ function setPendingLook(id: string, meta?: Record<string, unknown>) {
   } catch {
     // Private mode: the agent shows its slug until it's edited.
   }
-}
-
-/** The nearest palette hue, so pickers can show it as selected. */
-const snapHue = (h: number) =>
-  HUES.reduce((best, x) => (Math.abs(((x - h + 540) % 360) - 180) < Math.abs(((best - h + 540) % 360) - 180) ? x : best), HUES[0])
-
-/** Hue angle of a hex colour in OKLCH, for agents coloured in Hermes Desktop. */
-function hexHue(hex: unknown): number | undefined {
-  const m = typeof hex === 'string' ? /^#?([0-9a-f]{6})$/i.exec(hex.trim()) : null
-  if (!m) return undefined
-  const lin = [0, 2, 4].map((i) => {
-    const c = parseInt(m[1].slice(i, i + 2), 16) / 255
-    return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
-  })
-  const [r, g, b] = lin
-  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b)
-  const mm = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b)
-  const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b)
-  const A = 1.9779984951 * l - 2.428592205 * mm + 0.4505937099 * s
-  const B = 0.0259040371 * l + 0.7827717662 * mm - 0.808675766 * s
-  if (Math.hypot(A, B) < 0.02) return undefined // grey: no hue to speak of
-  return snapHue((Math.atan2(B, A) * 180) / Math.PI + 360)
 }
 
 /** The orb's own colour (oklch 0.66 0.17 h) as hex, for Bot Mode's `color`. */
@@ -384,6 +363,8 @@ export async function createAgent(input: AgentInput) {
   // Set before Hermes's scheduler first reads it, so no restart is needed. It
   // can take Hermes a while and the agent doesn't need it to talk: no waiting.
   void ensureAgentTimezone(id, { restart: false }).catch(() => {})
+  // Its chats from Murmur shouldn't reach for tools only Hermes Desktop can show.
+  void hideDesktopToolsets(id).catch(() => {})
   await rpc('profiles.configure', { name: id, ui_meta: meta }).then(
     () => setPendingLook(id),
     () => {}, // Left pending: the next read retries it.

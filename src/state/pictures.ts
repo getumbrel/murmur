@@ -18,8 +18,10 @@
 // Hermes hides some tools behind its tool search (config tools.tool_search.defer)
 // and image_generate is on that list by default, so an agent only finds it when
 // asked outright. With pictures on, each agent's list is rewritten without it so
-// the agent knows it can draw. (An explicit list replaces Hermes's default
-// wholesale, so we write the agent's current list minus that one tool.)
+// the agent knows it can draw. An explicit list replaces Hermes's default
+// wholesale, freezing the defaults of the Hermes that wrote it, so the list is
+// rebuilt from this Hermes's defaults (plus anything the agent added) each time
+// it falls out of step, e.g. after a Hermes update.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect } from 'react'
@@ -53,13 +55,44 @@ async function read(profile: string) {
 const IMAGE_TOOL = 'image_generate'
 type ToolConfig = { tools?: { tool_search?: { defer?: unknown } } }
 
+/** Tools an older Hermes deferred by default and a newer one no longer has on the list (or at all). */
+const FORMER_DEFAULTS = ['apply_layout']
+
+/**
+ * The agent's tool-search list with the image tool always to hand: this
+ * Hermes's defaults plus whatever else the agent defers, minus image_generate.
+ * Null when the current list is already that. Without the defaults (an older
+ * Hermes that didn't say), only the image tool comes out.
+ */
+export function nextDefer(current: unknown, defaults: unknown): string[] | null {
+  if (!Array.isArray(current)) return null
+  const names = current.filter((n): n is string => typeof n === 'string')
+  let next: string[]
+  if (Array.isArray(defaults)) {
+    const base = defaults.filter((n): n is string => typeof n === 'string')
+    const extras = names.filter((n) => !base.includes(n) && !FORMER_DEFAULTS.includes(n))
+    next = [...base, ...extras].filter((n) => n !== IMAGE_TOOL)
+  } else {
+    next = names.filter((n) => n !== IMAGE_TOOL)
+  }
+  const same = next.length === names.length && next.every((n) => names.includes(n))
+  return same ? null : next
+}
+
+let defaultDefer: Promise<unknown> | null = null
+
+/** This Hermes's default tool-search list (public, and the same for every agent). */
+const readDefaultDefer = () =>
+  (defaultDefer ??= api.get<ToolConfig>('/api/config/defaults').then(
+    (d) => d.tools?.tool_search?.defer,
+    () => (defaultDefer = null),
+  ))
+
 /** Take the image tool out of the agent's tool search so it's always to hand. */
 async function surface(profile: string) {
-  const config = await api.get<ToolConfig>(`/api/config${q(profile)}`)
-  const defer = config.tools?.tool_search?.defer
-  if (!Array.isArray(defer) || !defer.includes(IMAGE_TOOL)) return
-  const next = defer.filter((name) => name !== IMAGE_TOOL)
-  await api.put(`/api/config${q(profile)}`, { config: { tools: { tool_search: { defer: next } } } })
+  const [config, defaults] = await Promise.all([api.get<ToolConfig>(`/api/config${q(profile)}`), readDefaultDefer()])
+  const next = nextDefer(config.tools?.tool_search?.defer, defaults)
+  if (next) await api.put(`/api/config${q(profile)}`, { config: { tools: { tool_search: { defer: next } } } })
 }
 
 async function apply(profile: string, on: boolean) {

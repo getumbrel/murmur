@@ -6,6 +6,7 @@ import { ByUmbrel } from '@/ui/brand'
 import { liftCurtain, type HermesConnection } from '@/state/connection'
 import { WindowControlsGap } from '@/ui/titlebar'
 import { HermesSwitcher, hostOf } from './switcher'
+import { isBuiltinHermes, isUmbrelHermes, useOnUmbrel } from './hermes-connection-form'
 
 /**
  * In front of the app when this browser's Hermes is too old for Murmur:
@@ -16,7 +17,10 @@ export function UpdateHermes({ connection: c, onCheck }: { connection: HermesCon
   useEffect(liftCurtain, [])
   const [checking, setChecking] = useState(false)
   const name = c.name || hostOf(c.url)
-  const umbrel = /umbrel/i.test(hostOf(c.url)) || c.managed
+  // Murmur's own Hermes is updated by updating Murmur.
+  const builtin = isBuiltinHermes(c)
+  const onUmbrel = useOnUmbrel()
+  const umbrel = builtin ? onUmbrel : isUmbrelHermes(c) || /umbrel/i.test(hostOf(c.url))
 
   return (
     <main className="flex min-h-dvh flex-col bg-bg px-6 safe-top safe-bottom">
@@ -26,12 +30,24 @@ export function UpdateHermes({ connection: c, onCheck }: { connection: HermesCon
       </div>
       <div className="mx-auto flex w-full max-w-sm flex-1 flex-col items-center justify-center pb-[8vh] text-center">
         <Buddy hue={278} size={88} state="offline" seed="update" label="" />
-        <h1 className="mt-7 text-title font-semibold tracking-[-0.02em] text-balance">This Hermes needs an update</h1>
+        <h1 className="mt-7 text-title font-semibold tracking-[-0.02em] text-balance">
+          {builtin ? 'Murmur needs an update' : 'This Hermes needs an update'}
+        </h1>
         <p className="mt-2 text-subhead text-ink-2 text-pretty">
-          {name} is running Hermes {c.hermesVersion ?? 'an older version'}. Murmur needs {c.minVersion ?? 'a newer version'} or newer.
+          {builtin ? 'Its built-in Hermes is' : `${name} is running Hermes`} {c.hermesVersion ?? 'an older version'}. Murmur needs{' '}
+          {c.minVersion ?? 'a newer version'} or newer.
         </p>
         <div className="mt-6 w-full rounded-xl bg-fill-1 px-4 py-3.5 text-left text-subhead text-ink-2">
-          {umbrel ? (
+          {builtin ? (
+            umbrel ? (
+              <>
+                Open the <span className="font-medium text-ink">App Store</span> on your Umbrel, find{' '}
+                <span className="font-medium text-ink">Murmur</span> and tap <span className="font-medium text-ink">Update</span>.
+              </>
+            ) : (
+              'Pull the latest Murmur and restart it.'
+            )
+          ) : umbrel ? (
             <>
               On that Umbrel, open the <span className="font-medium text-ink">App Store</span>, find{' '}
               <span className="font-medium text-ink">Hermes Agent</span> and tap{' '}

@@ -1,4 +1,4 @@
-import { useRef, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import { toast } from 'sonner'
 import { Check, ChevronDown } from 'lucide-react'
@@ -9,15 +9,20 @@ import { ByUmbrel } from '@/ui/brand'
 import { Spinner } from '@/ui/spinner'
 import { cn } from '@/lib/cn'
 import { ask } from '@/features/settings/ask'
+import { useQuery } from '@tanstack/react-query'
 import { useHermesConnection, type ConnectionRequest, type HermesConnection } from '@/state/connection'
+import { BUILTIN_ID, fetchSetup, setupKey } from '@/state/setup'
+import { BackPill, STEP_COLUMN, StepHeader } from '@/features/onboarding/step'
 import { BrandHeader } from './brand-header'
 import { Field, Note, PasswordField, StatusDot } from './fields'
-import { NearbyList, useNearbyHermes, type NearbyHermes } from './nearby'
+import { NearbyList, placeOf, useNearbyHermes, type NearbyHermes } from './nearby'
 
 // "Connect to Hermes": where a standalone Murmur learns which Hermes to use.
 // Type an address, Murmur checks it as you leave the field (and opens the
 // password fields if that Hermes has one), then Connect tests and saves.
-// On umbrelOS the address is fixed, so it shows a read-only card instead.
+// A Hermes set by the environment, or built into Murmur, shows a read-only
+// card instead. In onboarding (`step`) it wears the steps' chrome, and what
+// Murmur's server found on its own is offered first.
 
 const UMBREL_HOST = 'hermes-agent_web_1'
 const HUE = 278
@@ -39,6 +44,18 @@ export type HermesConnectionFormProps = {
   suggest?: boolean
   /** Addresses not to offer: the Hermes already added. */
   added?: string[]
+  /** An onboarding step: the steps' header (Murmur's mark has just been shown), not the lockup. */
+  step?: boolean
+  /** With `step`: a Back pill top-left, and Escape goes back too. */
+  onBack?: () => void
+  /** With `step`: under the button, e.g. "Don't have Hermes yet?". */
+  below?: ReactNode
+  /** What Murmur's server found on its own, listed before what this page finds. */
+  found?: NearbyHermes[]
+  /** Use one of `found` by its id (never by its address, which may be a container's name). */
+  onChooseFound?: (id: string) => Promise<HermesConnection>
+  /** Look around again (after "Don't have Hermes yet?" closes). */
+  round?: number
   /** Playground only: start from a given result. */
   initial?: { url?: string; username?: string; password?: string; showAuth?: boolean; result?: HermesConnection; phase?: Phase }
 }
@@ -78,7 +95,23 @@ export function HermesConnectionForm(props: Pick<HermesConnectionFormProps, 'onC
   )
 }
 
-export function HermesConnectionFormView({ current, onTest, onSave, onReset, onConnected, embedded, suggest, added, initial }: HermesConnectionFormProps) {
+export function HermesConnectionFormView({
+  current,
+  onTest,
+  onSave,
+  onReset,
+  onConnected,
+  embedded,
+  suggest,
+  added,
+  step,
+  onBack,
+  below,
+  found: serverFound = [],
+  onChooseFound,
+  round,
+  initial,
+}: HermesConnectionFormProps) {
   const known = current && current.source !== 'default' ? current : undefined
   const [url, setUrl] = useState(initial?.url ?? known?.url ?? '')
   const [username, setUsername] = useState(initial?.username ?? known?.username ?? '')
@@ -91,7 +124,9 @@ export function HermesConnectionFormView({ current, onTest, onSave, onReset, onC
   const probed = useRef<string | undefined>(initial?.result?.url)
   const usernameRef = useRef<HTMLInputElement>(null)
   const passwordRef = useRef<HTMLInputElement>(null)
-  const nearby = useNearbyHermes(!!suggest, added)
+  const looked = useNearbyHermes(!!suggest, added, round)
+  // The server's finds first; a Hermes it found isn't listed twice.
+  const nearby = [...serverFound, ...looked.filter((n) => !serverFound.some((f) => placeOf(f.url) === placeOf(n.url)))]
   // The one picked from that list, while it connects.
   const [picked, setPicked] = useState<string>()
 
@@ -136,6 +171,12 @@ export function HermesConnectionFormView({ current, onTest, onSave, onReset, onC
   /** Something found nearby: straight in, or to the sign-in fields when it has a password. */
   const pick = (n: NearbyHermes) => {
     if (n.outdated || phase !== 'idle') return
+    if (n.foundId && onChooseFound && n.connection.status === 'connected') {
+      // Chosen by id: its address (perhaps a container's name) never lands in the field.
+      setPicked(n.url)
+      void connect({ url: n.url }, () => onChooseFound(n.foundId!))
+      return
+    }
     setUrl(n.url)
     probed.current = n.url
     if (n.connection.status === 'connected') {
@@ -148,20 +189,22 @@ export function HermesConnectionFormView({ current, onTest, onSave, onReset, onC
     reveal('username')
   }
 
-  const connect = async (req: ConnectionRequest) => {
+  const connect = async (req: ConnectionRequest, via?: () => Promise<HermesConnection>) => {
     setPhase('connecting')
     probed.current = req.url
     let answer: HermesConnection
     try {
-      answer = await onSave(req)
+      answer = await (via ? via() : onSave(req))
     } catch (error) {
       answer = { url: req.url, managed: false, source: 'saved', mode: 'unknown', status: 'unreachable', error: (error as Error).message }
     }
+    // A Hermes chosen by id keeps its address out of the field, whatever the answer.
+    if (via) answer = { ...answer, url: url }
     setResult(answer)
     if (answer.status === 'connected') {
       setPhase('connected')
       setPassword('')
-      setUrl(answer.url)
+      if (!via) setUrl(answer.url)
       setTimeout(() => onConnected?.(answer), 900)
       setTimeout(() => setPhase('idle'), 2400)
       return
@@ -171,6 +214,16 @@ export function HermesConnectionFormView({ current, onTest, onSave, onReset, onC
     if (answer.status === 'needs-login') reveal(username.trim() ? 'password' : 'username')
     if (answer.status === 'bad-login') passwordRef.current?.select()
   }
+
+  // Escape is Back, as the pill is (not while connecting).
+  useEffect(() => {
+    if (!onBack || phase !== 'idle') return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !e.defaultPrevented && !document.querySelector('[data-sheet]')) onBack()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onBack, phase])
 
   const edit = (set: (v: string) => void, field: 'url' | 'auth') => (v: string) => {
     set(v)
@@ -227,7 +280,7 @@ export function HermesConnectionFormView({ current, onTest, onSave, onReset, onC
 
   const fields = (
     <>
-      {suggest && <NearbyList found={nearby} picked={picked} phase={phase} onPick={pick} />}
+      {(suggest || serverFound.length > 0) && <NearbyList found={nearby} picked={picked} phase={phase} onPick={pick} />}
       <div>
         <Label hint={hint}>Address</Label>
         <Field
@@ -320,6 +373,35 @@ export function HermesConnectionFormView({ current, onTest, onSave, onReset, onC
     )
   }
 
+  if (step) {
+    return (
+      <form
+        onSubmit={submit}
+        noValidate
+        className={`relative flex min-h-dvh flex-col safe-top md:justify-center md:py-12 ${STEP_COLUMN}`}
+        style={{ '--hue': HUE } as React.CSSProperties}
+      >
+        <StepHeader
+          animate
+          focus
+          title="Connect to Hermes"
+          body="Murmur works with any Hermes. Pick one it found, or enter its address."
+          before={onBack && <BackPill onClick={onBack} disabled={phase !== 'idle'} />}
+          className="pb-8 md:pt-0"
+        />
+        <div className="flex-1 animate-rise [animation-delay:120ms] md:flex-none">{fields}</div>
+        {/* Phones: pinned under the thumb. Wide: right under the fields. */}
+        <div className="sticky bottom-0 -mx-5 bg-bg px-5 pt-3 pb-[max(24px,env(safe-area-inset-bottom))] md:static md:pt-9 md:pb-0">
+          {button}
+          {below && <div className="mt-3 flex justify-center">{below}</div>}
+          <div className={cn('flex justify-center md:mt-8', below ? 'mt-2' : 'mt-5')}>
+            <ByUmbrel />
+          </div>
+        </div>
+      </form>
+    )
+  }
+
   return (
     <form onSubmit={submit} noValidate className="flex min-h-dvh flex-col bg-bg safe-top md:justify-center md:py-12" style={{ '--hue': HUE } as React.CSSProperties}>
       {/* The pre-app column: the app's 20px gutter, as wide as the onboarding steps that follow. */}
@@ -328,7 +410,7 @@ export function HermesConnectionFormView({ current, onTest, onSave, onReset, onC
         <BrandHeader
           hop={phase === 'connected'}
           title="Connect to Hermes"
-          body="Murmur works with any Hermes Agent. Enter the address of its dashboard."
+          body="Murmur works with any Hermes. Pick one it found, or enter its address."
         />
         <div className="mt-9">{fields}</div>
       </div>
@@ -349,23 +431,48 @@ export function HermesConnectionFormView({ current, onTest, onSave, onReset, onC
  * the environment. With `onForget`, the way out sits in the same group, as
  * iOS puts "Forget This Network": well away from any button that goes on.
  */
-function CurrentStatus({ connection: c, onForget, footer }: { connection: HermesConnection; onForget?: () => unknown; footer?: string }) {
+export function CurrentStatus({
+  connection: c,
+  onForget,
+  forgetAsk,
+  footer,
+  starting,
+}: {
+  connection: HermesConnection
+  onForget?: () => unknown
+  /** What "Forget this server" asks first, when this one deserves its own words. */
+  forgetAsk?: { title: string; body: string }
+  footer?: string
+  /** The built-in, on its first start. */
+  starting?: boolean
+}) {
   const [forgetting, setForgetting] = useState(false)
   const umbrel = isUmbrelHermes(c)
+  const builtin = isBuiltinHermes(c)
   const ok = c.status === 'connected'
-  const tone = ok ? 'success' : c.status === 'needs-login' || c.status === 'bad-login' ? 'warning' : 'danger'
-  const title = ok ? 'Connected' : c.status === 'unreachable' ? 'Can’t reach Hermes' : 'Needs signing in'
-  const where = umbrel ? 'On this Umbrel' : hostOf(c.url)
+  const tone = ok ? 'success' : starting || c.status === 'needs-login' || c.status === 'bad-login' ? 'warning' : 'danger'
+  const title = ok
+    ? 'Connected'
+    : builtin && starting
+      ? 'Starting up'
+      : c.status === 'unreachable'
+        ? builtin
+          ? 'Not responding'
+          : 'Can’t reach Hermes'
+        : 'Needs signing in'
+  const where = builtin ? 'Comes with Murmur' : umbrel ? 'On this Umbrel' : hostOf(c.url)
   const subtitle =
-    umbrel && c.status === 'unreachable'
-      ? 'Check that the Hermes Agent app is running.'
-      : [where, c.hermesVersion && `Hermes\u00a0${c.hermesVersion}`].filter(Boolean).join(' · ')
+    builtin && !ok && !starting
+      ? 'Try restarting Murmur.'
+      : umbrel && c.status === 'unreachable'
+        ? 'Check that the Hermes Agent app is running.'
+        : [where, ok && c.hermesVersion && `Hermes\u00a0${c.hermesVersion}`].filter(Boolean).join(' · ')
 
   const forget = async () => {
     if (!onForget || forgetting) return
     const yes = await ask({
-      title: 'Forget this server?',
-      body: 'Murmur will stop using this address. Your agents and chats stay in Hermes.',
+      title: forgetAsk?.title ?? 'Forget this server?',
+      body: forgetAsk?.body ?? 'Murmur will stop using this address. Your agents and chats stay in Hermes.',
       action: 'Forget',
       destructive: true,
     })
@@ -395,22 +502,41 @@ function CurrentStatus({ connection: c, onForget, footer }: { connection: Hermes
   )
 }
 
-/** Whether this is the Hermes app on this Umbrel (set by umbrelOS, at its fixed address). */
-export function isUmbrelHermes(c: Pick<HermesConnection, 'managed' | 'url'> | undefined) {
-  return !!c?.managed && hostOf(c.url).startsWith(UMBREL_HOST)
+/** Whether this is the Hermes Agent app on this Umbrel (at its fixed address), saved or set by umbrelOS. */
+export function isUmbrelHermes(c: Pick<HermesConnection, 'url'> | undefined) {
+  return !!c && hostOf(c.url).startsWith(UMBREL_HOST)
 }
 
-/** Whether this Murmur runs on umbrelOS (its Hermes is the Umbrel app), for copy that names it. */
+/** Whether this is the Hermes that comes with Murmur. */
+export function isBuiltinHermes(c: Pick<HermesConnection, 'id' | 'source'> | undefined) {
+  return !!c && (c.id === BUILTIN_ID || c.source === 'builtin')
+}
+
+/**
+ * Whether this Murmur runs on umbrelOS, for copy that names it ("Use a model
+ * on this Umbrel"). The Hermes Agent app says so by its address; with the
+ * built-in in use, Murmur's server says so.
+ */
 export function useOnUmbrel() {
-  return isUmbrelHermes(useHermesConnection().connection)
+  const c = useHermesConnection().connection
+  const viaServer = !!c && !isUmbrelHermes(c) && isBuiltinHermes(c)
+  const setup = useQuery({ queryKey: setupKey, queryFn: fetchSetup, enabled: viaServer, staleTime: 5 * 60_000, retry: false })
+  return isUmbrelHermes(c) || (viaServer && !!setup.data?.umbrel)
 }
 
-/** Read-only: the address comes from Murmur's environment (umbrelOS sets it). */
-export function ManagedHermes({ connection: c }: { connection: HermesConnection }) {
+/** Read-only: the built-in, or an address from Murmur's environment. */
+export function ManagedHermes({ connection: c, starting }: { connection: HermesConnection; starting?: boolean }) {
   return (
     <CurrentStatus
       connection={c}
-      footer={isUmbrelHermes(c) ? 'Your Umbrel connects Murmur to Hermes for you.' : 'This address is set in Murmur’s server configuration.'}
+      starting={starting}
+      footer={
+        isBuiltinHermes(c)
+          ? 'Comes with Murmur, and only Murmur can reach it. Its agents and chats are kept with Murmur’s data.'
+          : isUmbrelHermes(c)
+            ? 'Your Umbrel connects Murmur to Hermes for you.'
+            : 'This address is set in Murmur’s server configuration.'
+      }
     />
   )
 }

@@ -28,16 +28,18 @@ const rise: Variants = {
   }),
 }
 
-export function Welcome({ onContinue, hue = 278 }: { onContinue: () => void; hue?: number }) {
+export function Welcome({ onContinue, hue = 278, settled = false }: { onContinue: () => void; hue?: number; settled?: boolean }) {
   const reduced = usePrefersReducedMotion()
-  const [stage, setStage] = useState<Stage>(reduced ? 'text' : 'flock')
+  // Coming back to it (browser back from the next step): already landed, no murmuration again.
+  const still = reduced || settled
+  const [stage, setStage] = useState<Stage>(still ? 'text' : 'flock')
   const canvas = useRef<HTMLCanvasElement>(null)
   const home = useRef<HTMLDivElement>(null)
   const glow = useRef<HTMLDivElement>(null)
   const skip = useRef<() => void>(undefined)
 
   useEffect(() => {
-    if (reduced || !canvas.current) return setStage('text')
+    if (still || !canvas.current) return setStage('text')
     const el = canvas.current
     const run = startMurmuration(el, {
       colors: [BRAND.violet, BRAND.coral],
@@ -57,7 +59,7 @@ export function Welcome({ onContinue, hue = 278 }: { onContinue: () => void; hue
     })
     skip.current = run.skip
     return run.stop
-  }, [reduced, hue])
+  }, [still, hue])
 
   const shown = stage === 'text'
 
@@ -74,14 +76,14 @@ export function Welcome({ onContinue, hue = 278 }: { onContinue: () => void; hue
           <div
             ref={glow}
             className="pointer-events-none absolute size-96 rounded-full bg-[radial-gradient(closest-side,color-mix(in_oklch,var(--accent)_20%,transparent),transparent)] transition-opacity duration-500"
-            style={{ opacity: reduced ? 1 : 0 }}
+            style={{ opacity: still ? 1 : 0 }}
             aria-hidden
           />
           {stage !== 'flock' && (
             <motion.div
               data-hero="brand"
               className="welcome-mark relative flex origin-bottom"
-              initial={reduced ? false : { opacity: 0, scale: 0.5 }}
+              initial={still ? false : { opacity: 0, scale: 0.5 }}
               animate={{ opacity: 1, scale: 1 }}
               transition={{ type: 'spring', duration: 0.75, bounce: 0.3 }}
             >
@@ -94,7 +96,7 @@ export function Welcome({ onContinue, hue = 278 }: { onContinue: () => void; hue
           className="mt-12 text-large font-semibold tracking-[-0.02em]"
           variants={rise}
           custom={0}
-          initial={reduced ? false : 'hidden'}
+          initial={still ? false : 'hidden'}
           animate={shown ? 'shown' : 'hidden'}
         >
           Meet Murmur
@@ -103,7 +105,7 @@ export function Welcome({ onContinue, hue = 278 }: { onContinue: () => void; hue
           className="mt-2 max-w-[18rem] text-body text-balance text-ink-2 md:max-w-sm"
           variants={rise}
           custom={1}
-          initial={reduced ? false : 'hidden'}
+          initial={still ? false : 'hidden'}
           animate={shown ? 'shown' : 'hidden'}
         >
           A beautiful way to talk to your Hermes agents.
@@ -114,7 +116,7 @@ export function Welcome({ onContinue, hue = 278 }: { onContinue: () => void; hue
         className={`relative pt-8 pb-[max(24px,env(safe-area-inset-bottom))] md:pt-10 md:pb-0 ${STEP_COLUMN}`}
         variants={rise}
         custom={2.4}
-        initial={reduced ? false : 'hidden'}
+        initial={still ? false : 'hidden'}
         animate={shown ? 'shown' : 'hidden'}
         inert={!shown}
       >

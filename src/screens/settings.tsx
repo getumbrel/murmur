@@ -17,7 +17,7 @@ import { useAgentActions } from '@/features/home/actions'
 import { usePicturesSync } from '@/state/pictures'
 import { ModelsSection } from '@/features/settings/models-section'
 import { AskHost } from '@/features/settings/ask'
-import { useOnUmbrel } from '@/features/connection/hermes-connection-form'
+import { isBuiltinHermes, isUmbrelHermes, useOnUmbrel } from '@/features/connection/hermes-connection-form'
 import { HermesSection } from '@/features/settings/hermes-section'
 import { StatusDot } from '@/features/connection/fields'
 import { useHermesConnection, useMurmurSession } from '@/state/connection'
@@ -233,6 +233,9 @@ const subtitleFor = (a: Agent) =>
 function AboutSection() {
   const version = useHermesVersion()
   const umbrel = useOnUmbrel()
+  const current = useHermesConnection().connection
+  const builtin = isBuiltinHermes(current)
+  const hermesAgent = isUmbrelHermes(current)
   const conn = useConnection()
   const where = useWhereChatsLive()
   const status =
@@ -251,7 +254,11 @@ function AboutSection() {
         <p className="mt-2 text-footnote text-ink-3 tabular-nums">Version {VERSION}</p>
       </div>
       <ListGroup
-        footer={`Murmur keeps things simple. For everything else Hermes can do, open ${umbrel ? 'the Hermes Agent app on your Umbrel' : 'Hermes Agent itself'}.`}
+        footer={
+          builtin
+            ? 'Murmur keeps things simple, and its built-in Hermes does the rest.'
+            : `Murmur keeps things simple. For everything else Hermes can do, open ${umbrel && hermesAgent ? 'the Hermes Agent app on your Umbrel' : 'Hermes Agent itself'}.`
+        }
       >
         <ListRow title="Hermes" detail={version ?? '—'} />
         <ListRow
@@ -266,7 +273,7 @@ function AboutSection() {
         {/* The one row that's a sentence: it wraps instead of truncating. */}
         <div className="px-4 py-3">
           <p className="text-body">Where your chats live</p>
-          <p className="mt-0.5 text-footnote text-pretty text-ink-2">{where} Murmur keeps nothing.</p>
+          <p className="mt-0.5 text-footnote text-pretty text-ink-2">{builtin ? where : `${where} Murmur keeps nothing.`}</p>
         </div>
       </ListGroup>
       <ListGroup
@@ -331,8 +338,10 @@ function LinkRow({ href, title, detail }: { href: string; title: string; detail?
 /** Where a person's chats are kept, in their words: their Umbrel, their computer, or just their Hermes. */
 function useWhereChatsLive() {
   const umbrel = useOnUmbrel()
-  const url = useHermesConnection().connection?.url
+  const connection = useHermesConnection().connection
+  const url = connection?.url
   const host = url ? hostOf(url).replace(/:\d+$/, '') : ''
+  if (isBuiltinHermes(connection)) return umbrel ? 'On your Umbrel, inside Murmur’s built-in Hermes.' : 'Inside Murmur’s built-in Hermes, kept with Murmur’s data.'
   if (umbrel || /(^|\.)umbrel\.local$/.test(host)) return 'On your Umbrel, inside Hermes.'
   if (/^(localhost|127\.\d+\.\d+\.\d+|\[::1\]|host\.docker\.internal)$/.test(host))
     return 'On your computer, inside Hermes.'

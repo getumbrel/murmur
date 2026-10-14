@@ -1,8 +1,13 @@
-# Local Hermes Agent mirroring the umbrelOS store app (getumbrel/umbrel-apps/hermes-agent)
+# Local Hermes Agent mirroring the umbrelOS store app (getumbrel/umbrel-apps/hermes-agent),
+# at the Hermes version Murmur bundles (umbrel/murmur/docker-compose.yml).
+#
+# Moving this to a newer image upgrades ./hermes-data in place on the next
+# `docker compose up` (Hermes migrates its config and won't go back), so copy
+# the folder first if you may want the older version again.
 name: murmur-dev
 services:
   hermes:
-    image: ghcr.io/getumbrel/hermes-agent-umbrel:v2026.9.24@sha256:1cc27c346ccefe75c0cd52f281a231a47f864cab1c2cc26271ad8b8ad9531ad0
+    image: ghcr.io/getumbrel/hermes-agent-umbrel:v0.22.0@sha256:3377aa4f92d91408c6267991c3a6d167d3d064a1df8ea2efb754406ae5861d93
     container_name: hermes-agent_web_1
     restart: on-failure
     stop_grace_period: 1m
@@ -18,5 +23,28 @@ services:
       HERMES_UMBREL_APP_PROXY_AUTH: "1"
       HERMES_TUI_DIR: "/app/umbrel-tui"
       HERMES_UPSTREAM_TUI_ENTRY: "/opt/hermes/ui-tui/dist/entry.js"
+      HERMES_GATEWAY_BOOTSTRAP_STATE: "running"
+    command: ["gateway", "run"]
+
+  # Murmur's built-in Hermes, for working on the first-run choice. Off unless asked for:
+  #   docker compose -f dev/docker-compose.yml --profile builtin up -d builtin
+  # then run the server without HERMES_URL (docs/DEVELOPMENT.md).
+  builtin:
+    profiles: [builtin]
+    image: ghcr.io/getumbrel/hermes-agent-umbrel:v0.22.0@sha256:3377aa4f92d91408c6267991c3a6d167d3d064a1df8ea2efb754406ae5861d93
+    container_name: murmur-dev-builtin
+    restart: on-failure
+    stop_grace_period: 1m
+    ports:
+      - "127.0.0.1:9119:9119"
+    volumes:
+      - ./builtin-data:/opt/data
+    environment:
+      HERMES_UID: "1000"
+      HERMES_GID: "1000"
+      HERMES_DASHBOARD: "1"
+      HERMES_DASHBOARD_BASIC_AUTH_USERNAME: "murmur"
+      HERMES_DASHBOARD_BASIC_AUTH_PASSWORD: "murmur-dev-password"
+      HERMES_DASHBOARD_BASIC_AUTH_SECRET: "murmur-dev-session-secret-not-for-production"
       HERMES_GATEWAY_BOOTSTRAP_STATE: "running"
     command: ["gateway", "run"]

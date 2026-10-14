@@ -21,9 +21,10 @@ export type HermesConnection = {
   id?: string
   name?: string
   url: string
-  /** Set by the server's environment (umbrelOS): show it, don't offer to change it. */
+  /** Set by the server's environment (HERMES_URL, or the built-in): show it, don't offer to change or forget it. */
   managed: boolean
-  source: 'env' | 'saved' | 'default'
+  /** `builtin`: the Hermes that comes with Murmur (id 'builtin', see state/setup.ts). */
+  source: 'env' | 'saved' | 'default' | 'builtin'
   mode: ConnectionMode
   status: ConnectionStatus
   hermesVersion?: string
@@ -42,6 +43,8 @@ export type KnownHermes = HermesConnection & { id: string; name: string }
 export type HermesList = { active: string; connections: KnownHermes[] }
 
 export type ConnectionRequest = { url: string; username?: string; password?: string }
+
+// Where should your agents live (the built-in, or a Hermes Murmur found): state/setup.ts.
 
 export const connectionKey = ['murmur', 'connection'] as const
 export const connectionsKey = ['murmur', 'connections'] as const

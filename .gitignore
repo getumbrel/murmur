@@ -1,6 +1,7 @@
 node_modules
 dist
 dev/hermes-data
+dev/builtin-data
 test-results
 playwright-report
 *.log
@@ -8,3 +9,4 @@ playwright-report
 /data
 /desktop/app
 /desktop/release
+/.env

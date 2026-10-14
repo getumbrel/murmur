@@ -84,6 +84,8 @@ const RULES: Record<string, Rule> = {
 
   terminal: { label: 'Running a command', category: 'terminal', detail: site, private: true },
   process: { label: 'Checking on a task', category: 'terminal' },
+  // Hermes 0.21 renamed process, todo and cronjob; the old names still work.
+  process_manage: { label: 'Checking on a task', category: 'terminal' },
 
   read_file: { label: 'Reading a file', verb: 'Reading', category: 'file', detail: path },
   write_file: { label: 'Writing a file', verb: 'Writing', category: 'file', detail: path },
@@ -94,11 +96,13 @@ const RULES: Record<string, Rule> = {
   delegate_task: { label: 'Asking a helper', category: 'helper', detail: (a) => pick(a, 'goal', 'task') },
   memory: { label: 'Remembering', category: 'memory' },
   todo: { label: 'Planning', category: 'plan' },
+  todo_list: { label: 'Planning', category: 'plan' },
   vision_analyze: { label: 'Looking at the image', category: 'vision' },
   image_generate: { label: 'Making an image', category: 'image', detail: (a) => pick(a, 'prompt') },
   text_to_speech: { label: 'Recording a voice note', category: 'voice' },
   send_message: { label: 'Sending a message', category: 'message', detail: (a) => pick(a, 'target', 'to') },
   cronjob: { label: 'Scheduling', category: 'schedule', detail: (a) => pick(a, 'name', 'schedule') },
+  cronjob_manage: { label: 'Scheduling', category: 'schedule', detail: (a) => pick(a, 'name', 'schedule') },
   clarify: { label: 'Asking you', category: 'question' },
   session_search: { label: 'Looking through past chats', category: 'history', detail: query },
 }
@@ -255,6 +259,7 @@ const DONE: Record<string, Done> = {
   web_crawl: { key: 'page', one: 'Read a website', many: (n) => `Read ${n} pages` },
   terminal: { key: 'command', one: 'Ran a command', many: (n) => `Ran ${n} commands` },
   process: { key: 'command', one: 'Checked on a task', many: (n) => `Ran ${n} commands` },
+  process_manage: { key: 'command', one: 'Checked on a task', many: (n) => `Ran ${n} commands` },
   read_file: { key: 'read', one: 'Read a file', many: (n) => `Read ${n} files` },
   write_file: { key: 'edit', one: 'Wrote a file', many: (n) => `Edited ${n} files` },
   patch: { key: 'edit', one: 'Edited a file', many: (n) => `Edited ${n} files` },
@@ -263,12 +268,14 @@ const DONE: Record<string, Done> = {
   delegate_task: { key: 'helper', one: 'Asked a helper', many: (n) => `Asked ${n} helpers` },
   memory: { key: 'memory', one: 'Updated memory' },
   todo: { key: 'plan', one: 'Made a plan' },
+  todo_list: { key: 'plan', one: 'Made a plan' },
   vision_analyze: { key: 'look', one: 'Looked at an image', many: (n) => `Looked at ${n} images` },
   browser_vision: { key: 'browse', one: 'Used the browser' },
   image_generate: { key: 'image', one: 'Made an image', many: (n) => `Made ${n} images` },
   text_to_speech: { key: 'voice', one: 'Recorded a voice note', many: (n) => `Recorded ${n} voice notes` },
   send_message: { key: 'message', one: 'Sent a message', many: (n) => `Sent ${n} messages` },
   cronjob: { key: 'schedule', one: 'Set up a routine' },
+  cronjob_manage: { key: 'schedule', one: 'Set up a routine' },
   clarify: { key: 'ask', one: 'Asked you' },
   session_search: { key: 'history', one: 'Looked through past chats' },
 }

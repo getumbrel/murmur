@@ -64,7 +64,7 @@ Start from a template (Researcher, Writer, Planner, Coder, Coach or Chef) or fro
   <img src="docs/readme/connect-light.png" alt="Connecting Murmur to a Hermes it found on the network" width="100%">
 </picture>
 
-Hermes can live anywhere: on your Umbrel, a Mac in the closet, a Linux box, a Raspberry Pi or a server in the cloud. Murmur finds the ones on your network for you, or you can paste an address. On umbrelOS there's nothing to set up at all.
+Murmur comes with Hermes built in, so you can start fresh with nothing else to install. Already have Hermes? It can live anywhere: on your Umbrel, a Mac in the closet, a Linux box, a Raspberry Pi or a server in the cloud. Murmur finds the ones on your network for you, or you can paste an address. On umbrelOS it spots the Hermes Agent app by itself and offers it, with your agents already there.
 
 ### No model yet? Connect one in a minute
 
@@ -154,7 +154,7 @@ Put a few agents in one room and let them work it out together. Mention one with
 <td width="50%" valign="top">
 
 #### On umbrelOS
-Install **Hermes Agent**, then **Murmur**, from the Umbrel App Store. Murmur finds your Hermes by itself, so there's nothing to set up.
+Install **Murmur** from the Umbrel App Store. It comes with Hermes built in. Already use the **Hermes Agent** app? Murmur finds it and offers to use it instead, agents and all.
 
 </td>
 <td width="50%" valign="top">
@@ -167,13 +167,22 @@ Download Murmur for macOS, Windows or Linux from [Releases](https://github.com/g
 </table>
 
 #### With Docker
-Run Murmur anywhere and point it at your Hermes. [`docs/STANDALONE.md`](docs/STANDALONE.md) has every option.
+Run Murmur with its own Hermes:
 
 ```sh
-docker run -d -p 3000:3000 -v murmur:/data ghcr.io/getumbrel/murmur:0.1
+curl -fsSLO https://raw.githubusercontent.com/getumbrel/murmur/master/docker-compose.yml
+curl -fsSL https://raw.githubusercontent.com/getumbrel/murmur/master/.env.example -o .env
+# set MURMUR_HERMES_PASSWORD in .env, then:
+docker compose up -d
 ```
 
-Murmur works with **Hermes Agent 0.21.4 or newer**. If yours is older, Murmur shows you how to update it.
+Or run Murmur alone and point it at your Hermes. [`docs/STANDALONE.md`](docs/STANDALONE.md) has every option.
+
+```sh
+docker run -d -p 3000:3000 -v murmur:/data ghcr.io/getumbrel/murmur:0.2
+```
+
+Murmur comes with **Hermes 0.22.0**, and works with any **Hermes Agent 0.21.4 or newer**. If yours is older, Murmur shows you how to update it.
 
 ## How it works
 
@@ -183,6 +192,7 @@ Murmur works with **Hermes Agent 0.21.4 or newer**. If yours is older, Murmur sh
 </picture>
 
 - **Hermes does the work.** Agents are Hermes profiles and chats are Hermes sessions. Murmur reads and writes the same data, so it stays in sync with the Hermes dashboard, Hermes Desktop and Telegram.
+- **Hermes comes along.** On umbrelOS and with Docker Compose, Murmur runs its own Hermes right beside it, private to Murmur. Or it uses a Hermes you already have.
 - **Murmur is the experience.** A mobile-first React app and a tiny Node server with no dependencies. The browser never sees Hermes's access key.
 - **The desktop app** is the same Murmur in a native window, with its server built in.
 

@@ -2,8 +2,10 @@
 //
 //   GET    /murmur/connections               → State: every Hermes with its status, and this browser's
 //   POST   /murmur/connections               {name?, url, username?, password?, activate?} → tests, saves
+//                                             {found: id, username?, password?, activate?}: one Murmur found (setup.ts)
+//                                             {builtin: true, activate?}: the Hermes that comes with Murmur
 //   PATCH  /murmur/connections/:id           {name} renames; {url, username?, password?} tests, then saves
-//   DELETE /murmur/connections/:id           → forgets one (never the managed one)
+//   DELETE /murmur/connections/:id           → forgets one (never the managed one or the built-in)
 //   POST   /murmur/connections/:id/activate  → this browser uses it from now on
 //
 // The older single-Hermes API still works, on the Hermes the request is for:
@@ -21,7 +23,9 @@
 
 import type http from 'node:http'
 import {
+  addBuiltin,
   addTarget,
+  builtinConfig,
   cleanName,
   listTargets,
   memo,
@@ -34,6 +38,7 @@ import {
 } from './config.ts'
 import { createHermes, MIN_HERMES_VERSION, type ConnectionInfo, type Hermes } from './hermes.ts'
 import { appendCookie, readCookie, readJson, secure, sendJson } from './http.ts'
+import { candidateById } from './discovery.ts'
 
 export const HERMES_COOKIE = 'murmur_hermes'
 export const HERMES_HEADER = 'x-murmur-hermes'
@@ -56,15 +61,18 @@ export function onDrop(fn: (hermes: Hermes) => void) {
 const targets = () => known().targets
 const find = (id: string | null | undefined) => (id ? targets().find((t) => t.id === id) : undefined)
 
-function instance(target: Target) {
+export function instance(target: Target) {
   const { instances } = known()
   let hermes = instances.get(target.id)
   if (!hermes) instances.set(target.id, (hermes = createHermes(target)))
   return hermes
 }
 
+/** Every Hermes this Murmur has (not the unsaved default). */
+export const knownTargets = () => targets().filter((t) => t.source !== 'default')
+
 /** Re-read the list after a change, and drop what changed underneath. */
-function reload(changed?: string) {
+export function reload(changed?: string) {
   const { instances } = known()
   known().targets = listTargets()
   for (const [id, hermes] of [...instances]) {
@@ -100,7 +108,7 @@ export function hermesFor(req: http.IncomingMessage, url: URL): Hermes | null {
 /** The first Hermes, for the startup line. */
 export const firstTarget = () => targets()[0]
 
-const cookieFor = (req: http.IncomingMessage, id: string) =>
+export const cookieFor = (req: http.IncomingMessage, id: string) =>
   `${HERMES_COOKIE}=${id}; Path=/; Max-Age=${COOKIE_MAX_AGE_S}; SameSite=Lax${secure(req) ? '; Secure' : ''}`
 
 /**
@@ -115,19 +123,27 @@ export function syncHermesCookie(req: http.IncomingMessage, res: http.ServerResp
 
 // ── Describing ────────────────────────────────────────────────────────────
 
-const describe = async (target: Target, fresh = false): Promise<Connection> => {
+export const describe = async (target: Target, fresh = false): Promise<Connection> => {
   const hermes = instance(target)
   const info = await (fresh ? hermes.check() : hermes.status())
   return { id: target.id, name: target.name, ...info }
 }
 
-async function state(req: http.IncomingMessage, active = browserTarget(req).id): Promise<State> {
+export async function state(req: http.IncomingMessage, active = browserTarget(req).id): Promise<State> {
   return { active, connections: await Promise.all(targets().map((t) => describe(t))) }
 }
 
 // ── Changing ──────────────────────────────────────────────────────────────
 
-type Body = { name?: unknown; url?: unknown; username?: unknown; password?: unknown; activate?: unknown }
+export type Body = {
+  name?: unknown
+  url?: unknown
+  username?: unknown
+  password?: unknown
+  activate?: unknown
+  found?: unknown
+  builtin?: unknown
+}
 
 /** What a form describes. A blank password keeps the saved one for the same address and user. */
 function candidate(body: Body, saved?: Target): { url: string; credentials?: Credentials } {
@@ -190,6 +206,34 @@ async function add(res: http.ServerResponse, body: Body) {
   return target
 }
 
+const NOT_FOUND = 'That Hermes isn’t answering anymore.'
+
+/**
+ * Add what a request names: an address, one Murmur found (by id, so the app
+ * never says where a sign-in goes), or the built-in. Null when it answered
+ * already (it couldn't be added).
+ */
+export async function addNamed(res: http.ServerResponse, body: Body): Promise<Target | null> {
+  if (body.builtin === true) {
+    if (!builtinConfig()) {
+      sendJson(res, 404, { error: 'not_found', message: 'This Murmur doesn’t come with a Hermes.' })
+      return null
+    }
+    const target = addBuiltin()
+    reload()
+    return target
+  }
+  if (body.found !== undefined) {
+    const found = candidateById(body.found)
+    if (!found) {
+      sendJson(res, 404, { error: 'not_found', message: NOT_FOUND })
+      return null
+    }
+    return add(res, { ...body, url: found.url, name: body.name ?? found.label })
+  }
+  return add(res, body)
+}
+
 /** Change one's address or sign-in, keeping its id (and so the browser's things for it). */
 async function update(res: http.ServerResponse, target: Target, body: Body) {
   const tried = await trial(res, body, target)
@@ -210,6 +254,7 @@ function remove(req: http.IncomingMessage, res: http.ServerResponse, target: Tar
 const reply = (res: http.ServerResponse, status: number, body: unknown) => (sendJson(res, status, body), true)
 
 const MANAGED = 'Murmur’s server configuration sets this Hermes, so it can’t be changed here.'
+const BUILTIN_FIXED = 'Murmur’s built-in Hermes comes with Murmur, so it can’t be changed here.'
 
 export async function handleConnection(req: http.IncomingMessage, res: http.ServerResponse, path: string) {
   // ── The list ──
@@ -217,7 +262,7 @@ export async function handleConnection(req: http.IncomingMessage, res: http.Serv
     if (req.method === 'GET') return reply(res, 200, await state(req))
     if (req.method !== 'POST') return false
     const body = (await readJson(req).catch(() => ({}))) as Body
-    const target = await add(res, body)
+    const target = await addNamed(res, body)
     if (!target) return true
     let active: string | undefined
     if (body.activate === true) {
@@ -249,12 +294,13 @@ export async function handleConnection(req: http.IncomingMessage, res: http.Serv
         sendJson(res, 200, { connection: await describe(find(target.id)!), ...(await state(req)) })
         return true
       }
-      if (target.source !== 'saved') return reply(res, 409, { error: MANAGED })
+      if (target.source !== 'saved') return reply(res, 409, { error: target.source === 'builtin' ? BUILTIN_FIXED : MANAGED })
       const updated = await update(res, target, body)
       if (updated) sendJson(res, 200, { connection: await describe(updated, true), ...(await state(req)) })
       return true
     }
     if (req.method === 'DELETE') {
+      if (target.source === 'builtin') return reply(res, 409, { error: 'Murmur’s built-in Hermes comes with Murmur, so it can’t be removed.' })
       if (target.source !== 'saved') return reply(res, 409, { error: 'Murmur’s server configuration sets this Hermes, so it can’t be removed.' })
       remove(req, res, target)
       sendJson(res, 200, await state(req))
@@ -287,6 +333,7 @@ export async function handleConnection(req: http.IncomingMessage, res: http.Serv
   const forgetting = path === '/murmur/connection' && req.method === 'DELETE'
   if (!saving && !forgetting) return false
   if (target.source === 'env') return reply(res, 409, { error: MANAGED })
+  if (target.source === 'builtin') return reply(res, 409, { error: BUILTIN_FIXED })
 
   if (forgetting) {
     if (target.source !== 'saved') return reply(res, 409, { error: 'There’s no saved Hermes to forget.' })

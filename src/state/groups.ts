@@ -661,6 +661,7 @@ function onEvent(ev: GatewayEvent) {
     runtimes.delete(String((ev as { payload?: P }).payload?.session_id ?? ''))
     return
   }
+  if (ev.type === 'approval.cancelled') return cancelApprovals(((ev as { payload?: P }).payload ?? {}) as P)
   const who = runtimes.get(runtime)
   if (!who) return
   const { room, member } = who
@@ -729,6 +730,25 @@ function onEvent(ev: GatewayEvent) {
       fastUntil.set(room, Date.now() + 3000)
       void poll(room)
       return
+  }
+}
+
+/**
+ * Hermes dropped waiting approvals (Hermes 0.22: a turn stopped, or a member's
+ * copy of the room let go) and treated them as a no. Named by their own ids,
+ * which is how rooms keep them; none named means all of that member's.
+ */
+function cancelApprovals(payload: P) {
+  const named = Array.isArray(payload.request_ids) ? payload.request_ids.map(String) : []
+  const who = runtimes.get(String(payload.session_id ?? ''))
+  if (!named.length && !who) return
+  for (const id of named) held.delete(id)
+  const dropped = (a: Approval) =>
+    a.status === 'pending' && (named.length ? named.includes(a.requestId) : a.member === who!.member)
+  for (const room of who ? [who.room] : [...watchers.keys()]) {
+    if (!get(room)?.approvals.some(dropped)) continue
+    if (!named.length) for (const a of get(room)!.approvals) if (dropped(a)) held.delete(a.requestId)
+    patch(room, (l) => ({ approvals: l.approvals.filter((a) => !dropped(a)) }))
   }
 }
 

@@ -8,7 +8,7 @@ import { useConnection } from '@/hermes/gateway'
 import { tabHermes } from '@/hermes/instance'
 import { switchHermes, useHermesList, type KnownHermes } from '@/state/connection'
 import { StatusDot } from './fields'
-import { isUmbrelHermes } from './hermes-connection-form'
+import { isBuiltinHermes, isUmbrelHermes } from './hermes-connection-form'
 
 // Several Hermes, one at a time, Slack-workspace style. <HermesSwitcher /> is
 // a small pill naming the Hermes in use; it opens a list to switch, with a way
@@ -16,13 +16,18 @@ import { isUmbrelHermes } from './hermes-connection-form'
 // On screen a Hermes is a "server" (the machine it runs on, by name), so it
 // never reads like the main agent, which Hermes also calls "Hermes".
 
-/** Which way a Hermes's dot goes. */
-export const toneOf = (c: Pick<KnownHermes, 'status'>): 'success' | 'danger' | 'warning' =>
-  c.status === 'connected' ? 'success' : c.status === 'unreachable' ? 'danger' : 'warning'
+/** Which way a Hermes's dot goes. The built-in on its first start is on its way, not down. */
+export const toneOf = (c: Pick<KnownHermes, 'status'>, starting = false): 'success' | 'danger' | 'warning' =>
+  c.status === 'connected' ? 'success' : starting ? 'warning' : c.status === 'unreachable' ? 'danger' : 'warning'
 
-/** "umbrel.local · Hermes 0.21.5", or what's wrong, in a few words. The Umbrel's own Hermes is "On this Umbrel", not its container's name. */
-export function hermesDetail(c: KnownHermes) {
-  const where = isUmbrelHermes(c) ? 'On this Umbrel' : hostOf(c.url)
+/**
+ * "umbrel.local · Hermes 0.21.5", or what's wrong, in a few words. Where it
+ * is, never a container's name: the built-in "Comes with Murmur", the Hermes
+ * Agent app is "On this Umbrel".
+ */
+export function hermesDetail(c: KnownHermes, { starting = false } = {}) {
+  const where = isBuiltinHermes(c) ? 'Comes with Murmur' : isUmbrelHermes(c) ? 'On this Umbrel' : hostOf(c.url)
+  if (c.status !== 'connected' && starting) return `Starting up · ${where}`
   if (c.status === 'unreachable') return `Can’t reach it · ${where}`
   if (c.status !== 'connected') return `Needs signing in · ${where}`
   return [where, c.hermesVersion && `Hermes ${c.hermesVersion}`].filter(Boolean).join(' · ')
