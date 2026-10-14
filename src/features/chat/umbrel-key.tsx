@@ -4,7 +4,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { ArrowUpRight, Check, X } from 'lucide-react'
 import { Button } from '@/ui/button'
 import { Orb } from '@/ui/orb'
-import { UmbrelMark } from '@/ui/brand'
+import { UmbrelIcon } from '@/ui/brand'
 import { cn } from '@/lib/cn'
 import type { Agent } from '@/state/agents'
 import { connectUmbrel, findUmbrelKey, UmbrelKeyError, umbrelSettingsUrl, useHermesOnUmbrel } from '@/state/umbrel-mcp'
@@ -159,9 +159,7 @@ function UmbrelKeyCard({
     >
       {/* The Umbrel, the agent, and the link drawn between them. */}
       <div className="flex flex-none items-center" aria-hidden>
-        <span className="grid size-9 place-items-center rounded-[0.65rem] bg-[#0e0e10] text-white ring-1 ring-white/10">
-          <UmbrelMark size={21} />
-        </span>
+        <UmbrelIcon size={36} />
         <span className="relative mx-1 h-0.5 w-4 overflow-hidden rounded-full bg-[length:5px_2px] bg-[linear-gradient(90deg,var(--line-strong)_50%,transparent_0)]">
           <motion.span
             className="absolute inset-0 origin-left rounded-full bg-accent"

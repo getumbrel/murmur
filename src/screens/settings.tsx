@@ -4,7 +4,7 @@ import { ArrowUpRight, ChevronRight, LogOut, Server, Sparkles, Users } from 'luc
 import { ListGroup, ListRow } from '@/ui/list'
 import { Segmented } from '@/ui/segmented'
 import { Orb } from '@/ui/orb'
-import { ByUmbrel, MurmurMark, UmbrelMark } from '@/ui/brand'
+import { ByUmbrel, MurmurMark, UmbrelIcon } from '@/ui/brand'
 import { useIsWide } from '@/lib/use-media'
 import { api } from '@/hermes/rest'
 import { useConnection } from '@/hermes/gateway'
@@ -156,9 +156,7 @@ function Root() {
         {onUmbrel && (
           <ListRow
             icon={
-              <span className="flex size-7 flex-none items-center justify-center rounded-sm bg-[#0e0e10] text-white" aria-hidden>
-                <UmbrelMark size={17} />
-              </span>
+              <UmbrelIcon size={29} />
             }
             title="Umbrel"
             detail={umbrel.data ? (umbrel.data.connected.length ? 'Connected' : 'Not connected') : undefined}

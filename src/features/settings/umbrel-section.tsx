@@ -8,7 +8,7 @@ import { Orb, OrbStack } from '@/ui/orb'
 import { TextArea, Label } from '@/ui/field'
 import { ListGroup, ListRow } from '@/ui/list'
 import { Spinner } from '@/ui/spinner'
-import { UmbrelMark } from '@/ui/brand'
+import { UmbrelIcon } from '@/ui/brand'
 import { cn } from '@/lib/cn'
 import { useAgents, type Agent } from '@/state/agents'
 import {
@@ -126,9 +126,7 @@ function Hero({ agents, on }: { agents: Agent[]; on: boolean }) {
   return (
     <div className="flex flex-col items-center pt-2 text-center">
       <div className="flex items-center">
-        <span className="grid size-16 place-items-center rounded-[1.125rem] bg-[#0e0e10] text-white shadow-[0_1px_2px_rgb(0_0_0/0.12),0_6px_20px_rgb(0_0_0/0.12)] ring-1 ring-white/10">
-          <UmbrelMark size={38} />
-        </span>
+        <UmbrelIcon size={64} className="drop-shadow-[0_6px_14px_rgb(91_66_255/0.28)]" />
         {/* The link between them: dotted while it's only a promise, solid once it's real. */}
         <span
           aria-hidden
@@ -182,9 +180,7 @@ function ConnectForm({
       <ListGroup footer="Turn it on, choose what agents can use, then copy what it shows.">
         <ListRow
           icon={
-            <span className="grid size-7 place-items-center rounded-sm bg-[#0e0e10] text-white">
-              <UmbrelMark size={17} />
-            </span>
+            <UmbrelIcon size={29} />
           }
           title="Open AI agents in umbrelOS"
           onClick={openUmbrelOS}
