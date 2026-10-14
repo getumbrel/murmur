@@ -114,8 +114,9 @@ export function upFrom(path: string) {
   const m = /^\/(chat|agent)\/([^/]+)/.exec(path)
   if (!prev || !m) return '/'
   const [, kind, id] = m
-  if (kind === 'chat' && prev === `/agent/${id}`) return prev
-  if (kind === 'agent' && (prev === '/agents' || prev === `/chat/${id}` || prev.startsWith(`/chat/${id}/`))) return prev
+  if (kind === 'chat' && (prev === `/agent/${id}` || prev === `/chats/${id}`)) return prev
+  if (kind === 'agent' && (prev === '/agents' || prev === `/chats/${id}` || prev === `/chat/${id}` || prev.startsWith(`/chat/${id}/`)))
+    return prev
   return '/'
 }
 

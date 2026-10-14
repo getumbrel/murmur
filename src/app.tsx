@@ -37,6 +37,7 @@ const GroupScreen = lazyComponent(() => import('@/screens/group').then((m) => m.
 const SettingsScreen = lazyComponent(() => import('@/screens/settings').then((m) => m.SettingsScreen))
 const OnboardingScreen = lazyComponent(() => import('@/screens/onboarding').then((m) => m.OnboardingScreen))
 const AgentScreen = lazyComponent(() => import('@/screens/agent').then((m) => m.AgentScreen))
+const ChatsScreen = lazyComponent(() => import('@/screens/chats').then((m) => m.ChatsScreen))
 const AgentsScreen = lazyComponent(() => import('@/screens/agents').then((m) => m.AgentsScreen))
 
 export const queryClient = new QueryClient({
@@ -81,6 +82,13 @@ export function App() {
                       {(p) => (
                         <Pushed>
                           <AgentScreen agentId={p.agent} />
+                        </Pushed>
+                      )}
+                    </Route>
+                    <Route path="/chats/:agent">
+                      {(p) => (
+                        <Pushed>
+                          <ChatsScreen agentId={p.agent} />
                         </Pushed>
                       )}
                     </Route>
@@ -184,8 +192,9 @@ function Pushed({ children }: { children: ReactNode }) {
 
 /** The page "back" would land on, as it looks (see upFrom in src/lib/transitions.ts). */
 function Beneath({ path }: { path: string }) {
-  const [, kind, id, sub] = /^\/(chat|agent)\/([^/]+)(?:\/([^/]+))?/.exec(path) ?? []
+  const [, kind, id, sub] = /^\/(chat|chats|agent)\/([^/]+)(?:\/([^/]+))?/.exec(path) ?? []
   if (kind === 'agent') return <AgentScreen agentId={decodeURIComponent(id)} />
+  if (kind === 'chats') return <ChatsScreen agentId={decodeURIComponent(id)} />
   if (kind === 'chat') return <ChatScreen agentId={decodeURIComponent(id)} chatId={sub && decodeURIComponent(sub)} />
   if (path === '/agents') return <AgentsScreen />
   return <HomeScreen />

@@ -28,6 +28,7 @@ export function ChatList({
   failed,
   onRetry,
   onDelete,
+  heading = true,
 }: {
   agent: Agent
   chats?: AgentChat[]
@@ -35,6 +36,8 @@ export function ChatList({
   failed: boolean
   onRetry: () => void
   onDelete: (chat: AgentChat) => Promise<void>
+  /** Off where the page itself is the list of chats. */
+  heading?: boolean
 }) {
   const [query, setQuery] = useState('')
   const [revealed, setRevealed] = useState<string | null>(null)
@@ -52,11 +55,13 @@ export function ChatList({
   }, [ordered, query])
 
   return (
-    <section aria-labelledby="agent-chats">
-      <h2 id="agent-chats" className="mb-2 flex items-baseline justify-between px-4 text-footnote font-medium text-ink-2">
-        Chats
-        {!!ordered?.length && <span className="tabular-nums text-ink-3">{ordered.length}</span>}
-      </h2>
+    <section aria-labelledby={heading ? 'agent-chats' : undefined} aria-label={heading ? undefined : 'Chats'}>
+      {heading && (
+        <h2 id="agent-chats" className="mb-2 flex items-baseline justify-between px-4 text-footnote font-medium text-ink-2">
+          Chats
+          {!!ordered?.length && <span className="tabular-nums text-ink-3">{ordered.length}</span>}
+        </h2>
+      )}
       {(ordered?.length ?? 0) > SEARCH_FROM && (
         <SearchField
           value={query}
