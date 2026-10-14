@@ -58,7 +58,7 @@ export function SetupFlow({ again = false, onHandedOver }: { again?: boolean; on
   const screen = SCREENS[location]
   // Built-in chosen (here, or before a reload) and now choosing something else: add-and-move, not a first choice.
   const [builtinChosen, setBuiltinChosen] = useState(again)
-  const [readying, setReadying] = useState<{ from?: DOMRect } | null>(null)
+  const [readying, setReadying] = useState(false)
   // Came back to the welcome from Where: it's already landed.
   const [seenWelcome, setSeenWelcome] = useState(false)
   const [noHermes, setNoHermes] = useState(false)
@@ -133,11 +133,10 @@ export function SetupFlow({ again = false, onHandedOver }: { again?: boolean; on
   if (readying) {
     return (
       <Readying
-        from={readying.from}
         setup={setup.data}
         onReady={handOver}
         onOther={() => {
-          setReadying(null)
+          setReadying(false)
           navigate('/welcome/where', { replace: true })
         }}
       />
@@ -233,18 +232,16 @@ export function SetupFlow({ again = false, onHandedOver }: { again?: boolean; on
           if (active) handOver(active)
           else void qc.invalidateQueries({ queryKey: connectionKey })
         }}
-        onChosen={(result, { lead: chosen, from }) => {
+        onChosen={(result, { lead: chosen }) => {
           if (chosen) {
             arrive(chosen)
             return handOver(result.connection)
           }
           setBuiltinChosen(true)
           if (result.connection.status === 'connected') return handOver(result.connection)
-          // Still on its first start: wait here, with the buddy that was tapped. When this tab
-          // can't carry on in place, it starts afresh on the built-in at once (the gate shows
-          // Getting ready there), and the buddy flies in from where it was tapped all the same.
-          if (result.connection.id === tabHermes() || adoptHermes(result.connection.id)) return setReadying({ from })
-          rememberFlight(from)
+          // Still on its first start: wait here. When this tab can't carry on in place, it
+          // starts afresh on the built-in at once (the gate shows Getting ready there).
+          if (result.connection.id === tabHermes() || adoptHermes(result.connection.id)) return setReadying(true)
           window.location.replace('/welcome')
         }}
       />
@@ -280,50 +277,15 @@ export function SetupFlow({ again = false, onHandedOver }: { again?: boolean; on
 
 // ── Getting ready ───────────────────────────────────────────────────────────
 
-const FLIGHT = 'murmur:fresh-from'
-
-/** Where the tapped buddy stood, kept across a reload for a few seconds. */
-function rememberFlight(from: DOMRect | undefined) {
-  if (!from) return
-  try {
-    sessionStorage.setItem(
-      FLIGHT,
-      JSON.stringify({ left: from.left, top: from.top, width: from.width, height: from.height, at: Date.now() }),
-    )
-  } catch {
-    // Private mode: Getting ready rises in instead.
-  }
-}
-
-/** …and taken back once, on the far side. */
-export function takeFlight(): DOMRect | undefined {
-  try {
-    const saved = JSON.parse(sessionStorage.getItem(FLIGHT) ?? 'null') as {
-      left: number
-      top: number
-      width: number
-      height: number
-      at: number
-    } | null
-    sessionStorage.removeItem(FLIGHT)
-    if (!saved || Date.now() - saved.at > 10_000) return undefined
-    return new DOMRect(saved.left, saved.top, saved.width, saved.height)
-  } catch {
-    return undefined
-  }
-}
-
 /**
  * The built-in's first start, wired: asks how it's doing every 1.5s, and once
  * it answers, whether Murmur has signed in to it. Hands over when it has.
  */
 function Readying({
-  from,
   setup,
   onReady,
   onOther,
 }: {
-  from?: DOMRect
   setup?: Setup
   onReady: (connection: HermesConnection) => void
   onOther?: () => void
@@ -333,7 +295,6 @@ function Readying({
   const builtin = useBuiltinConnection(up)
   return (
     <GettingReady
-      from={from}
       state={setup?.builtin?.state}
       connected={builtin?.status === 'connected'}
       onDone={() => builtin && onReady(builtin)}

@@ -3,7 +3,7 @@ import { followSwitches, liftCurtain, needsConnectionSetup, useHermesConnection,
 import { useSetup } from '@/state/setup'
 import { restartBoot } from '@/state/readiness'
 import { adoptHermes, browserHermes, tabHermes } from '@/hermes/instance'
-import { SetupFlow, takeFlight } from '@/features/onboarding/setup-flow'
+import { SetupFlow } from '@/features/onboarding/setup-flow'
 import { GettingReady } from '@/features/onboarding/getting-ready'
 import { HermesConnectionForm, isBuiltinHermes } from './hermes-connection-form'
 import { LoginScreen } from './login'
@@ -161,9 +161,7 @@ export function HermesGate({ children }: { children: ReactNode }) {
 function Ready(props: Parameters<typeof GettingReady>[0]) {
   // Nothing else will draw, so a switch curtain lifts onto this.
   useEffect(liftCurtain, [])
-  // Just tapped Start fresh (before this reload): the buddy flies in from there.
-  const [from] = useState(takeFlight)
-  return <GettingReady {...props} from={from} />
+  return <GettingReady {...props} />
 }
 
 function SetUp({ onConnected }: { onConnected: () => void }) {

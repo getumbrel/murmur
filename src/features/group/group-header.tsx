@@ -123,8 +123,7 @@ export function GroupHeader({
           title={group?.name}
         >
           {group ? (
-            // Named for the buddies' flight in from the group's row (src/lib/transitions.ts).
-            <span data-orb={`group:${group.id}`} className="flex flex-none">
+            <span className="flex flex-none">
               <MemberRow
                 members={group.members}
                 size={34}

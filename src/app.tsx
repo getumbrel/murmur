@@ -339,7 +339,6 @@ function Splash() {
     // A touch above centre, where the eye rests.
     <div className="grid h-dvh place-items-center bg-bg pb-[6vh]" role="status" aria-busy="true" aria-label="Loading Murmur">
       <motion.div
-        data-hero="brand"
         initial={{ opacity: 0, scale: 0.94, y: 8 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         transition={{ delay: 0.35, duration: reduce ? 0.15 : 0.7, ease: [0.16, 1, 0.3, 1] }}

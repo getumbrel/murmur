@@ -232,8 +232,6 @@ export type AgentFieldsProps = Taken & {
   onChange: (draft: AgentDraft) => void
   onSubmit: (draft: AgentDraft) => void
   onDelete?: () => void
-  /** Shared-element id for the preview orb, so it can fly in from a card. */
-  orbLayoutId?: string
   /** Arriving from somewhere (a template card): fields rise in, the orb says hello. */
   entering?: boolean
   /** Just created: the orb is delighted. */
@@ -249,7 +247,6 @@ export function AgentFields({
   onChange,
   onSubmit,
   onDelete,
-  orbLayoutId,
   entering,
   celebrate,
   busy,
@@ -322,8 +319,8 @@ export function AgentFields({
 
   return (
     <form id={id} onSubmit={submit} className={cn(short ? 'space-y-5' : 'space-y-7')}>
-      {/* Preview */}
-      <div className="flex flex-col items-center pt-2">
+      {/* Preview. Room above for its glow: the sheet's scrolling body would cut it off. */}
+      <div className="flex flex-col items-center pt-8">
         <button
           type="button"
           onClick={nextHue}
@@ -333,16 +330,12 @@ export function AgentFields({
         >
           <span
             className={cn(
-              'pointer-events-none absolute -inset-10 rounded-full bg-[radial-gradient(closest-side,var(--accent-soft),transparent)] transition-colors duration-500',
+              'pointer-events-none absolute -inset-8 rounded-full bg-[radial-gradient(closest-side,var(--accent-soft),transparent)] transition-colors duration-500',
               entering && 'animate-fade [animation-delay:200ms] [animation-duration:600ms]',
             )}
             aria-hidden
           />
-          <motion.span
-            layoutId={orbLayoutId}
-            className="relative block"
-            transition={{ type: 'spring', duration: 0.5, bounce: 0.18 }}
-          >
+          <span className={cn('relative block', entering && 'animate-rise')}>
             <Orb
               hue={draft.hue}
               size={short ? 72 : 96}
@@ -350,7 +343,7 @@ export function AgentFields({
               seed={body}
               className="block transition-[filter] duration-500"
             />
-          </motion.span>
+          </span>
         </button>
         <p
           className={cn(

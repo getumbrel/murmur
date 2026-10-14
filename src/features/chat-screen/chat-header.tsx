@@ -95,8 +95,7 @@ export function ChatHeader({
           title={agent ? `${agent.name}’s chats and settings` : undefined}
         >
           {agent ? (
-            // Named for the orb's flight in from the agent's row (src/lib/transitions.ts).
-            <span data-orb={agent.id} className="flex-none">
+            <span className="flex-none">
               <Orb hue={agent.hue} size={34} state={orb} seed={agent.id} />
             </span>
           ) : (

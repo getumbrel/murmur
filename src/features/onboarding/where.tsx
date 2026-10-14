@@ -54,7 +54,7 @@ export type WhereProps = {
    * Chosen, and its moment has played: carry on. `from` is where the Start
    * fresh buddy stood, so Getting ready can fly it in.
    */
-  onChosen: (result: Chosen, how: { lead?: FoundHermes; from?: DOMRect }) => void
+  onChosen: (result: Chosen, how: { lead?: FoundHermes }) => void
   /** Another browser chose first: follow it. */
   onDecided: (result: Extract<ChoiceResult, { reason: 'decided' }>) => void
   /** "Connect a different Hermes…" / "I already have Hermes". */
@@ -95,7 +95,6 @@ export function WhereStep({
   const [done, setDone] = useState(!!initial?.done)
   // Why the last try didn't work, under the card's button.
   const [note, setNote] = useState<string | undefined>(initial?.note)
-  const freshBuddy = useRef<HTMLSpanElement>(null)
 
   const builtin = setup?.builtin
   const builtinDown = builtin?.state === 'unreachable' || builtin?.state === 'outdated'
@@ -171,10 +170,9 @@ export function WhereStep({
   const startFresh = async () => {
     if (busy || builtinDown) return
     setBusy('fresh')
-    const from = freshBuddy.current?.getBoundingClientRect()
     try {
       const result = await choose({ use: 'builtin' })
-      if (result.ok) return onChosen(result, { from })
+      if (result.ok) return onChosen(result, {})
       if (result.reason === 'decided') return onDecided(result)
       throw new Error()
     } catch {
@@ -225,7 +223,7 @@ export function WhereStep({
         >
           <ChoiceRow
             leading={
-              <span ref={freshBuddy} className="grid size-11 place-items-center">
+              <span className="grid size-11 place-items-center">
                 <Buddy hue={HUE} size={28} seed="default" state={builtinDown ? 'offline' : 'idle'} />
               </span>
             }
@@ -254,7 +252,6 @@ export function WhereStep({
       <>
         <motion.div key="fresh-card" {...rise(0.12)}>
           <FreshCard
-            buddyRef={freshBuddy}
             state={builtin?.state}
             busy={busy === 'fresh'}
             onStart={startFresh}
@@ -689,13 +686,11 @@ function SuccessButton({
 
 /** Nothing found: the Hermes built into Murmur leads, the face of the main agent-to-be on top. */
 function FreshCard({
-  buddyRef,
   state,
   busy,
   onStart,
   onCheck,
 }: {
-  buddyRef: React.Ref<HTMLSpanElement>
   state?: BuiltinState
   busy: boolean
   onStart: () => void
@@ -713,7 +708,7 @@ function FreshCard({
             down && 'opacity-0',
           )}
         />
-        <span ref={buddyRef} className="relative">
+        <span className="relative">
           <Buddy hue={HUE} size={64} seed="default" state={down ? 'offline' : busy ? 'working' : 'idle'} />
         </span>
       </span>

@@ -7,12 +7,10 @@ import './transitions.css'
 // the new one rendered, and then they move.
 //
 // - Phones: the new page pushes in from the right while the old one drifts
-//   left and dims; back reverses it. The agent's buddy flies between its row
-//   (or its card in All agents), its page's hero and the chat header
-//   (view-transition-name: buddy): roster → agent page → chat and back.
-// - Wide: the sidebar stays put and the main pane crossfades; the buddy stays put.
-// - Splash and welcome into the app: the Murmur mark settles into the one in
-//   the header (or simply dissolves); an agent's buddy lands on its row.
+//   left and dims; back reverses it. Buddies move with their page: a face
+//   flying from one screen to the next read as a glitch more than a link.
+// - Wide: the sidebar stays put and the main pane crossfades.
+// - Splash and welcome into the app: a soft dissolve.
 // - Reduced motion: a 150ms crossfade. No View Transitions: an instant change.
 
 type Kind = 'push' | 'pop' | 'fade' | 'pane' | 'handoff'
@@ -147,14 +145,6 @@ const screen = (p: string) =>
 
 const depth = (p: string) => (p === '/' ? 0 : 1)
 
-/** The face that belongs to a path: `agent` for a chat or an agent's page, `group:<id>` for a group. */
-function orbKey(p: string) {
-  const m = /^\/(chat|group|agent)\/([^/]+)/.exec(p)
-  if (!m) return undefined
-  const id = decodeURIComponent(m[2])
-  return m[1] === 'group' ? `group:${id}` : id
-}
-
 let mainAgent = 'default'
 export const setMainAgent = (id: string | undefined) => void (mainAgent = id ?? 'default')
 /** The main agent's id (for "new chat" with nobody on screen). */
@@ -182,126 +172,33 @@ function go(to: string, how: 'push' | 'pop' | 'replace', scroll = 0) {
     if (moved) scrollTo(0, scroll)
   }
   if (!kind || instant || updating || !supported()) return update()
-  const key = kind === 'pop' ? orbKey(from) : orbKey(to)
-  morph(kind, update, {
-    from: kind === 'handoff' ? hero : () => (kind === 'pop' ? undefined : tapped(key)) ?? find(key),
-    to: (from) => (kind === 'handoff' ? landing(from, key) : find(key)),
-  })
+  morph(kind, update)
 }
 
-/** Splash or onboarding into the app: the face on screen becomes the one in the app. */
+/** Splash or onboarding into the app: the app dissolves in. */
 export function handoff(update: () => void) {
-  const key = orbKey(location.pathname)
-  if (!supported() || !hero()) return update()
-  morph(reduced() ? 'fade' : 'handoff', update, {
-    from: hero,
-    to: (from) => landing(from, key),
-  })
-}
-
-/** Where a hero lands: the Murmur mark on the header's mark (if one is on screen), a buddy on its agent. */
-function landing(from: HTMLElement | undefined, key: string | undefined) {
-  if (from?.dataset.hero === 'brand')
-    return biggest([...document.querySelectorAll<HTMLElement>('[data-orb="brand"] .murmur-mark')])
-  return key ? find(key) : (find('home') ?? find(mainAgent))
+  if (!supported()) return update()
+  morph(reduced() ? 'fade' : 'handoff', update)
 }
 
 // ── Running one ───────────────────────────────────────────────────────────────
 
 let updating = false
 
-type Ends = { from: () => HTMLElement | undefined; to: (from: HTMLElement | undefined) => HTMLElement | undefined }
-
-function morph(kind: Kind, update: () => void, ends: Ends) {
+function morph(kind: Kind, update: () => void) {
   const root = document.documentElement
-  // A face only flies on phones, where the whole page moves with it. With the
-  // sidebar always on screen, a flight from row to header reads as a glitch.
-  const flies = !reduced() && kind !== 'fade' && kind !== 'pane'
-  const a = flies ? ends.from() : undefined
-  let b: HTMLElement | undefined
   root.dataset.nav = kind
-  name(a, 'buddy')
   const vt = document.startViewTransition(() => {
-    name(a)
     updating = true
     try {
       flushSync(update)
     } finally {
       updating = false
     }
-    b = a ? ends.to(a) : undefined
-    name(b, 'buddy')
   })
   // A newer navigation can skip this one before it starts; that's expected, not an error.
   vt.ready.catch(() => {})
   vt.finished.finally(() => {
-    name(b)
     if (root.dataset.nav === kind) delete root.dataset.nav
   })
-}
-
-const name = (el: HTMLElement | undefined, value = '') => el && (el.style.viewTransitionName = value)
-
-// ── Finding faces ──────────────────────────────────────────────────────────────
-
-let tap: { el: Element; at: number } | undefined
-addEventListener('click', (e) => void (tap = { el: e.target as Element, at: performance.now() }), true)
-
-/** The face inside whatever was just tapped, if it's this agent's. */
-function tapped(key: string | undefined) {
-  if (!key || !tap || performance.now() - tap.at > 1000) return undefined
-  const target = tap.el.closest?.('a, button')
-  return target && matches(target, key) ? face(target) : undefined
-}
-
-/** Links that lead to a face's screens: a group's chat, or an agent's chats and page. */
-const hrefsFor = (key: string) =>
-  key.startsWith('group:') ? [`/group/${key.slice(6)}`] : [`/chat/${key}`, `/agent/${key}`]
-const matches = (el: Element, key: string) => {
-  const href = el.getAttribute('href')
-  return el.tagName === 'BUTTON' || hrefsFor(key).some((h) => href === h || !!href?.startsWith(`${h}/`))
-}
-
-/** An agent's (or group's) face on screen now: a header's, else its biggest visible row. */
-function find(key: string | undefined): HTMLElement | undefined {
-  if (!key) return undefined
-  const tagged = document.querySelector<HTMLElement>(`[data-orb="${CSS.escape(key)}"]`)
-  if (tagged && visible(tagged)) return tagged
-  const links = document.querySelectorAll(
-    hrefsFor(key)
-      .map(CSS.escape)
-      .map((h) => `a[href="${h}"], a[href^="${h}/"]`)
-      .join(', '),
-  )
-  return biggest([...links].map(face))
-}
-
-/** The smallest box around every buddy inside `el` (a Buddy, a BuddyStack or a BuddyRow). */
-function face(el: Element) {
-  const buddies = [...el.querySelectorAll<HTMLElement>('.buddy')]
-  let box: HTMLElement | null = buddies[0] ?? null
-  while (box && box !== el && !buddies.every((o) => box!.contains(o))) box = box.parentElement
-  return box && box !== el ? box : undefined
-}
-
-/** The one face that's the star of the current screen (the splash or welcome mark, done's buddy). */
-function hero() {
-  return biggest([...document.querySelectorAll<HTMLElement>('[data-hero], .buddy')])
-}
-
-/** Measured by box, so an SVG (the mark) counts too. */
-function biggest(els: (HTMLElement | undefined)[]) {
-  let best: HTMLElement | undefined
-  let most = 0
-  for (const el of els) {
-    const w = el?.getBoundingClientRect().width ?? 0
-    if (el && visible(el) && (!best || w > most)) [best, most] = [el, w]
-  }
-  return best
-}
-
-function visible(el: HTMLElement) {
-  const r = el.getBoundingClientRect()
-  const onScreen = r.width > 0 && r.bottom > 0 && r.right > 0 && r.top < innerHeight && r.left < innerWidth
-  return onScreen && (el.checkVisibility?.({ opacityProperty: true, visibilityProperty: true }) ?? true)
 }

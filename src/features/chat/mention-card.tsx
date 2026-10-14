@@ -31,7 +31,6 @@ export function MentionCard({ agentId, anchor, open, onOpenChange }: Props) {
   const reduce = useReducedMotion()
   if (!agent) return null
 
-  // The Buddy in the card is the face that flies to the agent's page (phones).
   const go = (to: string) => {
     onOpenChange(false)
     navigate(to)
@@ -96,7 +95,7 @@ function Profile({ agent, wide, onGo }: { agent: Agent; wide: boolean; onGo: (to
           aria-hidden
           className="pointer-events-none absolute inset-0 rounded-full bg-[radial-gradient(closest-side,var(--accent-soft),transparent)]"
         />
-        <span data-orb={agent.id} className="relative">
+        <span className="relative">
           <Buddy hue={agent.hue} size={56} state={state} seed={agent.id} />
         </span>
       </div>

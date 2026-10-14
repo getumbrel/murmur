@@ -124,8 +124,8 @@ function PhoneHome() {
             transition={{ type: 'spring', duration: 0.38, bounce: 0 }}
           >
             <div className="flex items-center justify-between gap-3 pt-1">
-              {/* The lockup is the large title; the splash's mark lands on it (src/lib/transitions.ts). */}
-              <h1 ref={title} data-orb="brand" className="flex flex-none">
+              {/* The lockup is the large title. */}
+              <h1 ref={title} className="flex flex-none">
                 <MurmurWordmark size={31} />
               </h1>
               {/* With more than one Hermes, which one this is, ending on the 20px line. */}
@@ -222,7 +222,7 @@ function WideEmpty() {
           aria-hidden
           className="pointer-events-none absolute -inset-16 rounded-full bg-[radial-gradient(closest-side,var(--accent-soft),transparent)]"
         />
-        <span data-orb="home">
+        <span>
           <Orb hue={hue} size={112} seed="home" />
         </span>
       </div>
@@ -272,7 +272,7 @@ export function Sidebar() {
         {/* On a Mac the traffic lights come first, and the lockup follows them. */}
         <div className="flex h-14 flex-none items-center gap-0.5 pr-2 pl-6 desktop:h-(--titlebar-h) mac:pl-3">
           <WindowControlsGap side="start" flexGap={2} />
-          <h1 data-orb="brand" className="flex flex-1">
+          <h1 className="flex flex-1">
             <MurmurWordmark size={24} />
           </h1>
           <IconButton

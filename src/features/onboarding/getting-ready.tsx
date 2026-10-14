@@ -1,5 +1,5 @@
-import { AnimatePresence, animate, motion } from 'motion/react'
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { AnimatePresence, motion } from 'motion/react'
+import { useEffect, useState, type CSSProperties, type ReactNode } from 'react'
 import { Button } from '@/ui/button'
 import { Buddy, type BuddyState } from '@/ui/buddy'
 import { Spinner } from '@/ui/spinner'
@@ -31,8 +31,6 @@ export type GettingReadyProps = {
   state?: BuiltinState
   /** Murmur has signed in to it: ready to use. */
   connected: boolean
-  /** Where the Start fresh card's buddy stood, to fly it in from there. */
-  from?: DOMRect
   /** After "All set" has had its moment. */
   onDone: () => void
   /** Failed, then Try again: keep asking, and start the clocks over. */
@@ -48,7 +46,6 @@ export type GettingReadyProps = {
 export function GettingReady({
   state,
   connected,
-  from,
   onDone,
   onRetry,
   onOther,
@@ -102,20 +99,6 @@ export function GettingReady({
     return () => clearTimeout(t)
   }, [failed, finished])
 
-  // Arriving from the Start fresh card: its buddy grows into this one.
-  const hero = useRef<HTMLSpanElement>(null)
-  useLayoutEffect(() => {
-    const el = hero.current
-    if (!el || !from || reduced) return
-    const to = el.getBoundingClientRect()
-    if (!to.width) return
-    const dx = from.left + from.width / 2 - (to.left + to.width / 2)
-    const dy = from.top + from.height / 2 - (to.top + to.height / 2)
-    const s = from.width / to.width
-    void animate(el, { x: [dx, 0], y: [dy, 0], scale: [s, 1] }, { type: 'spring', duration: 0.5, bounce: 0.15 })
-  }, [])
-  const flew = !!from && !reduced
-
   const title = failed ? 'Couldn’t get things ready' : finished ? 'All set' : 'Getting ready'
   const body = failed
     ? 'Murmur’s built-in Hermes didn’t start. Try restarting Murmur, then try again.'
@@ -145,9 +128,8 @@ export function GettingReady({
           <span className="relative block" style={{ width: HERO, height: HERO }}>
             {finished && <Bloom />}
             <motion.span
-              ref={hero}
               className="relative block"
-              initial={flew ? false : reduced ? { opacity: 0 } : { opacity: 0, scale: 0.9, y: 12 }}
+              initial={reduced ? { opacity: 0 } : { opacity: 0, scale: 0.9, y: 12 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               transition={reduced ? { duration: 0.15 } : { type: 'spring', duration: 0.6, bounce: 0.2 }}
             >

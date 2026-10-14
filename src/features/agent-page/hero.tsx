@@ -37,8 +37,7 @@ export function AgentHero({
           aria-hidden
           className="pointer-events-none absolute -inset-14 rounded-full bg-[radial-gradient(closest-side,var(--accent-soft),transparent)]"
         />
-        {/* The face that flies here from its row, its card or a chat's header (src/lib/transitions.ts). */}
-        <span data-orb={agent.id} className="relative">
+        <span className="relative">
           <Buddy hue={agent.hue} size={104} state={state} seed={agent.id} label={`${agent.name}, ${describe(state)}`} />
         </span>
       </div>

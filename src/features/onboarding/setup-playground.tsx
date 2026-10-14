@@ -13,7 +13,7 @@ import { WhereStep } from './where'
 //   ?screen=where&case=looking | found | found-many | found-fresh | found-network | outdated | signin
 //                    | signin-error | fresh | fresh-down | down-row | none | other | cant-reach
 //                    | connecting | connected
-//   ?screen=ready&stage=starting | room | slow | stuck | failed | done   (&from=card flies the buddy in)
+//   ?screen=ready&stage=starting | room | slow | stuck | failed | done
 //   ?screen=here&agents=1..9&chats=0|1|240
 // Every Where case can be played through: "Use…" lands on "Your agents are
 // here", Start fresh goes through Getting ready.
@@ -124,7 +124,7 @@ const connection = (over: Partial<KnownHermes>): KnownHermes => ({
 })
 
 type View =
-  { screen: 'where' } | { screen: 'ready'; from?: DOMRect } | { screen: 'here'; agents: ArrivedAgent[]; chats: number }
+  { screen: 'where' } | { screen: 'ready' } | { screen: 'here'; agents: ArrivedAgent[]; chats: number }
 
 const toArrived = (list: FoundAgent[], total: number): ArrivedAgent[] => {
   const all = [...list, ...PEOPLE.filter((p) => !list.some((a) => a.id === p.id))].slice(
@@ -184,7 +184,7 @@ export function SetupPlayground({ screen }: { screen: 'where' | 'ready' | 'here'
     return setup
   }
 
-  if (view.screen === 'ready') return <ReadyDemo from={view.from} />
+  if (view.screen === 'ready') return <ReadyDemo />
   if (view.screen === 'here')
     return (
       <Arrived key={String(view.agents.length)} agents={view.agents} chats={view.chats} onStart={() => alert('Home')} />
@@ -203,14 +203,14 @@ export function SetupPlayground({ screen }: { screen: 'where' | 'ready' | 'here'
         refresh={refresh}
         onOther={() => alert('Connect a different Hermes…')}
         onDecided={() => {}}
-        onChosen={(_, { lead, from }) => {
+        onChosen={(_, { lead }) => {
           if (lead)
             setView({
               screen: 'here',
               agents: toArrived(lead.agents ?? [], lead.agentCount ?? 1),
               chats: lead.chats ?? 0,
             })
-          else setView({ screen: 'ready', from })
+          else setView({ screen: 'ready' })
         }}
         initial={
           kase === 'connecting'
@@ -271,7 +271,7 @@ function FormStep({ other, setup }: { other: boolean; setup: Setup }) {
 }
 
 /** Getting ready, either frozen at a stage or (with no stage) played through: start, answer, signed in. */
-function ReadyDemo({ from }: { from?: DOMRect }) {
+function ReadyDemo() {
   const stage = param('stage')
   const [state, setState] = useState<BuiltinState>(
     stage === 'room' || stage === 'done' ? 'ready' : stage === 'failed' ? 'unreachable' : 'starting',
@@ -290,7 +290,6 @@ function ReadyDemo({ from }: { from?: DOMRect }) {
   return (
     <GettingReady
       key={round}
-      from={from}
       state={state}
       connected={connected}
       elapsed={stage === 'slow' ? 46_000 : stage === 'stuck' ? 4 * 60_000 + 1000 : 0}

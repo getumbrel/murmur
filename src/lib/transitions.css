@@ -1,5 +1,5 @@
 /* Page transitions (see transitions.ts). <html data-nav> says which kind is
-   running; the buddy that flies between screens is named `buddy`. */
+   running. */
 
 :root {
   --vt-ease: cubic-bezier(0.32, 0.72, 0, 1);
@@ -21,15 +21,6 @@
 ::view-transition-new(*) {
   animation-duration: 320ms;
   animation-timing-function: var(--vt-ease);
-}
-
-/* The buddy lands like a sheet settles; its two looks blend as it flies. */
-::view-transition-group(buddy) {
-  animation-duration: 380ms;
-}
-::view-transition-old(buddy),
-::view-transition-new(buddy) {
-  animation-duration: 220ms;
 }
 
 /* ── Push and pop (phones) ─────────────────────────────────────────────────── */
@@ -60,14 +51,6 @@ html[data-nav='pop']::view-transition-group(*),
 html[data-nav='pop']::view-transition-old(*),
 html[data-nav='pop']::view-transition-new(*) {
   animation-duration: 280ms;
-}
-html[data-nav='pop']::view-transition-group(buddy) {
-  animation-duration: 340ms;
-}
-/* The rule above would stretch the buddy's quick blend to 280ms; keep it brisk. */
-html[data-nav='pop']::view-transition-old(buddy),
-html[data-nav='pop']::view-transition-new(buddy) {
-  animation-duration: 180ms;
 }
 html[data-nav='pop']::view-transition-old(root) {
   z-index: 1;
@@ -134,9 +117,6 @@ html[data-nav='handoff']::view-transition-old(*),
 html[data-nav='handoff']::view-transition-new(*) {
   animation-duration: 420ms;
   animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
-}
-html[data-nav='handoff']::view-transition-group(buddy) {
-  animation-duration: 560ms;
 }
 
 /* ── Reduced motion: nothing travels, everything crossfades ────────────────── */
