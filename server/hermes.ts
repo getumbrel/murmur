@@ -310,6 +310,35 @@ export function createHermes(target: Target) {
   }
 
   /**
+   * A signed-in JSON call that keeps Hermes's answer: its status and body
+   * (null when it wasn't JSON). A stale credential is swapped once. Throws a
+   * ConnectError when Hermes couldn't be reached or signed in to (telegram.ts).
+   */
+  async function send<T>(method: string, path: string, body?: unknown, timeout = 15_000): Promise<{ status: number; body: T | null }> {
+    for (let attempt = 0; ; attempt++) {
+      const { headers, credential } = await restAuth()
+      const init: RequestInit =
+        body === undefined
+          ? { method, headers }
+          : { method, headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify(body) }
+      const res = await call(path, init, timeout)
+      if ((res.status === 401 || res.status === 403) && !attempt) {
+        await res.body?.cancel().catch(() => {})
+        reject(credential)
+        continue
+      }
+      const text = await res.text().catch(() => '')
+      let data: T | null = null
+      try {
+        data = text ? (JSON.parse(text) as T) : null
+      } catch {
+        // Not JSON: the status says enough.
+      }
+      return { status: res.status, body: data }
+    }
+  }
+
+  /**
    * A few JSON-RPC calls over one short-lived socket, then it closes: what
    * only the socket tells (agents' colours, whether a model is set up). Each
    * answer is its result, or null when it failed or time ran out.
@@ -366,7 +395,7 @@ export function createHermes(target: Target) {
     })
   }
 
-  return { url: base, prefix, target, check: () => once('check', check), status, restAuth, socketAuth, reject, read, write, peek }
+  return { url: base, prefix, target, check: () => once('check', check), status, restAuth, socketAuth, reject, read, write, send, peek }
 }
 
 function readCookies(lines: string[]) {

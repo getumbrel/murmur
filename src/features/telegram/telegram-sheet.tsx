@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { Lock, MessageCircle, RotateCw, Sparkles } from 'lucide-react'
 import { toast } from 'sonner'
@@ -17,11 +17,13 @@ import {
   cancelPairing,
   clearPairing,
   disconnectTelegram,
+  pairingActive,
   startPairing,
   telegramKey,
-  usePairings,
+  usePairing,
   useTelegram,
   type Pairing,
+  type PairingPhase,
   type TelegramStatus,
 } from '@/state/telegram'
 import { QrCode } from './qr-code'
@@ -35,23 +37,30 @@ const ease = [0.16, 1, 0.3, 1] as const
 /** Set up, check on, or turn off texting an agent from Telegram. */
 export function TelegramSheet({ agent, open, onOpenChange }: Props) {
   const status = useTelegram(agent.id, { enabled: open })
-  const pairing = usePairings((s) => s.byAgent[agent.id])
+  const pairing = usePairing(agent.id)
 
-  // Closing on a finished or failed pairing tidies it away; a code still
-  // waiting keeps going in the background, so the person can come back.
+  // Closing on a finished or failed pairing the person saw tidies it away
+  // (on every device); a code still waiting keeps going on Murmur's server,
+  // so they can come back. One that ended while the sheet was shut stays, so
+  // the agent's page can say how it went.
+  const phase = pairing?.phase
+  const shown = useRef<PairingPhase | undefined>(undefined)
+  if (open) shown.current = phase
   useEffect(() => {
-    if (!open && pairing && pairing.phase !== 'waiting' && pairing.phase !== 'saving' && pairing.phase !== 'starting') {
-      const t = setTimeout(() => clearPairing(agent.id), 400)
-      return () => clearTimeout(t)
-    }
-  }, [open, pairing, agent.id])
+    if (open || !phase || pairingActive(phase) || shown.current !== phase) return
+    const t = setTimeout(() => {
+      shown.current = undefined
+      clearPairing(agent.id)
+    }, 400)
+    return () => clearTimeout(t)
+  }, [open, phase, agent.id])
 
   const view: View = pairing
-    ? pairing.phase === 'done'
+    ? pairing.phase === 'connected'
       ? 'done'
-      : pairing.phase === 'error'
+      : pairing.phase === 'failed'
         ? 'error'
-        : pairing.phase === 'saving'
+        : pairing.phase === 'applying'
           ? 'saving'
           : 'pairing'
     : status.data && status.data.state !== 'off'
@@ -83,7 +92,7 @@ export function TelegramSheet({ agent, open, onOpenChange }: Props) {
                 onClose={() => onOpenChange(false)}
               />
             )}
-            {view === 'error' && pairing && <Failed agent={agent} message={pairing.error} />}
+            {view === 'error' && pairing && <Failed agent={agent} message={pairing.message} />}
             {view === 'connected' && status.data && <Connected agent={agent} status={status.data} />}
           </motion.div>
         </AnimatePresence>
@@ -491,9 +500,9 @@ function Failed({ agent, message }: { agent: Agent; message?: string }) {
   return (
     <div className="flex flex-col items-center pt-6 text-center">
       <Hero agent={agent} state="error" badge={false} />
-      <Heading title="Telegram didn’t connect">{message ?? 'Something went wrong. Try again.'}</Heading>
+      <Heading title="Telegram didn’t connect">{message ?? 'Something went wrong.'}</Heading>
       <div className="mt-8 w-full space-y-2">
-        <StartButton onStart={() => startPairing(agent.id, agent.name)} label="Try again" />
+        <StartButton onStart={() => startPairing(agent.id, agent.name)} label="Set up again" />
         <Button variant="ghost" size="lg" onClick={() => clearPairing(agent.id)}>
           Back
         </Button>

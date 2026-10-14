@@ -71,10 +71,13 @@ function messageFrom(detail: unknown): string | null {
   return null
 }
 
+/** Gives up on a request after `ms` (it fails as unreachable), for callers that must never hang. */
+export const within = (ms: number): RequestInit => ({ signal: AbortSignal.timeout(ms) })
+
 export const api = {
   get: <T>(path: string, init?: RequestInit) => request<T>('GET', path, undefined, init),
-  post: <T>(path: string, body?: unknown) => request<T>('POST', path, body ?? {}),
-  put: <T>(path: string, body?: unknown) => request<T>('PUT', path, body ?? {}),
-  patch: <T>(path: string, body?: unknown) => request<T>('PATCH', path, body ?? {}),
-  delete: <T>(path: string, body?: unknown) => request<T>('DELETE', path, body),
+  post: <T>(path: string, body?: unknown, init?: RequestInit) => request<T>('POST', path, body ?? {}, init),
+  put: <T>(path: string, body?: unknown, init?: RequestInit) => request<T>('PUT', path, body ?? {}, init),
+  patch: <T>(path: string, body?: unknown, init?: RequestInit) => request<T>('PATCH', path, body ?? {}, init),
+  delete: <T>(path: string, body?: unknown, init?: RequestInit) => request<T>('DELETE', path, body, init),
 }

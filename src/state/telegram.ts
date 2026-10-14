@@ -3,17 +3,19 @@
 // person taps Start in Telegram, and once Telegram confirms who they are
 // Hermes saves the bot, allows only that person, and restarts messaging.
 //
-// A pairing lives here, not in the sheet, so it survives the sheet closing
-// (or the person switching to Telegram on the same phone) and finishes on
-// its own when they come back. Hermes doesn't keep the bot's @username, so
-// Murmur stores it in the agent's ui_meta under 'murmur-telegram'.
+// Murmur's server sees each setup through (server/telegram.ts): it asks
+// Hermes until Telegram is done and saves the bot itself, so a setup finishes
+// even when the person completes it on their phone while this tab sleeps, or
+// closes it. Every tab and device shows what the server says. Hermes doesn't
+// keep the bot's @username, so the agent's ui_meta does, under
+// 'murmur-telegram'.
 
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { create } from 'zustand'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, HermesError } from '@/hermes/rest'
+import { api, hermesHeaders, SESSION_CHECK, within } from '@/hermes/rest'
 import { rpc } from '@/hermes/gateway'
-import { scoped } from '@/hermes/instance'
+import { HERMES_GONE, scoped } from '@/hermes/instance'
 import { listProfiles } from '@/hermes/compat'
 
 // Each agent's bot @username on this Hermes, cached beside ui_meta.
@@ -42,6 +44,8 @@ type Platform = {
 }
 
 const META_KEY = 'murmur-telegram'
+/** Hermes's messaging routes can take 15s or more to answer; past this, they're not going to. */
+const SLOW_MS = 45_000
 const q = (profile: string) => `?profile=${encodeURIComponent(profile)}`
 export const telegramKey = (agentId: string) => ['telegram', agentId] as const
 
@@ -78,7 +82,7 @@ async function storedUsername(agentId: string) {
 
 async function readTelegram(agentId: string): Promise<TelegramStatus> {
   const [{ platforms }, username] = await Promise.all([
-    api.get<{ platforms: Platform[] }>(`/api/messaging/platforms${q(agentId)}`),
+    api.get<{ platforms: Platform[] }>(`/api/messaging/platforms${q(agentId)}`, within(SLOW_MS)),
     storedUsername(agentId),
   ])
   const p = platforms.find((x) => x.id === 'telegram')
@@ -107,7 +111,7 @@ export function useTelegram(agentId: string, { enabled = true } = {}) {
   const phase = usePairings((s) => s.byAgent[agentId]?.phase)
   // A finished pairing changes what Hermes reports.
   useEffect(() => {
-    if (phase === 'done') void qc.invalidateQueries({ queryKey: telegramKey(agentId) })
+    if (phase === 'connected') void qc.invalidateQueries({ queryKey: telegramKey(agentId) })
   }, [phase, agentId, qc])
   return useQuery({
     queryKey: telegramKey(agentId),
@@ -121,139 +125,177 @@ export function useTelegram(agentId: string, { enabled = true } = {}) {
 // ── Pairing ─────────────────────────────────────────────────────────────────
 
 export type PairingPhase =
-  /** Asking Hermes for a code. */
+  /** Asking for a code (this tab only). */
   | 'starting'
   /** Code on screen; waiting for the person to tap Start in Telegram. */
   | 'waiting'
-  /** Telegram confirmed; saving the bot. */
-  | 'saving'
-  | 'done'
+  /** Telegram confirmed; Murmur is saving the bot. */
+  | 'applying'
+  | 'connected'
   | 'expired'
-  | 'error'
+  /** Didn't finish; `message` says why. */
+  | 'failed'
 
 export type Pairing = {
   phase: PairingPhase
-  id?: string
   link?: string
   qr?: string
   /** ms since epoch. */
   expiresAt?: number
   username?: string
-  error?: string
+  message?: string
 }
+
+type ServerPairing = Required<Pick<Pairing, 'link' | 'qr' | 'expiresAt'>> &
+  Pick<Pairing, 'username' | 'message'> & { profile: string; phase: Exclude<PairingPhase, 'starting'> }
+
+/** Still going: worth watching closely. */
+export const pairingActive = (phase?: PairingPhase) => phase === 'starting' || phase === 'waiting' || phase === 'applying'
+
+/** A code past its time has expired, whatever the last answer said. */
+export const effectivePhase = (p: Pairing | undefined, now = Date.now()): PairingPhase | undefined =>
+  p?.phase === 'waiting' && (p.expiresAt ?? Infinity) <= now ? 'expired' : p?.phase
 
 type Store = { byAgent: Record<string, Pairing> }
 
-export const usePairings = create<Store>(() => ({ byAgent: restore() }))
+export const usePairings = create<Store>(() => ({ byAgent: {} }))
 
-const SAVE_KEY = scoped('murmur:telegram-pairing')
+// What the server said, and what this tab is doing before it can say (a code
+// being asked for, or one Hermes couldn't make).
+let server: Record<string, Pairing> = {}
+const mine: Record<string, Pairing> = {}
+const publish = () => usePairings.setState({ byAgent: { ...server, ...mine } })
 
-function restore(): Record<string, Pairing> {
+const TIMEOUT_MS = 15_000
+const UNREACHABLE = 'Can’t reach Murmur. Check your connection, then try again.'
+
+async function murmur<T>(method: string, path: string, body?: unknown, timeout = TIMEOUT_MS): Promise<T> {
+  let res: Response
   try {
-    const saved = JSON.parse(sessionStorage.getItem(SAVE_KEY) ?? '{}') as Record<string, Pairing>
-    // Only codes still on screen are worth resuming.
-    return Object.fromEntries(
-      Object.entries(saved).filter(([, p]) => p.phase === 'waiting' && (p.expiresAt ?? 0) > Date.now()),
-    )
-  } catch {
-    return {}
-  }
-}
-
-function set(agentId: string, next: Pairing | null) {
-  usePairings.setState((s) => {
-    const byAgent = { ...s.byAgent }
-    if (next) byAgent[agentId] = next
-    else delete byAgent[agentId]
-    try {
-      sessionStorage.setItem(SAVE_KEY, JSON.stringify(byAgent))
-    } catch {
-      // Resuming after a reload is a nicety.
-    }
-    return { byAgent }
-  })
-  if (next?.phase === 'waiting') schedule(0)
-}
-
-const patch = (agentId: string, changes: Partial<Pairing>) => {
-  const current = usePairings.getState().byAgent[agentId]
-  if (current) set(agentId, { ...current, ...changes })
-}
-
-function problem(error: unknown): string {
-  const status = error instanceof HermesError ? error.status : -1
-  if (status === 0) return 'Can’t reach Hermes. Check that it’s running, then try again.'
-  if (status === 502 || status === 503) return 'Telegram setup isn’t reachable right now. Try again in a moment.'
-  return 'Something went wrong setting up Telegram. Try again.'
-}
-
-/** Get a fresh code for `agentId`; the bot will be called `name`. */
-export async function startPairing(agentId: string, name: string) {
-  set(agentId, { phase: 'starting' })
-  try {
-    const res = await api.post<{ pairing_id: string; deep_link: string; qr_payload?: string; expires_at: string }>(
-      '/api/messaging/telegram/onboarding/start',
-      { bot_name: name },
-    )
-    const expiresAt = Date.parse(res.expires_at)
-    set(agentId, {
-      phase: 'waiting',
-      id: res.pairing_id,
-      link: res.deep_link,
-      qr: res.qr_payload || res.deep_link,
-      expiresAt: Number.isFinite(expiresAt) ? expiresAt : Date.now() + 10 * 60_000,
+    res = await fetch(path, {
+      method,
+      cache: 'no-store',
+      signal: AbortSignal.timeout(timeout),
+      // Names this tab's Hermes: setups are per Hermes.
+      headers: hermesHeaders(body ? { 'content-type': 'application/json' } : {}),
+      body: body ? JSON.stringify(body) : undefined,
     })
-  } catch (error) {
-    set(agentId, { phase: 'error', error: problem(error) })
+  } catch {
+    throw new Error(UNREACHABLE)
   }
+  const data = (await res.json().catch(() => null)) as { error?: unknown } | null
+  if (data?.error === 'hermes_gone') window.dispatchEvent(new Event(HERMES_GONE))
+  if (res.status === 401 && data?.error === 'signed_out') window.dispatchEvent(new Event(SESSION_CHECK))
+  if (!res.ok) throw new Error(typeof data?.error === 'string' && res.status !== 409 ? data.error : 'Something went wrong setting up Telegram. Try again.')
+  return data as T
 }
 
-/** Stop waiting and let the code go. */
+// ── Watching the server ─────────────────────────────────────────────────────
+
+let watchers = 0
+let timer: ReturnType<typeof setTimeout> | undefined
+let inflight: Promise<void> | null = null
+let lastLook = 0
+
+const visible = () => typeof document === 'undefined' || document.visibilityState === 'visible'
+
+/** Ask again soon while a setup is under way (sooner when this tab is on screen); now and then otherwise. */
+function schedule() {
+  clearTimeout(timer)
+  if (!watchers) return
+  const active = Object.values(usePairings.getState().byAgent).some((p) => pairingActive(p.phase))
+  const delay = active ? (visible() ? 2_500 : 10_000) : visible() ? 30_000 : null
+  if (delay !== null) timer = setTimeout(() => void refreshPairings(), delay)
+}
+
+/** What the server knows about this Hermes's setups, now. */
+export function refreshPairings() {
+  inflight ??= (async () => {
+    try {
+      const { pairings } = await murmur<{ pairings: ServerPairing[] }>('GET', '/murmur/telegram')
+      const next: Record<string, Pairing> = {}
+      for (const { profile, ...p } of pairings) {
+        next[profile] = p
+        // This browser's copy of the bot's name, beside ui_meta.
+        if (p.phase === 'connected' && p.username && server[profile]?.phase !== 'connected') local.set(profile, p.username)
+      }
+      server = next
+      lastLook = Date.now()
+      publish()
+    } catch {
+      // A blip: the next look will tell.
+    } finally {
+      inflight = null
+      schedule()
+    }
+  })()
+  return inflight
+}
+
+if (typeof document !== 'undefined') {
+  // Back on screen: look straight away.
+  document.addEventListener('visibilitychange', () => {
+    if (watchers && visible()) void refreshPairings()
+    else schedule()
+  })
+}
+
+/**
+ * One agent's setup, if there is one, kept up to date with the server. Its
+ * phase turns to 'expired' the moment the code runs out.
+ */
+export function usePairing(agentId: string): Pairing | undefined {
+  const pairing = usePairings((s) => s.byAgent[agentId])
+  const [, setTick] = useState(0)
+  useEffect(() => {
+    watchers++
+    if (Date.now() - lastLook > 5_000) void refreshPairings()
+    else schedule()
+    return () => {
+      watchers--
+      if (!watchers) clearTimeout(timer)
+    }
+  }, [])
+  const expiresAt = pairing?.phase === 'waiting' ? pairing.expiresAt : undefined
+  useEffect(() => {
+    if (expiresAt === undefined) return
+    const t = setTimeout(() => setTick((n) => n + 1), Math.max(0, expiresAt - Date.now()) + 50)
+    return () => clearTimeout(t)
+  }, [expiresAt])
+  const phase = effectivePhase(pairing)
+  return pairing && phase && phase !== pairing.phase ? { ...pairing, phase } : pairing
+}
+
+/** Get a fresh code for `agentId`; the bot will be called `name`. Murmur's server takes it from there. */
+export async function startPairing(agentId: string, name: string) {
+  mine[agentId] = { phase: 'starting' }
+  publish()
+  try {
+    // Hermes asks Telegram's setup service for the code, which can take a moment.
+    const { pairing } = await murmur<{ pairing: ServerPairing }>('POST', '/murmur/telegram/start', { profile: agentId, name }, 40_000)
+    const { profile: _, ...p } = pairing
+    server = { ...server, [agentId]: p }
+    delete mine[agentId]
+  } catch (error) {
+    mine[agentId] = { phase: 'failed', message: (error as Error).message }
+  }
+  publish()
+  schedule()
+}
+
+/** Stop waiting and let the code go, or put a finished, expired or failed setup away (on every device). */
 export function cancelPairing(agentId: string) {
-  const pairing = usePairings.getState().byAgent[agentId]
-  set(agentId, null)
-  if (pairing?.id && pairing.phase === 'waiting') {
-    api.delete(`/api/messaging/telegram/onboarding/${encodeURIComponent(pairing.id)}`).catch(() => {})
-  }
+  const had = Boolean(server[agentId])
+  delete mine[agentId]
+  const { [agentId]: _, ...rest } = server
+  server = rest
+  publish()
+  if (had) murmur('POST', '/murmur/telegram/cancel', { profile: agentId }).catch(() => {})
 }
 
-/** Forget a finished, expired or failed pairing. */
-export const clearPairing = (agentId: string) => set(agentId, null)
+export const clearPairing = cancelPairing
 
-async function check(agentId: string, pairing: Pairing) {
-  if (!pairing.id) return
-  if ((pairing.expiresAt ?? 0) <= Date.now()) return patch(agentId, { phase: 'expired' })
-  let res: { status: string; bot_username?: string | null; owner_user_id?: string | null }
-  try {
-    res = await api.get(`/api/messaging/telegram/onboarding/${encodeURIComponent(pairing.id)}`)
-  } catch (error) {
-    const status = error instanceof HermesError ? error.status : -1
-    // Gone for good (expired, used, or Hermes restarted): offer a new code.
-    if (status === 410 || status === 404) return patch(agentId, { phase: 'expired' })
-    return // A blip; keep waiting.
-  }
-  if (res.status !== 'ready' || usePairings.getState().byAgent[agentId]?.id !== pairing.id) return
-  if (!res.owner_user_id) {
-    return patch(agentId, { phase: 'error', error: 'Telegram didn’t say who you are. Get a new code and try again.' })
-  }
-  await save(agentId, pairing.id, res.owner_user_id, res.bot_username ?? undefined)
-}
-
-async function save(agentId: string, pairingId: string, owner: string, username?: string) {
-  patch(agentId, { phase: 'saving', username })
-  try {
-    const res = await api.post<{ bot_username?: string | null }>(
-      `/api/messaging/telegram/onboarding/${encodeURIComponent(pairingId)}/apply${q(agentId)}`,
-      // Only the person who paired can talk to the bot.
-      { allowed_user_ids: [owner], profile: agentId },
-    )
-    const name = res.bot_username || username
-    if (name) await remember(agentId, name)
-    patch(agentId, { phase: 'done', username: name })
-  } catch (error) {
-    patch(agentId, { phase: 'error', error: problem(error) })
-  }
-}
+// ── Disconnecting ───────────────────────────────────────────────────────────
 
 async function remember(agentId: string, username: string | null) {
   local.set(agentId, username)
@@ -263,44 +305,16 @@ async function remember(agentId: string, username: string | null) {
   }).catch(() => {})
 }
 
-// One poller for every waiting pairing; quiet while the page is hidden.
-let timer: ReturnType<typeof setTimeout> | undefined
-let running = false
-
-function schedule(delay = 2000) {
-  clearTimeout(timer)
-  timer = setTimeout(tick, delay)
-}
-
-async function tick() {
-  if (running) return
-  const waiting = Object.entries(usePairings.getState().byAgent).filter(([, p]) => p.phase === 'waiting')
-  if (!waiting.length) return
-  if (document.visibilityState === 'visible') {
-    running = true
-    await Promise.all(waiting.map(([agentId, p]) => check(agentId, p))).finally(() => (running = false))
-  }
-  schedule()
-}
-
-if (typeof document !== 'undefined') {
-  // Back from Telegram: look straight away.
-  document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && schedule(0))
-  if (Object.keys(usePairings.getState().byAgent).length) schedule(0)
-}
-
-// ── Disconnecting ───────────────────────────────────────────────────────────
-
 /** Turn Telegram off for this agent and remove its bot from Hermes. */
 export async function disconnectTelegram(agentId: string) {
-  const res = await api.put<{ hot_served?: boolean }>(`/api/messaging/platforms/telegram${q(agentId)}`, {
-    enabled: false,
-    clear_env: ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_ALLOWED_USERS'],
-    profile: agentId,
-  })
+  const res = await api.put<{ hot_served?: boolean }>(
+    `/api/messaging/platforms/telegram${q(agentId)}`,
+    { enabled: false, clear_env: ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_ALLOWED_USERS'], profile: agentId },
+    within(SLOW_MS),
+  )
   // A shared messaging process picks the change up by itself; otherwise
   // restart it, the way Hermes does after setting Telegram up.
-  if (!res.hot_served) await api.post(`/api/gateway/restart${q(agentId)}`).catch(() => {})
+  if (!res.hot_served) await api.post(`/api/gateway/restart${q(agentId)}`, {}, within(SLOW_MS)).catch(() => {})
   await remember(agentId, null)
   clearPairing(agentId)
 }

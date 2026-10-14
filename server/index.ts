@@ -9,6 +9,8 @@
 //   /murmur/login …      → Murmur's own optional password (access.ts).
 //   /murmur/setup        → where agents live, asked once: the Hermes built
 //                          into Murmur, or one it found (setup.ts).
+//   /murmur/telegram     → texting an agent from Telegram: setups Murmur's
+//                          server sees through to the end (telegram.ts).
 //   /murmur/local        → finds OpenAI-compatible model servers on this Umbrel
 //                          (the browser can't reach other containers directly).
 //   everything else      → the built web app, with SPA fallback.

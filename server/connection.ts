@@ -105,6 +105,15 @@ export function hermesFor(req: http.IncomingMessage, url: URL): Hermes | null {
   return target ? instance(target) : null
 }
 
+/** The Hermes a request is for, as its saved entry, or null when it was pinned to one that's gone. */
+export const requestTarget = (req: http.IncomingMessage): Target | null => targetFor(req) ?? null
+
+/** One Hermes by id, or null once it's been removed (telegram.ts, which outlives requests). */
+export function hermesById(id: string): Hermes | null {
+  const target = find(id)
+  return target ? instance(target) : null
+}
+
 /** The first Hermes, for the startup line. */
 export const firstTarget = () => targets()[0]
 

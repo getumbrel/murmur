@@ -12,6 +12,7 @@ import { handleConnection, hermesFor, onDrop, syncHermesCookie } from './connect
 import { hostAllowed, originAllowed, requestUrl, sendJson } from './http.ts'
 import { createProxy, refuse } from './proxy.ts'
 import { handleSetup, setupSettled, startSetup } from './setup.ts'
+import { handleTelegram, startTelegram, stopTelegram } from './telegram.ts'
 
 // Model servers commonly installed alongside Hermes on umbrelOS.
 const localCandidates = memo(() =>
@@ -212,6 +213,8 @@ export function startServer(options: ServerOptions = {}): Promise<RunningServer>
   }
   useEnv(env)
   startSetup()
+  // Telegram setups a restart interrupted carry on once the Hermes is settled.
+  void setupSettled().then(startTelegram)
   const staticDir = resolve(env.STATIC_DIR ?? 'dist')
   const carriesHeader = headerCheck(options.requireHeader)
 
@@ -242,6 +245,7 @@ export function startServer(options: ServerOptions = {}): Promise<RunningServer>
       if (isHermes(path)) return await proxy.proxyHttp(req, res, url)
       if (await handleSetup(req, res, path)) return
       if (await handleConnection(req, res, path)) return
+      if (await handleTelegram(req, res, path)) return
       if (path === '/murmur/local') return sendJson(res, 200, { servers: await discoverLocal() })
       sendJson(res, 404, { error: 'not_found' })
     } catch (error) {
@@ -275,6 +279,7 @@ export function startServer(options: ServerOptions = {}): Promise<RunningServer>
   const close = () =>
     new Promise<void>((done) => {
       for (const fn of unsubscribe) fn()
+      stopTelegram()
       proxy.closeWhere(() => true)
       server.close(() => done())
       server.closeAllConnections()

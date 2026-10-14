@@ -4,7 +4,7 @@ import { Brain, Pencil, Repeat } from 'lucide-react'
 import type { Agent } from '@/state/agents'
 import { useRoutines } from '@/state/routines'
 import { useMemories } from '@/state/memory'
-import { usePairings, useTelegram } from '@/state/telegram'
+import { usePairing, useTelegram } from '@/state/telegram'
 import { Skeleton } from '@/ui/skeleton'
 import { cn } from '@/lib/cn'
 import { TelegramGlyph } from '@/features/telegram'
@@ -24,7 +24,7 @@ export function QuickActions({ agent, onRoutines, onMemory, onTelegram, onEdit }
   const routines = useRoutines(agent.id).data
   const memories = useMemories(agent.id)
   const telegram = useTelegram(agent.id)
-  const pairing = usePairings((s) => s.byAgent[agent.id]?.phase)
+  const pairing = usePairing(agent.id)?.phase
 
   const on = routines?.filter((r) => r.enabled).length ?? 0
   const routineNote = !routines ? undefined : on ? `${on} on` : routines.length ? 'Paused' : 'None yet'
@@ -36,14 +36,18 @@ export function QuickActions({ agent, onRoutines, onMemory, onTelegram, onEdit }
         ? `${memories.data.length} saved`
         : 'Empty'
   const live = telegram.data?.state === 'connected'
-  const connecting = pairing === 'waiting' || pairing === 'starting' || pairing === 'saving'
-  const telegramNote = connecting
-    ? 'Connecting'
-    : telegram.isPending
-      ? undefined
-      : live
-        ? 'On'
-        : 'Off'
+  const telegramNote =
+    pairing === 'waiting' || pairing === 'starting'
+      ? 'Waiting'
+      : pairing === 'applying' || (!live && telegram.data?.state === 'starting')
+        ? 'Connecting'
+        : pairing === 'expired' || pairing === 'failed'
+          ? 'Didn’t finish'
+          : telegram.isPending
+            ? undefined
+            : live
+              ? 'On'
+              : 'Off'
 
   return (
     <div className="grid grid-cols-4 gap-2">

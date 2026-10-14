@@ -1,7 +1,7 @@
 import { ListRow } from '@/ui/list'
 import { Skeleton } from '@/ui/skeleton'
 import type { Agent } from '@/state/agents'
-import { usePairings, useTelegram } from '@/state/telegram'
+import { usePairing, useTelegram } from '@/state/telegram'
 import { TelegramGlyph } from './telegram-glyph'
 
 /**
@@ -10,12 +10,14 @@ import { TelegramGlyph } from './telegram-glyph'
  */
 export function TelegramRow({ agent, onOpen }: { agent: Agent; onOpen: () => void }) {
   const { data, isPending } = useTelegram(agent.id)
-  const pairing = usePairings((s) => s.byAgent[agent.id]?.phase)
+  const pairing = usePairing(agent.id)?.phase
   const subtitle =
     pairing === 'waiting' || pairing === 'starting' ? (
-      'Finishing setup…'
-    ) : pairing === 'saving' ? (
+      'Waiting for you in Telegram'
+    ) : pairing === 'applying' ? (
       'Connecting…'
+    ) : pairing === 'expired' || pairing === 'failed' ? (
+      'Didn’t finish — set up again'
     ) : isPending ? (
       <Skeleton className="inline-block h-2.5 w-36 rounded-full align-middle" />
     ) : !data || data.state === 'off' ? (
