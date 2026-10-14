@@ -118,7 +118,7 @@
       "executableName": "murmur",
       "category": "Network;InstantMessaging;Chat",
       "synopsis": "A beautiful way to use Hermes",
-      "maintainer": "Umbrel, Inc. <hello@umbrel.com>",
+      "maintainer": "Umbrel, Inc. <support@umbrel.com>",
       "vendor": "Umbrel, Inc.",
       "target": [
         "AppImage",
