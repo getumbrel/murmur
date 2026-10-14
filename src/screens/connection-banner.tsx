@@ -26,7 +26,8 @@ const swap = { duration: 0.18, ease: [0.16, 1, 0.3, 1] } as const
 
 export function ConnectionBanner({ inset = 0, hold = false }: { inset?: number; hold?: boolean }) {
   const { state, everOpened } = useConnection()
-  return <Island phase={usePhase(state !== 'open', everOpened, hold)} inset={inset} />
+  // Idle is before the first dial (Connect to Hermes is up): nothing's away yet.
+  return <Island phase={usePhase(state !== 'open' && state !== 'idle', everOpened, hold)} inset={inset} />
 }
 
 function usePhase(down: boolean, everOpened: boolean, hold: boolean) {
@@ -39,12 +40,18 @@ function usePhase(down: boolean, everOpened: boolean, hold: boolean) {
   if (!down) since.current = 0
   else if (!since.current) since.current = Date.now()
 
+  // Its own effect: the one below re-runs when `everOpened` or `hold` change,
+  // which would clear this timer and leave "Connected" up for good.
+  useEffect(() => {
+    if (phase !== 'back') return
+    const t = setTimeout(() => setPhase('hidden'), 1900)
+    return () => clearTimeout(t)
+  }, [phase])
+
   useEffect(() => {
     if (!down) {
-      if (!shown.current) return
-      setPhase('back')
-      const t = setTimeout(() => setPhase('hidden'), 1900)
-      return () => clearTimeout(t)
+      if (shown.current) setPhase('back')
+      return
     }
     if (hold) return
     const waited = Date.now() - since.current
@@ -95,7 +102,7 @@ export function Island({ phase, inset = 0 }: { phase: Phase; inset?: number }) {
       <div
         role="status"
         aria-live="polite"
-        className="pointer-events-none fixed right-0 top-[calc(env(safe-area-inset-top)+3.5rem+6px)] z-[70] flex justify-center px-4"
+        className="pointer-events-none fixed right-0 top-[calc(env(safe-area-inset-top)+var(--titlebar-h,3.5rem)+6px)] z-[70] flex justify-center px-4"
         style={{ left: inset }}
       >
         <AnimatePresence>

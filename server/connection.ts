@@ -24,6 +24,7 @@ import {
   addTarget,
   cleanName,
   listTargets,
+  memo,
   normalizeUrl,
   removeTarget,
   updateTarget,
@@ -42,16 +43,21 @@ const COOKIE_MAX_AGE_S = 400 * 24 * 60 * 60
 export type Connection = ConnectionInfo & { id: string; name: string }
 type State = { active: string; connections: Connection[] }
 
-let targets = listTargets()
-const instances = new Map<string, Hermes>()
+// Loaded on first use, once the server's settings are known (config.ts).
+const known = memo(() => ({ targets: listTargets(), instances: new Map<string, Hermes>() }))
 const dropped = new Set<(hermes: Hermes) => void>()
 
-/** Called with a Hermes whose sign-in or address changed, or that was removed, so its live sockets close. */
-export const onDrop = (fn: (hermes: Hermes) => void) => dropped.add(fn)
+/** Called with a Hermes whose sign-in or address changed, or that was removed, so its live sockets close. Returns a function that stops calling it. */
+export function onDrop(fn: (hermes: Hermes) => void) {
+  dropped.add(fn)
+  return () => void dropped.delete(fn)
+}
 
-const find = (id: string | null | undefined) => (id ? targets.find((t) => t.id === id) : undefined)
+const targets = () => known().targets
+const find = (id: string | null | undefined) => (id ? targets().find((t) => t.id === id) : undefined)
 
 function instance(target: Target) {
+  const { instances } = known()
   let hermes = instances.get(target.id)
   if (!hermes) instances.set(target.id, (hermes = createHermes(target)))
   return hermes
@@ -59,7 +65,8 @@ function instance(target: Target) {
 
 /** Re-read the list after a change, and drop what changed underneath. */
 function reload(changed?: string) {
-  targets = listTargets()
+  const { instances } = known()
+  known().targets = listTargets()
   for (const [id, hermes] of [...instances]) {
     if (id === changed || !find(id)) {
       instances.delete(id)
@@ -76,7 +83,7 @@ const pinnedId = (req: http.IncomingMessage, url?: URL) => {
 }
 
 /** The browser's choice: its cookie, or the first. */
-const browserTarget = (req: http.IncomingMessage) => find(readCookie(req, HERMES_COOKIE)) ?? targets[0]
+const browserTarget = (req: http.IncomingMessage) => find(readCookie(req, HERMES_COOKIE)) ?? targets()[0]
 
 /** The Hermes a request is for, or null when it was pinned to one that's gone. */
 function targetFor(req: http.IncomingMessage, url?: URL) {
@@ -91,7 +98,7 @@ export function hermesFor(req: http.IncomingMessage, url: URL): Hermes | null {
 }
 
 /** The first Hermes, for the startup line. */
-export const firstTarget = () => targets[0]
+export const firstTarget = () => targets()[0]
 
 const cookieFor = (req: http.IncomingMessage, id: string) =>
   `${HERMES_COOKIE}=${id}; Path=/; Max-Age=${COOKIE_MAX_AGE_S}; SameSite=Lax${secure(req) ? '; Secure' : ''}`
@@ -103,7 +110,7 @@ const cookieFor = (req: http.IncomingMessage, id: string) =>
  * not a credential.
  */
 export function syncHermesCookie(req: http.IncomingMessage, res: http.ServerResponse) {
-  if (!find(readCookie(req, HERMES_COOKIE))) appendCookie(res, cookieFor(req, targets[0].id))
+  if (!find(readCookie(req, HERMES_COOKIE))) appendCookie(res, cookieFor(req, targets()[0].id))
 }
 
 // ── Describing ────────────────────────────────────────────────────────────
@@ -115,7 +122,7 @@ const describe = async (target: Target, fresh = false): Promise<Connection> => {
 }
 
 async function state(req: http.IncomingMessage, active = browserTarget(req).id): Promise<State> {
-  return { active, connections: await Promise.all(targets.map((t) => describe(t))) }
+  return { active, connections: await Promise.all(targets().map((t) => describe(t))) }
 }
 
 // ── Changing ──────────────────────────────────────────────────────────────
@@ -152,7 +159,7 @@ async function trial(res: http.ServerResponse, body: Body, saved?: Target) {
     sendJson(res, 422, urlProblem(body, error))
     return null
   }
-  const other = targets.find((t) => t.url === next.url && t.id !== saved?.id && t.source !== 'default')
+  const other = targets().find((t) => t.url === next.url && t.id !== saved?.id && t.source !== 'default')
   if (other) {
     sendJson(res, 409, { error: `Murmur is already connected to this Hermes, as “${other.name}”.` })
     return null
@@ -179,7 +186,7 @@ async function add(res: http.ServerResponse, body: Body) {
   if (!tried) return null
   const target = addTarget({ name: cleanName(body.name), url: tried.url, credentials: tried.credentials })
   reload()
-  instances.set(target.id, tried.hermes)
+  known().instances.set(target.id, tried.hermes)
   return target
 }
 
@@ -189,7 +196,7 @@ async function update(res: http.ServerResponse, target: Target, body: Body) {
   if (!tried) return null
   updateTarget(target.id, { url: tried.url, credentials: tried.credentials ?? null, name: cleanName(body.name) })
   reload(target.id)
-  instances.set(target.id, tried.hermes)
+  known().instances.set(target.id, tried.hermes)
   return find(target.id)!
 }
 
@@ -197,7 +204,7 @@ function remove(req: http.IncomingMessage, res: http.ServerResponse, target: Tar
   removeTarget(target.id)
   reload()
   // This browser was using it: move it to the first, now, so the reload lands there.
-  if (browserTarget(req).id !== readCookie(req, HERMES_COOKIE)) appendCookie(res, cookieFor(req, targets[0].id))
+  if (browserTarget(req).id !== readCookie(req, HERMES_COOKIE)) appendCookie(res, cookieFor(req, targets()[0].id))
 }
 
 const reply = (res: http.ServerResponse, status: number, body: unknown) => (sendJson(res, status, body), true)
@@ -238,7 +245,7 @@ export async function handleConnection(req: http.IncomingMessage, res: http.Serv
         if (!name) return reply(res, 422, { error: 'Give this Hermes a name.' })
         if (target.source === 'default') return reply(res, 409, { error: 'Connect to this Hermes before naming it.' })
         updateTarget(target.id, { name })
-        targets = listTargets()
+        known().targets = listTargets()
         sendJson(res, 200, { connection: await describe(find(target.id)!), ...(await state(req)) })
         return true
       }
@@ -284,7 +291,7 @@ export async function handleConnection(req: http.IncomingMessage, res: http.Serv
   if (forgetting) {
     if (target.source !== 'saved') return reply(res, 409, { error: 'There’s no saved Hermes to forget.' })
     remove(req, res, target)
-    sendJson(res, 200, await describe(targets[0], true))
+    sendJson(res, 200, await describe(targets()[0], true))
     return true
   }
   const body = (await readJson(req).catch(() => ({}))) as Body

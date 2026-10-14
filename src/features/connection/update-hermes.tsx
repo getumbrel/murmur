@@ -4,6 +4,7 @@ import { Button } from '@/ui/button'
 import { Buddy } from '@/ui/buddy'
 import { ByUmbrel } from '@/ui/brand'
 import { liftCurtain, type HermesConnection } from '@/state/connection'
+import { WindowControlsGap } from '@/ui/titlebar'
 import { HermesSwitcher, hostOf } from './switcher'
 
 /**
@@ -19,7 +20,8 @@ export function UpdateHermes({ connection: c, onCheck }: { connection: HermesCon
 
   return (
     <main className="flex min-h-dvh flex-col bg-bg px-6 safe-top safe-bottom">
-      <div className="flex h-14 items-center">
+      <div className="flex h-14 items-center desktop:h-(--titlebar-h)">
+        <WindowControlsGap side="start" />
         <HermesSwitcher />
       </div>
       <div className="mx-auto flex w-full max-w-sm flex-1 flex-col items-center justify-center pb-[8vh] text-center">

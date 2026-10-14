@@ -6,6 +6,7 @@ import { IconButton } from '@/ui/button'
 import { Orb, type OrbState } from '@/ui/orb'
 import { cn } from '@/lib/cn'
 import { upFrom } from '@/lib/transitions'
+import { WindowControlsGap } from '@/ui/titlebar'
 
 type Props = {
   agent?: { id: string; name: string; hue: number }
@@ -51,11 +52,11 @@ export function ChatHeader({
   const up = upFrom(location)
   return (
     // (Only the bar itself takes touches; what hangs below it lets them through.)
-    <header className="safe-top pointer-events-none absolute inset-x-0 top-0 z-20">
+    <header className="safe-top pointer-events-none absolute inset-x-0 top-0 z-20 @container">
       <div
         aria-hidden
         className={cn(
-          'glass absolute inset-x-0 top-0 h-[calc(3.5rem+env(safe-area-inset-top))] hairline-b transition-opacity duration-300',
+          'glass absolute inset-x-0 top-0 h-[calc(3.5rem+env(safe-area-inset-top))] hairline-b transition-opacity duration-300 desktop:h-(--titlebar-h)',
           !scrolled && 'opacity-0',
         )}
       />
@@ -64,10 +65,11 @@ export function ChatHeader({
           one left and one right edge. The buttons keep their full 44px. */}
       <div
         className={cn(
-          'pointer-events-auto relative mx-auto flex h-14 max-w-[736px] items-center gap-1 pr-0 sm:pr-2',
+          'pointer-events-auto relative mx-auto flex h-14 max-w-[736px] items-center gap-1 pr-0 sm:pr-2 desktop:h-(--titlebar-h)',
           showBack ? 'pl-0 sm:pl-2' : 'pl-2',
         )}
       >
+        <WindowControlsGap side="start" column={736} flexGap={4} />
         {showBack && (
           <Link
             href={up}
@@ -86,7 +88,8 @@ export function ChatHeader({
           disabled={!agent}
           aria-label={agent ? `${agent.name}: chats and settings` : undefined}
           className={cn(
-            'group/agent pressable flex min-w-0 flex-1 items-center gap-2.5 rounded-full py-1 pr-3 text-left select-none',
+            // In the desktop app it hugs the name, so the rest of the bar drags the window.
+            'group/agent pressable flex min-w-0 flex-1 items-center gap-2.5 rounded-full py-1 pr-3 text-left select-none desktop:flex-initial',
             !showBack && 'pl-2.5',
           )}
           title={agent ? `${agent.name}’s chats and settings` : undefined}
@@ -131,10 +134,12 @@ export function ChatHeader({
           </span>
         </button>
 
+        <span aria-hidden className="hidden flex-1 desktop:block" />
         {menu}
         <IconButton size="lg" label="New chat" onClick={onNewChat} disabled={!agent}>
           <SquarePen size={20} strokeWidth={1.85} aria-hidden />
         </IconButton>
+        <WindowControlsGap side="end" column={736} flexGap={4} />
       </div>
       {below}
     </header>

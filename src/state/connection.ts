@@ -46,11 +46,12 @@ export type ConnectionRequest = { url: string; username?: string; password?: str
 export const connectionKey = ['murmur', 'connection'] as const
 export const connectionsKey = ['murmur', 'connections'] as const
 
-async function send(method: string, path: string, body?: unknown) {
+async function send(method: string, path: string, body?: unknown, signal?: AbortSignal) {
   let res: Response
   try {
     res = await fetch(path, {
       method,
+      signal,
       // Names this tab's Hermes, which the single-Hermes endpoints act on.
       headers: hermesHeaders(body ? { 'content-type': 'application/json' } : {}),
       body: body ? JSON.stringify(body) : undefined,
@@ -63,8 +64,8 @@ async function send(method: string, path: string, body?: unknown) {
   return { res, data }
 }
 
-async function call(method: string, path: string, body?: unknown): Promise<HermesConnection> {
-  const { res, data } = await send(method, path, body)
+async function call(method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<HermesConnection> {
+  const { res, data } = await send(method, path, body, signal)
   // 422 carries a full answer (what went wrong, in words); anything else without one is unexpected.
   if (data && 'status' in data) return data as HermesConnection
   throw new Error((data?.error as string | undefined) ?? `Murmur returned ${res.status}`)
@@ -80,7 +81,7 @@ async function callList<T = HermesList>(method: string, path: string, body?: unk
 
 export const connectionApi = {
   get: () => call('GET', '/murmur/connection'),
-  test: (req: ConnectionRequest) => call('POST', '/murmur/connection/test', req),
+  test: (req: ConnectionRequest, signal?: AbortSignal) => call('POST', '/murmur/connection/test', req, signal),
   save: (req: ConnectionRequest) => call('PUT', '/murmur/connection', req),
   reset: () => call('DELETE', '/murmur/connection'),
 }
@@ -118,7 +119,7 @@ export function useHermesConnection() {
     if (next.status === 'connected') void qc.invalidateQueries({ predicate: (q) => q.queryKey[0] !== 'murmur' })
   }
 
-  const test = useMutation({ mutationFn: connectionApi.test })
+  const test = useMutation({ mutationFn: (req: ConnectionRequest) => connectionApi.test(req) })
   const save = useMutation({ mutationFn: connectionApi.save, onSuccess: switched })
   const reset = useMutation({ mutationFn: connectionApi.reset, onSuccess: switched })
 

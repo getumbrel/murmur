@@ -2,7 +2,8 @@ name: Release
 
 # Push a version tag (git tag v0.1.0 && git push origin v0.1.0), or publish a
 # GitHub release with a new v* tag: either builds and pushes the multi-arch
-# image, then writes its digest into the release for umbrel-apps.
+# image, then writes its digest into the release for umbrel-apps. desktop.yml
+# attaches the desktop apps to the same release.
 on:
   push:
     tags: ['v*']
@@ -78,8 +79,14 @@ jobs:
           pin="${IMAGE}:${GITHUB_REF_NAME}@${DIGEST}"
           echo "image: ${pin}" | tee -a "$GITHUB_STEP_SUMMARY"
           notes="Image for umbrel/murmur/docker-compose.yml:"$'\n\n```yaml\nimage: '"${pin}"$'\n```'
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+          append() {
             gh release edit "$GITHUB_REF_NAME" --notes "$(gh release view "$GITHUB_REF_NAME" --json body --jq .body)"$'\n\n'"${notes}"
-          else
-            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes --notes "${notes}"
+          }
+          # desktop.yml attaches the desktop apps to this release and may be
+          # creating it at the same moment: if it got there first, add to it.
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            append
+          elif ! gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes --notes "${notes}"; then
+            sleep 10
+            append
           fi

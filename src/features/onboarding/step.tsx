@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { Button } from '@/ui/button'
 import { cn } from '@/lib/cn'
+import { WindowControlsGap } from '@/ui/titlebar'
 
 // The chrome every onboarding step shares, so moving through the flow only
 // changes what's on the page: one column (the app's 20px gutter, 30rem wide,
@@ -27,11 +28,13 @@ export function StepHeader({
   return (
     <>
       {onSkip && (
-        // Its label's right edge, not the button's, meets the content edge.
-        <div className="absolute top-[max(8px,env(safe-area-inset-top))] right-0.5">
+        // Its label's right edge, not the button's, meets the content edge. In the
+        // desktop app it sits on the titlebar's line, clear of the window's buttons.
+        <div className="absolute top-[max(8px,env(safe-area-inset-top))] right-0.5 flex items-center desktop:top-0 desktop:h-(--titlebar-h)">
           <Button variant="ghost" className="h-11 text-ink-2" onClick={onSkip}>
             Skip
           </Button>
+          <WindowControlsGap side="end" column={480} />
         </div>
       )}
       {/* On phones the Hermes switcher (onboarding.tsx) shares the top line with

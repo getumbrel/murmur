@@ -105,16 +105,38 @@ export function wireStatus() {
   gateway.onState((state) => state === 'open' && refresh())
   document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && refresh())
 
-  // A Murmur chat that goes from busy to idle has just finished.
+  // A Murmur chat that goes from busy to idle has just finished; one that
+  // starts waiting has just asked something.
   let prev = useChats.getState().chats
   useChats.subscribe(({ chats }) => {
     for (const chat of Object.values(chats)) {
       const before = prev[chat.id]
-      if (before && BUSY.has(before.status) && chat.status === 'idle') markFinished(chat.profile)
+      if (!before || before === chat) continue
+      if (BUSY.has(before.status) && chat.status === 'idle') {
+        markFinished(chat.profile)
+        tell({ kind: 'finished', chat })
+      }
+      if (chat.status === 'waiting' && before.status !== 'waiting') tell({ kind: 'needs-you', chat })
     }
     prev = chats
   })
   refresh()
+}
+
+/** Something worth telling the person about in a chat open in Murmur. */
+export type ChatMoment = { kind: 'finished' | 'needs-you'; chat: Chat }
+
+const listeners = new Set<(moment: ChatMoment) => void>()
+
+function tell(moment: ChatMoment) {
+  for (const fn of listeners) fn(moment)
+}
+
+/** Called when a chat's reply finishes or it starts waiting on the person. Returns the unsubscribe. */
+export function onChatMoment(fn: (moment: ChatMoment) => void) {
+  wireStatus()
+  listeners.add(fn)
+  return () => void listeners.delete(fn)
 }
 
 // ── Reading ─────────────────────────────────────────────────────────────────
@@ -251,6 +273,9 @@ export function markChatSeen(chatId: string) {
     return { seen }
   })
 }
+
+/** The chat on screen while the tab is visible, if any. */
+export const viewingChat = () => useSeen.getState().viewing
 
 export function setViewingChat(chatId: string | undefined) {
   if (useSeen.getState().viewing !== chatId) useSeen.setState({ viewing: chatId })

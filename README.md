@@ -90,6 +90,18 @@ The mark is two buddies, violet and coral, leaning together into a lowercase **m
 4. Run `npm run typecheck`. Contract drift shows up as type errors.
 5. Re-run the probes in `docs/hermes/scripts/` against the new dev Hermes.
 
+## Desktop
+
+Murmur also runs as a desktop app for macOS, Windows and Linux. It's an Electron window onto the same web app, with Murmur's server running inside the app. See [`docs/DESKTOP.md`](docs/DESKTOP.md) for signing, releases and updates.
+
+```sh
+npm run desktop:dev                          # the app in Electron, with Vite's hot reload
+npm run desktop:dist                         # installers for this computer, in desktop/release/
+npm run desktop:dist -- --mac --x64 --arm64  # or name the platforms and architectures
+```
+
+`.github/workflows/desktop.yml` builds and smoke-tests all three platforms on every pull request that touches the app. On a version tag, it attaches the installers to the release.
+
 ## Deploy
 
 - **Image.** The `Dockerfile` builds the app with `node:22-alpine` and ships `server/`, `dist/` and the license notices on plain Alpine with just the `node` binary copied in (no npm, npx, corepack or yarn), which is about 56 MB compressed. Both base images are pinned by digest. The runtime stage only copies files, so cross-building for the other architecture needs no emulation. The image runs as user 1000:1000, keeps `/data` at mode 0700, listens on `:3000`, and has a health check at `/healthz`.
@@ -97,6 +109,6 @@ The mark is two buddies, violet and coral, leaning together into a lowercase **m
   docker build -t murmur .
   docker run --init -p 3000:3000 -e HERMES_URL=http://<hermes-host>:18789 murmur
   ```
-- **Release.** Pushing a `v*` tag runs `.github/workflows/release.yml`. It first checks that the tag matches `version` in both `package.json` and `umbrel/murmur/umbrel-app.yml`, then builds `linux/amd64` and `linux/arm64` images and pushes them to `ghcr.io/getumbrel/murmur`. The run summary prints the digest to pin.
+- **Release.** Pushing a `v*` tag runs `.github/workflows/release.yml`. It first checks that the tag matches `version` in both `package.json` and `umbrel/murmur/umbrel-app.yml`, then builds `linux/amd64` and `linux/arm64` images and pushes them to `ghcr.io/getumbrel/murmur`. The run summary prints the digest to pin. `.github/workflows/desktop.yml` attaches the desktop apps to the same release.
 - **CI.** `.github/workflows/ci.yml` runs the typecheck, the build and a Docker build on every push to `main` (or `master`) and every pull request, then starts the image and checks `/healthz`, the app, the manifest and the `/data` permissions. There are no unit tests yet. Workflow actions are pinned to commit SHAs, and `.github/dependabot.yml` proposes monthly bumps for them and for the base images.
 - **umbrelOS.** The store app lives in [`umbrel/murmur/`](umbrel/murmur), and its icon and screenshots in [`umbrel/gallery/murmur/`](umbrel/gallery/murmur). `sh umbrel/gallery/tools/retake.sh` retakes the screenshots on a throwaway Hermes with demo data. See [`umbrel/README.md`](umbrel/README.md) for how to submit it, and for the planned move from Hermes's app-proxy auth bypass to a dedicated exported token.

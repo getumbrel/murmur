@@ -28,6 +28,8 @@ import { ConnectionBanner } from '@/screens/connection-banner'
 import { HermesGate } from '@/features/connection/gate'
 import { ShortcutsSheet, useShortcuts } from '@/features/commands/shortcuts'
 import { retryUnlessMissing } from '@/hermes/compat'
+import { setDesktopBadge } from '@/lib/desktop'
+import { NotificationOffer, useSystemNotifications } from '@/features/notifications/notify'
 
 // Screens most visits never open load on the side, so the first open is quick.
 const GroupScreen = lazyComponent(() => import('@/screens/group').then((m) => m.GroupScreen))
@@ -42,7 +44,6 @@ export const queryClient = new QueryClient({
 
 export function App() {
   useEffect(() => {
-    startGateway()
     wireChats()
     wireSessionLists(queryClient)
     // Split out of the main bundle and fetched once the first screen is up, so
@@ -61,6 +62,7 @@ export function App() {
         <Router hook={useTransitionLocation}>
           {/* Standalone installs pick their Hermes first; on Umbrel it's preset. */}
           <HermesGate>
+            <Dial />
             <Gate>
               <Background />
               <ShortcutsSheet />
@@ -108,6 +110,16 @@ export function App() {
       </MotionConfig>
     </QueryClientProvider>
   )
+}
+
+/**
+ * The socket dials once there's a Hermes to dial: not while "Connect to
+ * Hermes" is up, when it could only keep failing against a Hermes that isn't
+ * set up (the umbrelOS default, on a desktop).
+ */
+function Dial() {
+  useEffect(() => startGateway(), [])
+  return null
 }
 
 /** True until the app is first drawn (the connection form or the splash is showing). */
@@ -207,6 +219,7 @@ function Overlays() {
   return (
     <>
       <ConnectionBanner inset={inset} hold={booting} />
+      <NotificationOffer inset={inset} />
       <Toaster
         position="top-center"
         toastOptions={{ className: 'murmur-toast' }}
@@ -225,6 +238,8 @@ function Background() {
   useEffect(() => setMainAgent(agents?.find((a) => a.isDefault)?.id), [agents])
   useSeenTracking()
   useDocumentTitle()
+  // A system notification when an agent finishes or needs you somewhere you aren't looking.
+  useSystemNotifications()
   // ⌘⇧O, ⌥↑/⌥↓, ⌘, and "?" (src/features/commands/shortcuts.tsx); not during the welcome.
   useShortcuts(!useLocation()[0].startsWith('/welcome'))
   // Routines fire on the person's clock, not the server's UTC.
@@ -273,7 +288,11 @@ function useSeenTracking() {
   }, [chatId, profile, stored])
 }
 
-/** "Atlas · Murmur" for the tab and history, with "(2) " in front in a background tab when something new came in. */
+/**
+ * "Atlas · Murmur" for the tab and history, with "(2) " in front in a background
+ * tab when something new came in. The desktop app shows the count on its dock
+ * or taskbar icon, whether or not it's in front, as Mail and Messages do.
+ */
 function useDocumentTitle() {
   const [location] = useLocation()
   const agents = useAgents().data
@@ -291,6 +310,7 @@ function useDocumentTitle() {
           ? kind[0].toUpperCase() + kind.slice(1)
           : undefined
   const title = place ? `${place} · Murmur` : 'Murmur'
+  useEffect(() => setDesktopBadge(count), [count])
   useEffect(() => {
     const update = () => {
       document.title = !visible() && count > 0 ? `(${count}) ${title}` : title

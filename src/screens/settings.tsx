@@ -22,6 +22,7 @@ import { HermesSection } from '@/features/settings/hermes-section'
 import { StatusDot } from '@/features/connection/fields'
 import { useHermesConnection, useMurmurSession } from '@/state/connection'
 import { useTheme, type ThemePref } from '@/features/settings/theme'
+import { NotificationsSetting } from '@/features/notifications/notify'
 
 // Settings, the Apple way: a short list of sections, each its own page.
 
@@ -150,6 +151,8 @@ function Root() {
       </ListGroup>
 
       <Appearance />
+
+      <NotificationsSetting />
 
       {session.session?.required && (
         <ListGroup>

@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import { ChevronLeft } from 'lucide-react'
 import { cn } from '@/lib/cn'
+import { WindowControlsGap } from '@/ui/titlebar'
 
 // Settings chrome: a large title that hands off to a small centred one in a
 // glass bar once you scroll, iOS style.
@@ -11,11 +12,12 @@ export function Page({ title, back, children }: { title: string; back?: { label?
     <div className="h-dvh overflow-y-auto overscroll-contain bg-bg" onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 36)}>
       <header
         className={cn(
-          'sticky top-0 z-10 safe-top transition-[background-color,box-shadow] duration-200',
+          'sticky top-0 z-10 safe-top transition-[background-color,box-shadow] duration-200 @container',
           scrolled ? 'glass hairline-b' : 'bg-bg',
         )}
       >
-        <div className="relative mx-auto flex h-12 w-full max-w-[40rem] items-center px-2">
+        <div className="relative mx-auto flex h-12 w-full max-w-[40rem] items-center px-2 desktop:h-(--titlebar-h)">
+          <WindowControlsGap side="start" column={640} />
           {back && (
             <button
               type="button"

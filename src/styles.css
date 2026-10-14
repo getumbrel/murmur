@@ -579,6 +579,128 @@ html [data-sonner-toast].murmur-toast .sonner-loading-bar {
   }
 }
 
+/* ── Desktop window chrome ────────────────────────────────────────────────────
+   In Murmur's desktop app (src/lib/desktop.ts) the window draws no titlebar:
+   macOS floats its traffic lights over the top-left corner, Windows and Linux
+   their caption buttons over the top-right (a 44px titleBarOverlay). The app's
+   preload sets html[data-desktop] before the first paint; in a browser none of
+   this applies.
+
+   - The window drags by a strip across its top (TitlebarStrip, src/ui/titlebar.tsx),
+     the first thing in the page. The draggable area is built in page order, each
+     no-drag box cut out of the drag boxes before it, so everything you can press
+     opts out wherever it sits: bar buttons, and sheets, menus and toasts that
+     pass over the top.
+   - Top bars stand as tall as the strip (the desktop: variant), and
+     WindowControlsGap keeps their buttons out from under the window's own: on
+     the left of a bar that meets the top-left corner on a Mac, on the right of
+     one that meets the top-right on Windows and Linux. Traffic lights end at
+     about 70px (x 16, three 14px buttons 20px apart). */
+
+@custom-variant desktop (&:where([data-desktop], [data-desktop] *));
+@custom-variant mac (&:where([data-desktop='mac'], [data-desktop='mac'] *));
+
+html[data-desktop='mac'] {
+  --titlebar-h: 52px;
+  --titlebar-left: 76px;
+}
+/* Full screen hides the traffic lights: no gap to leave for them. */
+html[data-desktop='mac'][data-fullscreen] {
+  --titlebar-left: 0px;
+  --titlebar-h: 44px;
+}
+html[data-desktop='win'],
+html[data-desktop='linux'] {
+  --titlebar-h: 44px;
+  --titlebar-right: 140px;
+}
+/* Beside the sidebar the main pane never meets the top-left corner, and the sidebar never the top-right. */
+html[data-desktop] [data-sidebar] {
+  --titlebar-right: 0px;
+}
+html[data-desktop] [data-sidebar] ~ [role='main'] {
+  --titlebar-left: 0px;
+}
+
+.titlebar-strip,
+[data-window-gap] {
+  display: none;
+}
+html[data-desktop] .titlebar-strip {
+  display: block;
+  position: fixed;
+  inset: 0 0 auto;
+  height: var(--titlebar-h);
+  /* Drags the window but never takes a click from what's beneath it. */
+  pointer-events: none;
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+html[data-desktop]
+  :is(
+    a[href],
+    button,
+    input,
+    textarea,
+    select,
+    summary,
+    label,
+    [contenteditable='true'],
+    [tabindex]:not([tabindex='-1']),
+    [role='button'],
+    [role='link'],
+    [role='switch'],
+    [role='tab'],
+    [role='radio'],
+    [role='option'],
+    [role='menu'],
+    [role='menuitem'],
+    [role='listbox'],
+    [role='dialog'],
+    [role='alertdialog'],
+    [data-sonner-toast],
+    [data-no-drag]
+  ):not([aria-hidden='true']) {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+/* A bar whose buttons sit in a centred column (data-column) only needs the
+   part of the room its margin doesn't already give; its container (@container
+   on the bar) is as wide as the pane. */
+html[data-desktop='mac'] [data-window-gap='start'],
+html[data-desktop='win'] [data-window-gap='end'],
+html[data-desktop='linux'] [data-window-gap='end'] {
+  display: block;
+  flex: none;
+  align-self: stretch;
+  --gap-margin: max(0px, (100cqw - var(--gap-column, 100cqw)) / 2);
+}
+html[data-desktop] [data-window-gap='start'] {
+  width: max(0px, var(--titlebar-left, 0px) - var(--gap-margin));
+  /* Takes back the flex gap it would add beside it, so a closed gap moves nothing. */
+  margin-inline-end: calc(-1 * var(--gap-flex, 0px));
+}
+html[data-desktop] [data-window-gap='end'] {
+  width: max(0px, var(--titlebar-right, 0px) - var(--gap-margin));
+  margin-inline-start: calc(-1 * var(--gap-flex, 0px));
+}
+html[data-desktop] [data-sidebar] [data-window-gap='end'],
+html[data-desktop] [data-sidebar] ~ [role='main'] [data-window-gap='start'] {
+  display: none;
+}
+
+/* The notifications offer (src/features/notifications/notify.tsx): a toast's glass, as a card. */
+.notify-offer {
+  background: color-mix(in oklab, var(--bg-elevated) 82%, transparent);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(24px) saturate(180%);
+  box-shadow:
+    0 0 0 0.5px var(--line-strong),
+    0 2px 6px -1px hsl(var(--shadow-color) / 0.08),
+    0 12px 32px -6px hsl(var(--shadow-color) / 0.2);
+}
+
 /* ── Utilities ────────────────────────────────────────────────────────────── */
 
 @utility glass {

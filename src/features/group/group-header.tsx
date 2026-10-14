@@ -6,6 +6,7 @@ import { IconButton } from '@/ui/button'
 import type { BuddyState } from '@/ui/buddy'
 import { cn } from '@/lib/cn'
 import { joinNames, type Group, type GroupActivity } from '@/state/groups'
+import { WindowControlsGap } from '@/ui/titlebar'
 import { MemberRow } from './member-row'
 
 type Props = {
@@ -81,11 +82,11 @@ export function GroupHeader({
   return (
     // Floats over the thread like a one-to-one chat's: glass and an edge only
     // once messages scroll beneath it, and the same column as the thread.
-    <header className="safe-top pointer-events-none absolute inset-x-0 top-0 z-20">
+    <header className="safe-top pointer-events-none absolute inset-x-0 top-0 z-20 @container">
       <div
         aria-hidden
         className={cn(
-          'glass absolute inset-x-0 top-0 h-[calc(3.5rem+env(safe-area-inset-top))] hairline-b transition-opacity duration-300',
+          'glass absolute inset-x-0 top-0 h-[calc(3.5rem+env(safe-area-inset-top))] hairline-b transition-opacity duration-300 desktop:h-(--titlebar-h)',
           !scrolled && 'opacity-0',
         )}
       />
@@ -95,10 +96,11 @@ export function GroupHeader({
           in the bar shifts. The buttons keep their full 44px. */}
       <div
         className={cn(
-          'pointer-events-auto relative mx-auto flex h-14 max-w-[736px] items-center gap-1 pr-0 sm:pr-2',
+          'pointer-events-auto relative mx-auto flex h-14 max-w-[736px] items-center gap-1 pr-0 sm:pr-2 desktop:h-(--titlebar-h)',
           showBack ? 'pl-0 sm:pl-2' : 'pl-2',
         )}
       >
+        <WindowControlsGap side="start" column={736} flexGap={4} />
         {showBack && (
           <Link
             href="/"
@@ -114,7 +116,8 @@ export function GroupHeader({
           onClick={onOpen}
           disabled={!group}
           className={cn(
-            'pressable flex min-w-0 flex-1 items-center gap-2.5 rounded-full py-1 pr-3 text-left select-none',
+            // In the desktop app it hugs the name, so the rest of the bar drags the window.
+            'pressable flex min-w-0 flex-1 items-center gap-2.5 rounded-full py-1 pr-3 text-left select-none desktop:flex-initial',
             !showBack && 'pl-2.5',
           )}
           title={group?.name}
@@ -160,9 +163,11 @@ export function GroupHeader({
           </span>
         </button>
 
+        <span aria-hidden className="hidden flex-1 desktop:block" />
         <IconButton size="lg" label="Group info" onClick={onOpen} disabled={!group}>
           <Ellipsis size={20} strokeWidth={2.25} aria-hidden />
         </IconButton>
+        <WindowControlsGap side="end" column={736} flexGap={4} />
       </div>
     </header>
   )

@@ -2,6 +2,7 @@
 
 import type http from 'node:http'
 import { isIP } from 'node:net'
+import { memo, setting } from './config.ts'
 
 export function sendJson(res: http.ServerResponse, status: number, body: unknown) {
   res.writeHead(status, {
@@ -60,11 +61,11 @@ const list = (value = '') =>
     .filter(Boolean)
 
 const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]'])
-const ALLOWED_ORIGINS = new Set(list(process.env.MURMUR_ALLOWED_ORIGINS))
-const ALLOWED_HOSTS = [
-  ...list(process.env.MURMUR_ALLOWED_HOSTS),
-  ...[...ALLOWED_ORIGINS].flatMap((origin) => (URL.canParse(origin) ? [new URL(origin).hostname] : [])),
-]
+const allowedOrigins = memo(() => new Set(list(setting('MURMUR_ALLOWED_ORIGINS'))))
+const allowedHosts = memo(() => [
+  ...list(setting('MURMUR_ALLOWED_HOSTS')),
+  ...[...allowedOrigins()].flatMap((origin) => (URL.canParse(origin) ? [new URL(origin).hostname] : [])),
+])
 
 const hostname = (host: string) => (URL.canParse(`http://${host}`) ? new URL(`http://${host}`).hostname.replace(/\.$/, '') : null)
 
@@ -77,11 +78,12 @@ const hostname = (host: string) => (URL.canParse(`http://${host}`) ? new URL(`ht
  * allows subdomains; `*` turns the check off) or MURMUR_ALLOWED_ORIGINS.
  */
 export function hostAllowed(req: http.IncomingMessage) {
-  if (!req.headers.host || ALLOWED_HOSTS.includes('*')) return true
+  const allowed = allowedHosts()
+  if (!req.headers.host || allowed.includes('*')) return true
   const name = hostname(req.headers.host)
   if (!name) return false
   if (isIP(name.replace(/^\[|\]$/g, '')) || !name.includes('.') || /\.(localhost|local|ts\.net)$/.test(name)) return true
-  return ALLOWED_HOSTS.some((h) => h === name || (h.startsWith('.') && (name.endsWith(h) || name === h.slice(1))))
+  return allowed.some((h) => h === name || (h.startsWith('.') && (name.endsWith(h) || name === h.slice(1))))
 }
 
 /**
@@ -94,7 +96,8 @@ export function hostAllowed(req: http.IncomingMessage) {
 export function originAllowed(req: http.IncomingMessage) {
   const origin = req.headers.origin
   if (!origin) return true
-  if (ALLOWED_ORIGINS.has('*') || ALLOWED_ORIGINS.has(origin.toLowerCase())) return true
+  const allowed = allowedOrigins()
+  if (allowed.has('*') || allowed.has(origin.toLowerCase())) return true
   if (!URL.canParse(origin)) return false
   const url = new URL(origin)
   const hosts = [req.headers.host, ...String(req.headers['x-forwarded-host'] ?? '').split(',')].map((h) => h?.trim())

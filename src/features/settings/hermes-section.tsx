@@ -8,7 +8,7 @@ import { Sheet } from '@/ui/sheet'
 import { Spinner } from '@/ui/spinner'
 import { tabHermes } from '@/hermes/instance'
 import { connectionApi, switchHermes, useHermesManager, type ConnectionRequest, type HermesConnection, type KnownHermes } from '@/state/connection'
-import { HermesConnectionForm, HermesConnectionFormView, ManagedHermes } from '@/features/connection/hermes-connection-form'
+import { HermesConnectionForm, HermesConnectionFormView, ManagedHermes, isUmbrelHermes } from '@/features/connection/hermes-connection-form'
 import { Field } from '@/features/connection/fields'
 import { hermesDetail, toneOf } from '@/features/connection/switcher'
 import { StatusDot } from '@/features/connection/fields'
@@ -236,7 +236,8 @@ function NameField({ hermes: c }: { hermes: KnownHermes }) {
 
 /** Connect one more, then move to it. */
 function AddSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
-  const { add } = useHermesManager()
+  const { add, list } = useHermesManager()
+  const onUmbrel = !!list.data?.connections.some(isUmbrelHermes)
   // A fresh form every time it opens.
   const [round, setRound] = useState(0)
   useEffect(() => {
@@ -249,6 +250,9 @@ function AddSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (open: 
         <HermesConnectionFormView
           key={round}
           embedded
+          // What's nearby, less what's added already (the server turns those away). Not on umbrelOS.
+          suggest={!onUmbrel}
+          added={list.data?.connections.map((c) => c.url)}
           onTest={connectionApi.test}
           onSave={async (req) => {
             const next = await add.mutateAsync({ ...req, activate: true })

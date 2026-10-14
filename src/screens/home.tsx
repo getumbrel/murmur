@@ -19,6 +19,7 @@ import { searchActions, useChatSearch, useSearchStore } from '@/state/search'
 import { HermesSwitcher } from '@/features/connection/switcher'
 import { focusSearch, registerSearch } from '@/features/commands/shortcuts'
 import { InstallTip, useInstallTip } from '@/features/home/install-tip'
+import { WindowControlsGap } from '@/ui/titlebar'
 
 // Home: everyone you can talk to. Phones get a full screen with a large
 // title; wide screens keep the list in the sidebar and show a calm prompt.
@@ -76,10 +77,13 @@ function PhoneHome() {
           )}
         >
           {/* Measured: these pads put the gear's and the plus's ink (not their 44px buttons) exactly on the 20px lines. */}
-          <div className="relative flex h-13 items-center justify-between pr-[5px] pl-[7px]">
-            <IconButton size="lg" label="Settings" onClick={() => navigate('/settings')}>
-              <Settings size={20} strokeWidth={1.85} />
-            </IconButton>
+          <div className="relative flex h-13 items-center justify-between pr-[5px] pl-[7px] desktop:h-(--titlebar-h)">
+            <div className="flex items-center">
+              <WindowControlsGap side="start" column={640} />
+              <IconButton size="lg" label="Settings" onClick={() => navigate('/settings')}>
+                <Settings size={20} strokeWidth={1.85} />
+              </IconButton>
+            </div>
             <span
               aria-hidden
               className={cn(
@@ -105,6 +109,7 @@ function PhoneHome() {
                 <Search size={20} strokeWidth={1.85} />
               </IconButton>
               <NewMenu size="lg" variant="plain" onNewAgent={actions.newAgent} onNewGroup={actions.newGroup} />
+              <WindowControlsGap side="end" column={640} />
             </div>
           </div>
         </header>
@@ -137,7 +142,8 @@ function PhoneHome() {
         transition={{ type: 'spring', duration: 0.38, bounce: 0 }}
         className={cn('z-20 flex items-center px-5', active ? 'sticky top-0 glass safe-top hairline-b' : 'pb-3')}
       >
-        <div className={cn('flex w-full items-center', active && 'py-2')}>
+        <div className={cn('flex w-full items-center', active && 'py-2 desktop:h-(--titlebar-h) desktop:py-0')}>
+          {active && <WindowControlsGap side="start" column={640} />}
           <SearchField
             ref={input}
             value={text}
@@ -162,6 +168,7 @@ function PhoneHome() {
               </motion.button>
             )}
           </AnimatePresence>
+          {active && <WindowControlsGap side="end" column={640} />}
         </div>
       </motion.div>
 
@@ -262,7 +269,9 @@ export function Sidebar() {
       <aside data-sidebar="" className="flex h-dvh w-[308px] flex-none flex-col bg-bg">
         {/* Gear before plus, as on the phone, so + is always the trailing control.
             The plus's glyph ends where the rows' times do (8px container + 10px row inset). */}
-        <div className="flex h-14 flex-none items-center gap-0.5 pr-2 pl-6">
+        {/* On a Mac the traffic lights come first, and the lockup follows them. */}
+        <div className="flex h-14 flex-none items-center gap-0.5 pr-2 pl-6 desktop:h-(--titlebar-h) mac:pl-3">
+          <WindowControlsGap side="start" flexGap={2} />
           <h1 data-orb="brand" className="flex flex-1">
             <MurmurWordmark size={24} />
           </h1>

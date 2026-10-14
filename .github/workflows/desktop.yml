@@ -1,0 +1,226 @@
+name: Desktop
+
+# Builds Murmur for macOS (arm64, x64), Windows (x64, arm64) and Linux (x64),
+# then launches each build that can run on its runner. Pull requests and master
+# get unsigned builds as workflow artifacts. A version tag builds them signed
+# (when the secrets exist, docs/DESKTOP.md) and attaches them, with the update
+# metadata the installed apps read, to the GitHub release that release.yml also
+# writes to.
+on:
+  push:
+    branches: [master]
+    tags: ['v*']
+    # Paths only filter branch pushes: every version tag builds.
+    paths:
+      - desktop/**
+      - server/**
+      - src/**
+      - public/**
+      - '*.html'
+      - package.json
+      - package-lock.json
+      - vite.config.ts
+      - tsconfig*.json
+      - .github/workflows/desktop.yml
+  pull_request:
+    paths:
+      - desktop/**
+      - server/**
+      - src/**
+      - public/**
+      - '*.html'
+      - package.json
+      - package-lock.json
+      - vite.config.ts
+      - tsconfig*.json
+      - .github/workflows/desktop.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Actions are pinned to commit SHAs (the tag is in the comment); Dependabot
+# keeps both up to date.
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS
+            os: macos-latest
+            args: --mac --x64 --arm64
+            # The runner is Apple silicon; the Intel build runs under Rosetta when it's there.
+            smoke: desktop/release/mac-arm64/Murmur.app/Contents/MacOS/Murmur desktop/release/mac/Murmur.app/Contents/MacOS/Murmur
+          - name: Windows
+            os: windows-latest
+            args: --win --x64 --arm64
+            # The arm64 build can't run on the x64 runner.
+            smoke: desktop/release/win-unpacked/Murmur.exe
+          - name: Linux
+            os: ubuntu-latest
+            args: --linux --x64
+            smoke: desktop/release/linux-unpacked/murmur
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The same check as release.yml: both workflows publish this tag's release.
+      - name: Tag matches package.json and umbrel-app.yml
+        if: github.ref_type == 'tag'
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(node -p 'require("./package.json").version')"
+          app="$(sed -n 's/^version: *"\{0,1\}\([^"]*\)"\{0,1\} *$/\1/p' umbrel/murmur/umbrel-app.yml)"
+          echo "tag $tag, package.json $pkg, umbrel-app.yml $app"
+          if [ "$tag" != "$pkg" ] || [ "$tag" != "$app" ]; then
+            echo "::error::Tag v$tag doesn't match package.json ($pkg) and umbrel-app.yml ($app). Bump both, then tag again."
+            exit 1
+          fi
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
+      # Signed only for a version tag, and only with the secrets; without them
+      # the build is unsigned (desktop/scripts/dist.ts) and still released.
+      - name: Package
+        env:
+          TAGGED: ${{ github.ref_type == 'tag' }}
+          CSC_LINK: ${{ github.ref_type == 'tag' && runner.os == 'macOS' && secrets.MAC_CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ github.ref_type == 'tag' && runner.os == 'macOS' && secrets.MAC_CSC_KEY_PASSWORD || '' }}
+          APPLE_ID: ${{ github.ref_type == 'tag' && runner.os == 'macOS' && secrets.APPLE_ID || '' }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ github.ref_type == 'tag' && runner.os == 'macOS' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ github.ref_type == 'tag' && runner.os == 'macOS' && secrets.APPLE_TEAM_ID || '' }}
+          WIN_CSC_LINK: ${{ github.ref_type == 'tag' && runner.os == 'Windows' && secrets.WIN_CSC_LINK || '' }}
+          WIN_CSC_KEY_PASSWORD: ${{ github.ref_type == 'tag' && runner.os == 'Windows' && secrets.WIN_CSC_KEY_PASSWORD || '' }}
+          ARGS: ${{ matrix.args }}
+        run: |
+          # Release builds update themselves, except an unsigned Mac app: macOS
+          # won't let one replace itself.
+          export MURMUR_UPDATES=0
+          if [ "$TAGGED" = true ]; then
+            MURMUR_UPDATES=1
+            if [ "$RUNNER_OS" = macOS ] && [ -z "$CSC_LINK" ]; then
+              MURMUR_UPDATES=0
+              echo "::warning::No MAC_CSC_LINK secret: the Mac build is unsigned, not notarized, and won't update itself."
+            fi
+            if [ "$RUNNER_OS" = Windows ] && [ -z "$WIN_CSC_LINK" ]; then
+              echo "::warning::No WIN_CSC_LINK secret: the Windows installer is unsigned, so SmartScreen will warn."
+            fi
+          fi
+          # shellcheck disable=SC2086 # ARGS is a list of options.
+          npm run desktop:dist -- $ARGS
+
+      # Each build that can run here starts on throwaway data and renders its
+      # first screen, by itself (MURMUR_SMOKE) and through Playwright, which
+      # also takes a screenshot of it. Neither connects to anything.
+      - name: Smoke test
+        env:
+          BUILDS: ${{ matrix.smoke }}
+          SHOT: smoke/${{ matrix.name }}.png
+        run: |
+          display=()
+          if [ "$RUNNER_OS" = Linux ]; then
+            # Ubuntu's AppArmor keeps Chromium's sandbox from starting an unpacked build.
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+            display=(xvfb-run --auto-servernum)
+          fi
+          mkdir -p smoke
+          n=0
+          for build in $BUILDS; do
+            if [ "$build" = desktop/release/mac/Murmur.app/Contents/MacOS/Murmur ] && ! arch -x86_64 /usr/bin/true 2>/dev/null; then
+              echo "::notice::Rosetta isn't installed: skipping the Intel Mac build."
+              continue
+            fi
+            n=$((n + 1))
+            echo "::group::$build"
+            mkdir -p "$RUNNER_TEMP/murmur-smoke-$n"
+            MURMUR_SMOKE=1 MURMUR_USER_DATA="$RUNNER_TEMP/murmur-smoke-$n" "${display[@]}" "$build" 2>&1 | tee "smoke/$n.log"
+            grep -q murmur-smoke-ok "smoke/$n.log"
+            echo "::endgroup::"
+          done
+          first="${BUILDS%% *}"
+          "${display[@]}" node desktop/scripts/smoke.ts "$first" "$SHOT"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: smoke-${{ matrix.name }}
+          path: smoke/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      # Installers, the zips and blockmaps the updater downloads, and its
+      # latest*.yml: the files a release needs, and no unpacked apps.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: murmur-desktop-${{ matrix.name }}
+          path: |
+            desktop/release/*.dmg
+            desktop/release/*.zip
+            desktop/release/*.exe
+            desktop/release/*.AppImage
+            desktop/release/*.deb
+            desktop/release/*.blockmap
+            desktop/release/latest*.yml
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: murmur-desktop-*
+          path: release
+          merge-multiple: true
+
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          ls -l release
+          for file in latest-mac.yml latest.yml latest-linux.yml; do
+            test -f "release/$file" || { echo "::error::release/$file is missing"; exit 1; }
+          done
+
+          # release.yml may be creating the same release right now. Whichever
+          # workflow is second finds it; neither replaces the other's notes.
+          for attempt in 1 2 3 4 5; do
+            if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then break; fi
+            if gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes --verify-tag; then break; fi
+            sleep $((attempt * 5))
+          done
+          gh release view "$GITHUB_REF_NAME" >/dev/null
+
+          # The installers first and the update metadata last, so an app that
+          # reads latest*.yml finds the files it names already there.
+          find release -type f ! -name 'latest*.yml' -print0 | xargs -0 gh release upload "$GITHUB_REF_NAME" --clobber
+          gh release upload "$GITHUB_REF_NAME" --clobber release/latest*.yml
+
+          {
+            echo "Desktop builds attached to $GITHUB_REF_NAME:"
+            echo
+            find release -type f -printf '- %f\n' | sort
+          } >> "$GITHUB_STEP_SUMMARY"
