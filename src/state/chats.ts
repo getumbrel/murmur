@@ -1,0 +1,1319 @@
+// Live chats. Hermes streams events for every session over one socket; this
+// store folds them into ChatItems that the UI renders.
+//
+// Ids: Hermes gives each chat a stored id (permanent, e.g. "20261013_122615_…")
+// and a runtime id while it's live in memory (8 hex chars, reaped ~20s after
+// the last viewer leaves). Everything here is keyed by the stored id; the
+// runtime id is only used to talk to Hermes and to route its events.
+
+import { create } from 'zustand'
+import { gateway, rpc, type GatewayEvent, type ServerRequest } from '@/hermes/gateway'
+import { api } from '@/hermes/rest'
+import { isMissingMethod } from '@/hermes/compat'
+import { toolLabel } from '@/features/chat/tool-labels'
+import { explainError } from '@/features/chat/errors'
+import type { ApprovalChoice, ChatItem, ChatStatus, ClarifyQuestion, Speaker } from '@/features/chat/types'
+import { parseUserMessage, rememberUpload, type UserAttachment } from '@/features/media/parse'
+import { toolMedia } from '@/features/media/tool-media'
+import { scoped } from '@/hermes/instance'
+
+export type Chat = {
+  id: string
+  profile: string
+  runtimeId?: string
+  items: ChatItem[]
+  status: ChatStatus
+  title?: string
+  model?: string
+  provider?: string
+  reasoning?: string
+  /** History has been loaded (or the chat is brand new). */
+  ready: boolean
+  /** Speaker for one-to-one chats; group chats tag items individually. */
+  speaker?: Speaker
+  /** Counts finished replies, so widgets know to re-read files the agent may have rewritten. */
+  turns?: number
+  /** What the agent is working toward (/goal), while one is set. */
+  goal?: Goal
+}
+
+export type Goal = { title: string; status: string }
+
+type State = { chats: Record<string, Chat> }
+
+export const useChats = create<State>(() => ({ chats: {} }))
+
+const runtimeToStored = new Map<string, string>()
+const requests = new Map<string, ServerRequest>()
+/** Requests for a runtime id we haven't bound yet: `session.resume` delivers
+ *  its open_requests just before its own result, so they wait for the bind. */
+const parked = new Map<string, ServerRequest[]>()
+let attaching = 0
+/** Reasoning that may just echo the answer (a Codex quirk) — held until complete. */
+const pendingReasoning = new Map<string, string>()
+
+let n = 0
+const uid = (p: string) => `${p}-${Date.now().toString(36)}-${(n++).toString(36)}`
+
+// ── Store helpers ───────────────────────────────────────────────────────────
+
+function patch(id: string, fn: (c: Chat) => Partial<Chat> | void) {
+  useChats.setState((s) => {
+    const chat = s.chats[id]
+    if (!chat) return s
+    const next = fn(chat)
+    return next ? { chats: { ...s.chats, [id]: { ...chat, ...next } } } : s
+  })
+}
+
+function ensure(id: string, profile: string) {
+  if (!useChats.getState().chats[id]) {
+    useChats.setState((s) => ({
+      chats: { ...s.chats, [id]: { id, profile, items: [], status: 'idle', ready: false } },
+    }))
+  }
+}
+
+function bindRuntime(id: string, runtimeId: string) {
+  runtimeToStored.set(runtimeId, id)
+  patch(id, () => ({ runtimeId }))
+  const waiting = parked.get(runtimeId)
+  parked.delete(runtimeId)
+  waiting?.forEach(onServerRequest)
+}
+
+/**
+ * Resume a runtime that another store routes (a group member's copy of a
+ * room). What it re-delivers waits with ours, and is handed back with it.
+ */
+export async function resumeHolding<T extends { session_id: string }>(call: () => Promise<T>) {
+  attaching++
+  try {
+    const res = await call()
+    const held = parked.get(res.session_id) ?? []
+    parked.delete(res.session_id)
+    return { res, held }
+  } finally {
+    attaching--
+  }
+}
+
+export const getChat = (id: string) => useChats.getState().chats[id]
+
+// ── History ─────────────────────────────────────────────────────────────────
+
+type Row = {
+  id?: number
+  role: string
+  content?: string | null
+  tool_calls?: { id?: string; call_id?: string; function?: { name: string; arguments?: string } }[] | null
+  tool_call_id?: string | null
+  tool_name?: string | null
+  reasoning?: string | null
+  display_kind?: string | null
+  timestamp?: number
+}
+
+const SKIPPED = new Set(['hidden', 'process_complete', 'model_switch'])
+const INTERRUPTED = /^\s*Operation interrupted\b/
+const STEER = /^\s*\[OUT-OF-BAND USER MESSAGE[^\]]*\]\s*([\s\S]*?)\s*\[\/OUT-OF-BAND USER MESSAGE\]\s*$/
+
+function rowsToItems(rows: Row[], speaker?: Speaker): ChatItem[] {
+  const items: ChatItem[] = []
+  const tools = new Map<string, Extract<ChatItem, { kind: 'tool' }>>()
+  for (const row of rows) {
+    const at = (row.timestamp ?? 0) * 1000
+    const key = `h${row.id ?? items.length}`
+    // Hidden turns, and Hermes's notes to the model (a model switch) aren't the person's words.
+    if (row.display_kind && SKIPPED.has(row.display_kind)) continue
+    if (row.role === 'user') {
+      const raw = row.content ?? ''
+      // A message sent mid-reply is stored wrapped in Hermes's steering markers.
+      const { text, attachments } = parseUserMessage(
+        row.display_kind === 'steer' ? (STEER.exec(raw)?.[1] ?? raw) : raw,
+      )
+      if (text || attachments.length) {
+        items.push({
+          kind: 'user',
+          id: key,
+          text,
+          at,
+          attachments: attachments.length ? attachments : undefined,
+          rowId: row.id,
+        })
+      }
+    } else if (row.role === 'assistant') {
+      if (row.display_kind === 'failed_turn') {
+        items.push({ kind: 'notice', id: key, text: 'This reply was stopped before it finished.' })
+        continue
+      }
+      // Stop pressed mid-reply: Hermes saves its own note as the reply. Say what it said live.
+      if (INTERRUPTED.test(row.content ?? '') && !row.tool_calls?.length) {
+        if (items.at(-1)?.kind !== 'notice') items.push({ kind: 'notice', id: key, text: 'Stopped' })
+        continue
+      }
+      if (row.reasoning?.trim()) {
+        items.push({
+          kind: 'thinking',
+          id: `${key}-r`,
+          text: row.reasoning.trim(),
+          streaming: false,
+          startedAt: at,
+          endedAt: at,
+          speaker,
+        })
+      }
+      for (const call of row.tool_calls ?? []) {
+        const name = call.function?.name ?? 'tool'
+        const label = toolLabel(name, call.function?.arguments)
+        const tool: Extract<ChatItem, { kind: 'tool' }> = {
+          kind: 'tool',
+          id: `${key}-${call.id ?? call.call_id}`,
+          callId: call.id ?? call.call_id,
+          name,
+          label: label.label,
+          detail: label.detail,
+          status: 'done',
+          startedAt: at,
+          endedAt: at,
+          speaker,
+        }
+        items.push(tool)
+        if (call.id) tools.set(call.id, tool)
+        if (call.call_id) tools.set(call.call_id, tool)
+      }
+      const text = row.content?.trim()
+      if (text) items.push({ kind: 'assistant', id: key, text, streaming: false, at, speaker })
+    } else if (row.role === 'tool' && row.tool_call_id) {
+      const tool = tools.get(row.tool_call_id)
+      if (tool && /"exit_code":\s*-1|BLOCKED:|"error":\s*"/.test(row.content ?? '')) tool.status = 'error'
+      if (tool) {
+        tool.endedAt = (row.timestamp ?? 0) * 1000
+        const media = toolMedia(tool.name, row.content)
+        if (media.length) tool.media = media
+      }
+    }
+  }
+  return items
+}
+
+async function loadHistory(id: string, profile: string, speaker?: Speaker) {
+  type Res = { messages?: Row[]; data?: Row[] }
+  const res = await api.get<Res>(
+    `/api/sessions/${encodeURIComponent(id)}/messages?profile=${encodeURIComponent(profile)}&order=latest&limit=500`,
+  )
+  const rows = res.messages ?? res.data ?? []
+  // "latest" pages from the end; put them back in reading order.
+  if (rows.length > 1 && (rows[0].id ?? 0) > (rows.at(-1)!.id ?? 0)) rows.reverse()
+  return rowsToItems(rows, speaker)
+}
+
+// ── Opening and creating chats ──────────────────────────────────────────────
+
+type ResumeResult = {
+  session_id: string
+  running?: boolean
+  status?: string
+  inflight?: { assistant?: string; streaming?: boolean }
+  info?: { model?: string; provider?: string; reasoning_effort?: string; title?: string }
+}
+
+const opening = new Map<string, Promise<void>>()
+/** Chats on screen. A reconnect re-attaches these (and anything busy); the rest wait until they're needed. */
+const viewing = new Set<string>()
+/** When each chat last started a turn here, so a resume answered from before it can't call it idle. */
+const asked = new Map<string, number>()
+
+/** Load a stored chat and attach to it so its live events reach us. */
+export function openChat(id: string, profile: string, speaker?: Speaker): Promise<void> {
+  ensure(id, profile)
+  patch(id, () => ({ speaker }))
+  viewing.add(id)
+  const chat = getChat(id)!
+  if (chat.ready && chat.runtimeId) return Promise.resolve()
+  const existing = opening.get(id)
+  if (existing) return existing
+  const task = (async () => {
+    try {
+      if (!chat.ready) {
+        const items = await loadHistory(id, profile, speaker).catch(() => [] as ChatItem[])
+        // Anything sent while it loaded comes after the history.
+        patch(id, (c) => ({ items: [...items, ...c.items], ready: true }))
+      }
+      await attach(id, true)
+    } finally {
+      opening.delete(id)
+    }
+  })()
+  opening.set(id, task)
+  return task
+}
+
+/** The chat is off screen. Hermes lets it go once nothing holds it (see the reconnect below). */
+export function leaveChat(id: string) {
+  viewing.delete(id)
+}
+
+const resuming = new Map<string, Promise<void>>()
+
+/** `first`: this page has never seen the chat live, so adopt any in-flight reply. */
+function attach(id: string, first = false) {
+  let task = resuming.get(id)
+  if (!task) {
+    task = resume(id, first).finally(() => resuming.delete(id))
+    resuming.set(id, task)
+  }
+  return task
+}
+
+async function resume(id: string, first: boolean) {
+  const chat = getChat(id)
+  if (!chat) return
+  const since = Date.now()
+  attaching++
+  let res: ResumeResult
+  try {
+    res = await rpc<ResumeResult>('session.resume', {
+      session_id: id,
+      profile: chat.profile,
+      // The agent is rebuilt on resume, and its sense of where it is comes from
+      // this, not the stored chat. Unsaid, Hermes assumes its terminal ("no
+      // attachments here") and the agent stops sending files.
+      source: 'desktop',
+      omit_messages: true,
+      lazy: true,
+    })
+  } finally {
+    attaching--
+  }
+  bindRuntime(id, res.session_id)
+  if (!attaching) parked.clear()
+  const busy = res.running || ['working', 'streaming', 'starting'].includes(res.status ?? '')
+  // A message sent while we asked started a turn this answer doesn't know about.
+  const fresher = (asked.get(id) ?? 0) >= since
+  patch(id, (c) => {
+    let items = c.items
+    // A reply was mid-stream when we arrived: show what it has so far.
+    // (On a reconnect, the replayed events carry it instead.)
+    const partial = first ? res.inflight?.assistant?.trim() : undefined
+    if (busy && partial && flowTail(items).item?.kind !== 'assistant') {
+      items = [
+        ...items,
+        { kind: 'assistant', id: uid('a'), text: partial, streaming: true, at: Date.now(), speaker: c.speaker },
+      ]
+    }
+    return {
+      items,
+      status: hasPending(items) ? 'waiting' : busy ? 'working' : fresher && isBusy(c) ? c.status : 'idle',
+      model: res.info?.model ?? c.model,
+      provider: res.info?.provider ?? c.provider,
+      reasoning: res.info?.reasoning_effort ?? c.reasoning,
+    }
+  })
+  // Finished while we were away: give any replay a moment, then settle what's still live.
+  if (!busy && !fresher && !first) window.setTimeout(() => void settleStale(id, since), 1500)
+  if (first) void restorePick(id, res.info)
+  void readGoal(id)
+}
+
+/**
+ * A reply that ended while the connection was down, with nothing replayed to
+ * say so (Hermes restarted, or the gap was dropped): stop its caret and
+ * spinners, and fetch its final words.
+ */
+async function settleStale(id: string, since: number) {
+  const chat = getChat(id)
+  if (!chat || (asked.get(id) ?? 0) >= since || chat.status === 'waiting') return
+  const tail = flowTail(chat.items).item
+  const cut = tail?.kind === 'assistant' && tail.streaming ? tail.id : undefined
+  const stuck = cut || chat.items.some((i) => i.kind === 'tool' && i.status === 'running')
+  if (!stuck) return
+  patch(id, (c) => ({ items: settle(c.items), status: 'idle' }))
+  if (!cut) return
+  const history = await loadHistory(id, chat.profile, chat.speaker).catch(() => [] as ChatItem[])
+  const final = history.findLast((i) => i.kind === 'assistant')
+  if (final?.kind !== 'assistant') return
+  patch(id, (c) => ({
+    items: c.items.map((i) => (i.id === cut && i.kind === 'assistant' ? { ...i, text: final.text } : i)),
+  }))
+}
+
+// ── Per-chat model choices ──────────────────────────────────────────────────
+// Hermes forgets a chat's model once it lets the chat go (thinking survives,
+// but isn't reported back), so this browser remembers both and puts them back.
+
+type Pick = { model?: string; provider?: string; reasoning?: string }
+const PICK = scoped('murmur:chat-pick:')
+
+function readPick(id: string): Pick | null {
+  try {
+    return JSON.parse(localStorage.getItem(PICK + id) ?? 'null') as Pick | null
+  } catch {
+    return null
+  }
+}
+
+function savePick(id: string, next: Pick | null) {
+  try {
+    const merged = next && { ...readPick(id), ...next }
+    if (merged && Object.values(merged).some(Boolean)) localStorage.setItem(PICK + id, JSON.stringify(merged))
+    else localStorage.removeItem(PICK + id)
+  } catch {
+    /* private mode: the choice lasts as long as the chat stays live */
+  }
+}
+
+async function restorePick(id: string, info: ResumeResult['info']) {
+  const saved = readPick(id)
+  if (!saved) return
+  try {
+    if (saved.reasoning) patch(id, () => ({ reasoning: saved.reasoning }))
+    if (saved.model && saved.provider && saved.model !== info?.model) {
+      // (Switching models re-applies the thinking level too.)
+      await setChatModel(id, saved.model, saved.provider)
+    } else if (saved.reasoning && saved.reasoning !== info?.reasoning_effort) {
+      await setChatReasoning(id, saved.reasoning)
+    }
+  } catch {
+    /* it shows what Hermes is really using */
+  }
+}
+
+type ControlSnapshot = { goal?: { title?: string; status?: string } | null }
+
+function goalOf(control?: ControlSnapshot): Goal | undefined {
+  const goal = control?.goal
+  return goal?.title && goal.status !== 'cleared' && goal.status !== 'done' ? { title: goal.title, status: goal.status ?? 'active' } : undefined
+}
+
+/** Any goal (/goal) the chat is working toward. */
+async function readGoal(id: string) {
+  const chat = getChat(id)
+  if (!chat?.runtimeId) return
+  try {
+    const res = await rpc<{ control?: ControlSnapshot }>('session.control.read', {
+      session_id: chat.runtimeId,
+      profile: chat.profile,
+    })
+    patch(id, () => ({ goal: goalOf(res.control) }))
+  } catch {
+    /* older Hermes, or no stored chat yet: no goal to show */
+  }
+}
+
+type CreateResult = { session_id: string; stored_session_id: string; info?: { model?: string; provider?: string } }
+
+/** Start a fresh chat with an agent. Hermes only saves it once the first message is sent. */
+export async function createChat(
+  profile: string,
+  opts: { speaker?: Speaker; model?: string; provider?: string; reasoning?: string; title?: string } = {},
+) {
+  const res = await rpc<CreateResult>('session.create', {
+    profile,
+    // Murmur is a graphical chat, so it runs as Hermes's desktop surface: the
+    // agent learns it can deliver files (MEDIA:) and inline widgets
+    // (::preview). Its pane-driving tools (terminal, preview, tours) ask for
+    // things Murmur doesn't have; those requests are answered "not supported"
+    // and the agent moves on.
+    source: 'desktop',
+    ...(opts.model && opts.provider ? { model: opts.model, provider: opts.provider } : {}),
+    ...(opts.reasoning ? { reasoning_effort: opts.reasoning } : {}),
+    ...(opts.title ? { title: opts.title } : {}),
+  })
+  const id = res.stored_session_id
+  useChats.setState((s) => ({
+    chats: {
+      ...s.chats,
+      [id]: {
+        id,
+        profile,
+        items: [],
+        status: 'idle',
+        ready: true,
+        speaker: opts.speaker,
+        model: res.info?.model,
+        provider: res.info?.provider,
+        reasoning: opts.reasoning,
+      },
+    },
+  }))
+  bindRuntime(id, res.session_id)
+  if (opts.model || opts.reasoning) savePick(id, { model: opts.model, provider: opts.provider, reasoning: opts.reasoning })
+  return id
+}
+
+/** Make sure the chat is live in Hermes, re-attaching if it was reaped. */
+async function live(id: string) {
+  const chat = getChat(id)
+  if (!chat) throw new Error('Unknown chat')
+  if (!chat.runtimeId) await attach(id)
+  return getChat(id)!.runtimeId!
+}
+
+/** Run an RPC on a chat, re-attaching once if Hermes forgot the runtime id. */
+async function onChat<T>(id: string, method: string, params: Record<string, unknown> = {}) {
+  const call = async () => rpc<T>(method, { session_id: await live(id), ...params })
+  try {
+    return await call()
+  } catch (e) {
+    if ((e as { code?: number }).code === 4001) {
+      patch(id, () => ({ runtimeId: undefined }))
+      return call()
+    }
+    throw e
+  }
+}
+
+// ── Sending ─────────────────────────────────────────────────────────────────
+
+function readDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result))
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(file)
+  })
+}
+
+const isImage = (f: File) => /^image\/(png|jpe?g|gif|webp|bmp)$/i.test(f.type)
+
+/** The full prompt each message went out with (refs included), for Try again. */
+const prompts = new Map<string, string>()
+
+/** Pictures you sent, shown from memory until their chat goes away. */
+const pictures = new Map<string, string[]>()
+
+/** What a message shows for its files: thumbnails for pictures, chips for the rest. */
+export function attachmentsOf(files: File[]): UserAttachment[] {
+  return files.map((f) =>
+    isImage(f)
+      ? { kind: 'image', name: f.name || 'Image', url: URL.createObjectURL(f) }
+      : { kind: 'file', name: f.name || 'File', size: f.size },
+  )
+}
+
+type SendOptions = {
+  /** A caller that already showed the message keeps its id (and its thumbnails). */
+  itemId?: string
+  attachments?: UserAttachment[]
+  /** What the bubble says, when it differs from what's sent (a command's message). */
+  shown?: string
+}
+
+/**
+ * Send a message, with any files. Images go to the model natively; other
+ * files are staged in the chat's folder and referenced as `@file:` so Hermes
+ * inlines them.
+ */
+export async function send(id: string, text: string, files: File[] = [], opts: SendOptions = {}) {
+  const chat = getChat(id)
+  if (!chat) return
+  const { itemId = uid('u'), shown = text } = opts
+  const busy = isBusy(chat)
+  const attachments = opts.attachments ?? attachmentsOf(files)
+  const urls = attachments.flatMap((a) => (a.kind === 'image' && a.url ? [a.url] : []))
+  if (urls.length) pictures.set(id, [...(pictures.get(id) ?? []), ...urls])
+  const item: ChatItem = {
+    kind: 'user',
+    id: itemId,
+    text: shown,
+    attachments: attachments.length ? attachments : undefined,
+    at: Date.now(),
+  }
+  asked.set(id, Date.now())
+  patch(id, (c) => ({ items: [...c.items, item], status: busy ? c.status : 'thinking' }))
+
+  try {
+    const refs: string[] = []
+    for (const file of files) {
+      const data = await readDataUrl(file)
+      if (isImage(file)) {
+        const res = await onChat<{ path?: string }>(id, 'image.attach_bytes', {
+          content_base64: data.split(',')[1] ?? '',
+          filename: file.name || 'image.png',
+        })
+        if (res.path && file.name) rememberUpload(res.path, file.name)
+      } else {
+        // (PDFs too: pdf.attach needs poppler, which Hermes may not have.)
+        const res = await onChat<{ ref_text?: string }>(id, 'file.attach', {
+          name: file.name || 'file',
+          data_url: data.startsWith('data:;') ? data.replace('data:;', 'data:application/octet-stream;') : data,
+        })
+        if (res.ref_text) refs.push(res.ref_text)
+      }
+    }
+    const prompt = [refs.join('\n'), text].filter(Boolean).join('\n\n') || 'What do you see in this image?'
+    prompts.set(itemId, prompt)
+    // While it's working, a new message steers the current reply instead of
+    // waiting its turn — the way you'd interrupt a person mid-thought. (Before
+    // the agent is up it can't be steered yet; then it waits its turn.)
+    const steered =
+      busy && !files.length && (await onChat(id, 'session.steer', { text: prompt }).then(() => true, () => false))
+    if (!steered) {
+      const res = await onChat<SubmitResult>(id, 'prompt.submit', { text: prompt, profile: chat.profile })
+      if (res.user_row_id != null) setRowId(id, itemId, res.user_row_id)
+    }
+  } catch (e) {
+    patch(id, (c) => ({
+      status: 'error',
+      items: [...c.items, { kind: 'error', id: uid('e'), message: attachError(e), retryable: true }],
+    }))
+  }
+}
+
+type SubmitResult = { status?: string; user_row_id?: number | null }
+
+function setRowId(id: string, itemId: string, rowId: number) {
+  patch(id, (c) => ({ items: c.items.map((i) => (i.id === itemId && i.kind === 'user' ? { ...i, rowId } : i)) }))
+}
+
+const isBusy = (c?: Chat) => !!c && c.status !== 'idle' && c.status !== 'error'
+
+/** Your last message, if it can be edited and sent again: saved, text only, and nothing running. */
+export function editableMessage(c?: Chat) {
+  if (!c || isBusy(c)) return undefined
+  const last = c.items.findLast((i) => i.kind === 'user')
+  return last?.kind === 'user' && last.rowId != null && !last.attachments?.length && !last.images?.length
+    ? last
+    : undefined
+}
+
+/**
+ * Change your last message and ask again: Hermes forgets everything from that
+ * message on and answers the new text. Throws (with the thread restored) if
+ * it couldn't.
+ */
+export async function resend(id: string, itemId: string, text: string) {
+  const chat = getChat(id)
+  const target = editableMessage(chat)
+  if (!chat || !target || target.id !== itemId) throw new Error('That message can’t be edited now.')
+  const before = chat.items
+  const index = before.findIndex((i) => i.id === itemId)
+  // A new id, so the old reply leaves and the new one arrives; the bubble stays put.
+  const next: ChatItem = { kind: 'user', id: uid('u'), text, at: Date.now(), was: target.was ?? target.id }
+  asked.set(id, Date.now())
+  patch(id, () => ({ items: [...before.slice(0, index), next], status: 'thinking' }))
+  prompts.set(next.id, text)
+  try {
+    const res = await onChat<SubmitResult>(id, 'prompt.submit', {
+      text,
+      profile: chat.profile,
+      truncate_before_row_id: target.rowId,
+      confirm_truncate: true,
+      // Editing the very first message empties the chat before it's answered again.
+      confirm_empty_truncate: true,
+    })
+    if (res.user_row_id != null) setRowId(id, next.id, res.user_row_id)
+  } catch (e) {
+    patch(id, () => ({ items: before, status: chat.status }))
+    throw e
+  }
+}
+
+/** Ask for a fresh reply to your last message. */
+export async function regenerate(id: string) {
+  const last = editableMessage(getChat(id))
+  if (last) return resend(id, last.id, prompts.get(last.id) ?? last.text)
+  return retry(id)
+}
+
+/**
+ * Take back your last message and its reply. Returns what you'd written, so
+ * it can go back in the composer, or undefined if there was nothing to undo.
+ */
+export async function undo(id: string) {
+  const chat = getChat(id)
+  if (!chat) return undefined
+  if (isBusy(chat)) throw new Error('Wait for the reply to finish, then try again.')
+  const res = await onChat<{ removed?: number }>(id, 'session.undo')
+  if (!res.removed) return undefined
+  let text: string | undefined
+  patch(id, (c) => {
+    const at = c.items.findLastIndex((i) => i.kind === 'user')
+    if (at < 0) return
+    const last = c.items[at]
+    text = last.kind === 'user' ? last.text : undefined
+    return { items: c.items.slice(0, at), status: 'idle' }
+  })
+  return text ?? ''
+}
+
+// ── Side questions and commands ─────────────────────────────────────────────
+
+/** Put away a side answer or command card. */
+export function dismissItem(id: string, itemId: string) {
+  patch(id, (c) => ({ items: c.items.filter((i) => i.id !== itemId) }))
+}
+
+/** Ask something on the side (/btw): answered from what the chat knows so far, without interrupting it. */
+export async function askAside(id: string, question: string) {
+  const itemId = uid('b')
+  patch(id, (c) => ({ items: [...c.items, { kind: 'aside', id: itemId, question, status: 'pending' }] }))
+  try {
+    const res = await onChat<{ task_id: string }>(id, 'prompt.btw', { text: question })
+    // (The answer can land before this does; then it's already filled in.)
+    patch(id, (c) => ({
+      items: c.items.map((i) => (i.id === itemId && i.kind === 'aside' && !i.taskId ? { ...i, taskId: res.task_id } : i)),
+    }))
+  } catch (e) {
+    patch(id, (c) => ({
+      items: c.items.map((i) =>
+        i.id === itemId && i.kind === 'aside' ? { ...i, status: 'error', answer: errorText(e) } : i,
+      ),
+    }))
+  }
+}
+
+type SlashResult = {
+  output?: string | null
+  warning?: string | null
+  type?: 'exec' | 'alias' | 'plugin' | 'send' | 'skill' | 'prefill' | null
+  target?: string | null
+  message?: string | null
+  notice?: string | null
+  display?: string | null
+}
+
+/**
+ * Run any other slash command in this chat. Its printout lands in the thread
+ * as a card; commands that turn into a message (a goal, a skill) send it.
+ * Returns text to put back in the composer, if the command asks for that.
+ */
+export async function runSlash(
+  id: string,
+  command: string,
+  { quiet = false }: { quiet?: boolean } = {},
+): Promise<{ prefill?: string; output?: string }> {
+  const itemId = uid('c')
+  let printed: string | undefined
+  const card = (next: Partial<Extract<ChatItem, { kind: 'command' }>> | null) => {
+    printed = next?.output
+    if (quiet) return
+    patch(id, (c) => ({
+      items: next
+        ? c.items.map((i) => (i.id === itemId && i.kind === 'command' ? { ...i, ...next } : i))
+        : c.items.filter((i) => i.id !== itemId),
+    }))
+  }
+  if (!quiet) patch(id, (c) => ({ items: [...c.items, { kind: 'command', id: itemId, command, status: 'running' }] }))
+
+  const [, name = '', arg = ''] = /^\/(\S+)\s*([\s\S]*)$/.exec(command.trim()) ?? []
+  try {
+    let res: SlashResult
+    try {
+      res = await onChat<SlashResult>(id, 'slash.exec', { command, profile: getChat(id)?.profile })
+    } catch (e) {
+      // Skills (and a few others) only run through command.dispatch.
+      if ((e as { code?: number }).code !== 4018) throw e
+      res = await onChat<SlashResult>(id, 'command.dispatch', { name, arg, profile: getChat(id)?.profile })
+    }
+    if (res.type === 'alias' && res.target) {
+      card(null)
+      return runSlash(id, `/${res.target.replace(/^\//, '')}${arg ? ` ${arg}` : ''}`, { quiet })
+    }
+    if (res.type === 'send' || res.type === 'skill') {
+      const notice = res.notice?.trim()
+      card(notice ? { status: 'done', output: notice } : null)
+      if (res.message) void send(id, res.message, [], { shown: res.display?.trim() || command })
+      return { output: printed }
+    }
+    if (res.type === 'prefill') {
+      const notice = res.notice?.trim()
+      card(notice ? { status: 'done', output: notice } : null)
+      return { prefill: res.message ?? undefined, output: printed }
+    }
+    const output = [res.output?.trim(), res.warning?.trim()].filter(Boolean).join('\n\n')
+    card({ status: 'done', output: output || 'Done.' })
+    return { output: printed }
+  } catch (e) {
+    card({ status: 'error', output: errorText(e) })
+    if (quiet) throw e
+    return {}
+  }
+}
+
+function attachError(e: unknown) {
+  const raw = e instanceof Error ? e.message : String(e)
+  if (/too large/i.test(raw)) return 'That file is too large to send. Try a smaller one.'
+  if (/unsupported image|not an image|image type/i.test(raw))
+    return 'That image type isn’t supported. Try a PNG or JPEG.'
+  return errorText(e)
+}
+
+/**
+ * A prompt from a widget (window.hermes.send). It goes to the agent as a
+ * hidden turn: nothing appears in the thread, and the agent answers by
+ * updating the widget. Returns false when the chat is busy.
+ */
+/**
+ * Carry a chat on here when another Hermes app holds it (Hermes lets one
+ * program drive a chat at a time, by design). The conversation is copied into
+ * a new chat, the message that couldn't be sent goes there, and its id comes
+ * back so the screen can move to it. Hermes 0.21.5+ copies everything, tool
+ * steps included; older ones get the words of the conversation.
+ */
+export async function continueHere(id: string) {
+  const chat = getChat(id)
+  if (!chat) return undefined
+  const { profile, speaker } = chat
+  const last = chat.items.findLast((i) => i.kind === 'user')
+  const pending = last?.kind === 'user' ? last.text : ''
+
+  let copy: string
+  try {
+    copy = (await rpc<{ stored_session_id: string }>('session.branch_stored', {
+      profile,
+      parent_session_id: id,
+      source: 'desktop',
+    })).stored_session_id
+  } catch (error) {
+    if (!isMissingMethod(error)) throw error
+    const res = await api.get<{ messages?: Row[]; data?: Row[] }>(
+      `/api/sessions/${encodeURIComponent(id)}/messages?profile=${encodeURIComponent(profile)}&order=oldest&limit=500`,
+    )
+    const messages = (res.messages ?? res.data ?? []).flatMap((r) => {
+      const content = r.role === 'user' ? parseUserMessage(r.content ?? '').text : (r.content ?? '').trim()
+      return (r.role === 'user' || r.role === 'assistant') && content && r.display_kind !== 'hidden'
+        ? [{ role: r.role, content }]
+        : []
+    })
+    copy = (await rpc<CreateResult>('session.create', { profile, source: 'desktop', messages, title: chat.title }))
+      .stored_session_id
+  }
+  await openChat(copy, profile, speaker)
+  if (pending) await send(copy, pending)
+  return copy
+}
+
+export async function sendHidden(id: string, text: string) {
+  const chat = getChat(id)
+  if (!chat || (chat.status !== 'idle' && chat.status !== 'error')) return false
+  asked.set(id, Date.now())
+  patch(id, () => ({ status: 'thinking' }))
+  try {
+    await onChat(id, 'prompt.submit', { text, profile: chat.profile, display_kind: 'hidden' })
+    return true
+  } catch {
+    patch(id, () => ({ status: 'idle' }))
+    return false
+  }
+}
+
+export async function stop(id: string) {
+  await onChat(id, 'session.interrupt').catch(() => {})
+}
+
+export async function retry(id: string) {
+  const chat = getChat(id)
+  const lastUser = chat?.items.findLast((i) => i.kind === 'user')
+  if (!chat || !lastUser || lastUser.kind !== 'user') return
+  asked.set(id, Date.now())
+  patch(id, (c) => ({ items: c.items.filter((i) => i.kind !== 'error'), status: 'thinking' }))
+  const text = prompts.get(lastUser.id) ?? lastUser.text
+  await onChat(id, 'prompt.submit', { text, profile: chat.profile }).catch((e) =>
+    patch(id, (c) => ({
+      status: 'error',
+      items: [...c.items, { kind: 'error', id: uid('e'), message: errorText(e), retryable: true }],
+    })),
+  )
+}
+
+export async function setChatModel(id: string, model: string, provider: string) {
+  const was = getChat(id)
+  // The check moves the moment you pick; it moves back if Hermes says no.
+  patch(id, () => ({ model, provider }))
+  try {
+    const params = { key: 'model', value: `${model} --provider ${provider} --session` }
+    const res = await onChat<{ confirm_required?: boolean }>(id, 'config.set', params)
+    // Picking it in the sheet was the confirmation.
+    if (res.confirm_required) await onChat(id, 'config.set', { ...params, confirm_expensive_model: true })
+  } catch (e) {
+    patch(id, (c) => (c.model === model ? { model: was?.model, provider: was?.provider } : undefined))
+    throw e
+  }
+  savePick(id, { model, provider })
+  // Switching models resets thinking to the agent's default; keep the choice
+  // (read now, in case it changed while the switch was in flight).
+  const reasoning = getChat(id)?.reasoning
+  if (reasoning) await onChat(id, 'config.set', { key: 'reasoning', value: reasoning }).catch(() => {})
+}
+
+export async function setChatReasoning(id: string, value: string, remember = true) {
+  await onChat(id, 'config.set', { key: 'reasoning', value })
+  patch(id, () => ({ reasoning: value }))
+  savePick(id, { reasoning: remember ? value : undefined })
+}
+
+/** Back to the agent's own default thinking level (a live chat has no "unset"). */
+export async function resetChatReasoning(id: string) {
+  const chat = getChat(id)
+  if (!chat) return
+  const { value } = await rpc<{ value: string }>('config.get', { profile: chat.profile, key: 'reasoning' })
+  await setChatReasoning(id, value, false)
+}
+
+export async function renameChat(id: string, title: string) {
+  await onChat(id, 'session.title', { title })
+  patch(id, () => ({ title }))
+}
+
+/** Delete a stored chat, whether or not it is open here. */
+export async function deleteChat(id: string, profile = getChat(id)?.profile ?? 'default') {
+  const close = (runtimeId: string) => rpc('session.close', { session_id: runtimeId }).catch(() => {})
+  const chat = getChat(id)
+  if (chat?.runtimeId) {
+    await close(chat.runtimeId)
+    runtimeToStored.delete(chat.runtimeId)
+  }
+  try {
+    await rpc('session.delete', { session_id: id, profile })
+  } catch (e) {
+    // Live somewhere else (another tab, a reply still running): close it there first.
+    if ((e as { code?: number }).code !== 4023) throw e
+    const live = await rpc<{ sessions: { id: string; session_key?: string }[] }>('session.active_list', {})
+    const match = live.sessions.find((s) => s.session_key === id)
+    if (match) await close(match.id)
+    await rpc('session.delete', { session_id: id, profile })
+  }
+  forget(id)
+  useChats.setState((s) => {
+    const chats = { ...s.chats }
+    delete chats[id]
+    return { chats }
+  })
+}
+
+/** Let go of everything kept for a chat that's gone. */
+function forget(id: string) {
+  for (const item of getChat(id)?.items ?? []) if (item.kind === 'user') prompts.delete(item.id)
+  pictures.get(id)?.forEach((url) => URL.revokeObjectURL(url))
+  pictures.delete(id)
+  pendingReasoning.delete(id)
+  asked.delete(id)
+  viewing.delete(id)
+  savePick(id, null)
+}
+
+// ── Approvals and questions ─────────────────────────────────────────────────
+
+export function answerApproval(id: string, requestId: string, choice: ApprovalChoice) {
+  requests.get(requestId)?.respond({ choice })
+  requests.delete(requestId)
+  patch(id, (c) => ({
+    items: c.items.map((i) =>
+      i.kind === 'approval' && i.requestId === requestId
+        ? { ...i, status: choice === 'deny' ? 'denied' : 'approved', choice }
+        : i,
+    ),
+    status: 'working',
+  }))
+}
+
+export function answerQuestion(id: string, requestId: string, answers: Record<string, string>) {
+  requests.get(requestId)?.respond({ answers })
+  requests.delete(requestId)
+  patch(id, (c) => ({
+    items: c.items.map((i) =>
+      i.kind === 'clarify' && i.requestId === requestId ? { ...i, status: 'answered', answers } : i,
+    ),
+    status: 'working',
+  }))
+}
+
+function onServerRequest(req: ServerRequest) {
+  const params = req.params as Record<string, unknown>
+  if (req.method !== 'approval' && req.method !== 'clarify') return false
+  const runtimeId = String(params.session_id ?? '')
+  const id = runtimeToStored.get(runtimeId)
+  // Only re-deliveries wait: a live request for an id we don't know is
+  // someone else's (a group member's), so let the next handler have it.
+  if (!id && attaching && req.replayed) {
+    parked.set(runtimeId, [...(parked.get(runtimeId) ?? []), req])
+    return true
+  }
+  if (!id) return false
+  // A re-delivery after reconnect (or a pending card from before a reload):
+  // answer through the newest copy, and don't add a second card.
+  const shown = getChat(id)?.items.some(
+    (i) => (i.kind === 'approval' || i.kind === 'clarify') && i.requestId === req.id,
+  )
+  if (requests.has(req.id) || shown) {
+    requests.set(req.id, req)
+    return true
+  }
+  requests.set(req.id, req)
+  const speaker = getChat(id)?.speaker
+  if (req.method === 'approval') {
+    const command = typeof params.command === 'string' ? params.command : undefined
+    const description = typeof params.description === 'string' ? params.description : ''
+    const choices = (Array.isArray(params.choices) ? params.choices : ['once', 'always', 'deny']) as ApprovalChoice[]
+    patch(id, (c) => ({
+      status: 'waiting',
+      items: [
+        ...c.items,
+        {
+          kind: 'approval',
+          id: uid('ap'),
+          requestId: req.id,
+          title: approvalTitle(c.speaker?.name, description, command),
+          command,
+          choices,
+          status: 'pending',
+          speaker,
+        },
+      ],
+    }))
+  } else {
+    const raw = Array.isArray(params.questions)
+      ? (params.questions as Record<string, unknown>[])
+      : [{ qid: 'q0', question: params.question, choices: params.choices, multi_select: params.multi_select }]
+    const questions: ClarifyQuestion[] = raw.map((q, i) => ({
+      qid: String(q.qid ?? `q${i}`),
+      question: String(q.question ?? ''),
+      choices: Array.isArray(q.choices) ? q.choices.map(String) : undefined,
+      multi: Boolean(q.multi_select),
+    }))
+    patch(id, (c) => ({
+      status: 'waiting',
+      items: [...c.items, { kind: 'clarify', id: uid('q'), requestId: req.id, questions, status: 'pending', speaker }],
+    }))
+  }
+  return true
+}
+
+function approvalTitle(name: string | undefined, description: string, command?: string) {
+  const who = name ?? 'Your agent'
+  if (command) return `${who} wants to run a command`
+  return description ? `${who} wants to ${description}` : `${who} needs your OK`
+}
+
+// ── The event stream ────────────────────────────────────────────────────────
+
+type P = Record<string, unknown>
+
+function onEvent(ev: GatewayEvent) {
+  const runtimeId = (ev as { session_id?: string }).session_id ?? ''
+  const id = runtimeToStored.get(runtimeId)
+  if (!id) return
+  const payload = ((ev as { payload?: P }).payload ?? {}) as P
+  const text = typeof payload.text === 'string' ? payload.text : ''
+
+  switch (ev.type) {
+    case 'message.start':
+      return patch(id, (c) => ({ status: c.status === 'waiting' ? 'waiting' : 'thinking' }))
+
+    case 'message.delta':
+      return patch(id, (c) => {
+        const { item: last, at } = flowTail(c.items)
+        if (last?.kind === 'assistant' && last.streaming) {
+          const next = last.text ? last.text + text : text.trimStart()
+          return { status: 'working', items: replaceAt(c.items, at, { ...last, text: next }) }
+        }
+        const items = closeThinking(c.items)
+        return {
+          status: 'working',
+          items: [
+            ...items,
+            {
+              kind: 'assistant',
+              id: uid('a'),
+              text: text.trimStart(),
+              streaming: true,
+              at: Date.now(),
+              speaker: c.speaker,
+            },
+          ],
+        }
+      })
+
+    case 'message.interim':
+      return patch(id, (c) => {
+        const { item: last, at } = flowTail(c.items)
+        if (last?.kind === 'assistant' && last.streaming) {
+          return { items: replaceAt(c.items, at, { ...last, text: text.trim(), streaming: false }) }
+        }
+        if (payload.already_streamed || !text.trim()) return
+        return {
+          items: [
+            ...c.items,
+            {
+              kind: 'assistant',
+              id: uid('a'),
+              text: text.trim(),
+              streaming: false,
+              at: Date.now(),
+              speaker: c.speaker,
+            },
+          ],
+        }
+      })
+
+    case 'reasoning.delta':
+      return patch(id, (c) => {
+        const { item: last, at } = flowTail(c.items)
+        if (last?.kind === 'thinking' && last.streaming) {
+          return { status: 'thinking', items: replaceAt(c.items, at, { ...last, text: last.text + text }) }
+        }
+        return {
+          status: 'thinking',
+          items: [
+            ...c.items,
+            { kind: 'thinking', id: uid('t'), text, streaming: true, startedAt: Date.now(), speaker: c.speaker },
+          ],
+        }
+      })
+
+    case 'reasoning.available':
+      pendingReasoning.set(id, text)
+      return
+
+    case 'tool.start': {
+      const name = String(payload.name ?? 'tool')
+      const label = toolLabel(name, payload.args, typeof payload.context === 'string' ? payload.context : undefined)
+      const toolId = payload.tool_id == null ? '' : String(payload.tool_id)
+      // Already here from history (a reload mid-reply, then a replay): it carries on in place.
+      const loaded = toolId ? getChat(id)?.items.findIndex((i) => i.kind === 'tool' && i.callId === toolId) : -1
+      if (loaded !== undefined && loaded >= 0)
+        return patch(id, (c) => ({
+          status: c.status === 'waiting' ? 'waiting' : 'working',
+          items: c.items.map((i, at) => (at === loaded && i.kind === 'tool' ? { ...i, status: 'running', endedAt: undefined } : i)),
+        }))
+      return patch(id, (c) => ({
+        status: c.status === 'waiting' ? 'waiting' : 'working',
+        items: [
+          ...closeThinking(sealAssistant(c.items)),
+          {
+            kind: 'tool',
+            id: `tool-${String(payload.tool_id ?? uid('x'))}`,
+            name,
+            label: label.label,
+            detail: label.detail,
+            status: 'running',
+            startedAt: Date.now(),
+            speaker: c.speaker,
+          },
+        ],
+      }))
+    }
+
+    case 'tool.complete': {
+      const toolId = String(payload.tool_id ?? '')
+      const key = `tool-${toolId}`
+      // (A step loaded from history, after a reload mid-reply, is known by its call id.)
+      const isIt = (i: ChatItem) => i.kind === 'tool' && (i.id === key || (!!toolId && i.callId === toolId))
+      const result = payload.result as P | undefined
+      const failed = Boolean(
+        result && (result.status === 'blocked' || result.exit_code === -1 || (result.error && result.error !== null)),
+      )
+      const media = failed ? [] : toolMedia(String(payload.name ?? ''), payload.result)
+      return patch(id, (c) => ({
+        status: hasPending(c.items) ? 'waiting' : 'working',
+        items: c.items.map((i) =>
+          i.kind === 'tool' && isIt(i)
+            ? { ...i, status: failed ? 'error' : 'done', endedAt: Date.now(), media: media.length ? media : undefined }
+            : i,
+        ),
+      }))
+    }
+
+    case 'message.complete': {
+      const status = String(payload.status ?? 'complete')
+      const persisted = payload.persisted_turn as { user_row_id?: number } | undefined
+      const reasoning = pendingReasoning.get(id)
+      pendingReasoning.delete(id)
+      return patch(id, (c) => {
+        let items = closeThinking(c.items).map((i) =>
+          i.kind === 'tool' && i.status === 'running' ? { ...i, status: 'done' as const, endedAt: Date.now() } : i,
+        )
+        const finalText = text.trim()
+        const { item: last, at: lastAt } = flowTail(items)
+        if (last?.kind === 'assistant' && last.streaming) {
+          items = replaceAt(items, lastAt, { ...last, text: finalText || last.text.trim(), streaming: false })
+        } else if (finalText && status === 'complete') {
+          items = [
+            ...items,
+            { kind: 'assistant', id: uid('a'), text: finalText, streaming: false, at: Date.now(), speaker: c.speaker },
+          ]
+        }
+        // Real reasoning (not the answer echoed back) goes before the reply.
+        if (
+          reasoning &&
+          reasoning.trim() !== finalText &&
+          !items.some((i) => i.kind === 'thinking' && i.text === reasoning)
+        ) {
+          const at = items.findLastIndex((i) => i.kind === 'user') + 1
+          const now = Date.now()
+          items.splice(at, 0, {
+            kind: 'thinking',
+            id: uid('t'),
+            text: reasoning.trim(),
+            streaming: false,
+            startedAt: now,
+            endedAt: now,
+            speaker: c.speaker,
+          })
+        }
+        if (status === 'error' && flowTail(items).item?.kind !== 'error') {
+          const message =
+            typeof payload.error === 'string' ? friendlyError(payload.error) : 'Something went wrong with that reply.'
+          items = [...items, { kind: 'error', id: uid('e'), message, retryable: payload.recoverable !== false }]
+        } else if (status === 'interrupted') {
+          items = [...items, { kind: 'notice', id: uid('n'), text: 'Stopped' }]
+        }
+        // The message that started this reply is saved now: it can be edited.
+        const rowId = persisted?.user_row_id
+        const at = items.findLastIndex((i) => i.kind === 'user')
+        const asked = items[at]
+        if (rowId != null && asked?.kind === 'user' && asked.rowId == null) {
+          items = items.map((i, n) => (n === at ? { ...asked, rowId } : i))
+        }
+        return { items, status: status === 'error' ? 'error' : 'idle', turns: (c.turns ?? 0) + 1 }
+      })
+    }
+
+    case 'btw.complete': {
+      const taskId = String(payload.task_id ?? '')
+      const answer = text.trim()
+      const failed = /^error:/i.test(answer)
+      return patch(id, (c) => {
+        // Matched by task, or (if the answer beat the RPC reply) the oldest unanswered question.
+        const match =
+          c.items.find((i) => i.kind === 'aside' && i.taskId === taskId) ??
+          c.items.find((i) => i.kind === 'aside' && !i.taskId && i.status === 'pending')
+        if (!match) return
+        return {
+          items: c.items.map((i) =>
+            i === match && i.kind === 'aside'
+              ? {
+                  ...i,
+                  taskId,
+                  status: failed ? 'error' : 'done',
+                  answer: failed ? friendlyError(answer.replace(/^error:\s*/i, '')) : answer,
+                }
+              : i,
+          ),
+        }
+      })
+    }
+
+    case 'session.control.update':
+      return patch(id, () => ({ goal: goalOf(payload.control as ControlSnapshot | undefined) }))
+
+    case 'session.title':
+      if (typeof payload.title === 'string') patch(id, () => ({ title: payload.title as string }))
+      return
+
+    case 'session.info':
+      return patch(id, (c) => ({
+        model: (payload.model as string) ?? c.model,
+        provider: (payload.provider as string) ?? c.provider,
+        reasoning: (payload.reasoning_effort as string) ?? c.reasoning,
+        title: (payload.title as string) || c.title,
+      }))
+
+    case 'request.cancel': {
+      const reqId = String(payload.id ?? '')
+      requests.delete(reqId)
+      return patch(id, (c) => ({
+        status: c.status === 'waiting' ? 'working' : c.status,
+        items: c.items.flatMap((i) => {
+          if (i.kind === 'approval' && i.requestId === reqId && i.status === 'pending')
+            return [{ ...i, status: 'expired' as const }]
+          if (i.kind === 'clarify' && i.requestId === reqId && i.status === 'pending') return []
+          return [i]
+        }),
+      }))
+    }
+
+    case 'error':
+      return patch(id, (c) => ({
+        status: 'error',
+        items: [
+          ...c.items,
+          {
+            kind: 'error',
+            id: uid('e'),
+            message: friendlyError(text || String(payload.message ?? '')),
+            retryable: true,
+          },
+        ],
+      }))
+  }
+}
+
+const hasPending = (items: ChatItem[]) =>
+  items.some((i) => (i.kind === 'approval' || i.kind === 'clarify') && i.status === 'pending')
+
+/** Side questions and command cards sit beside the conversation: a reply carries on past them. */
+const isSide = (i: ChatItem) => i.kind === 'aside' || i.kind === 'command'
+
+function flowTail(items: ChatItem[]) {
+  const at = items.findLastIndex((i) => !isSide(i))
+  return { item: at < 0 ? undefined : items[at], at }
+}
+
+const replaceAt = (items: ChatItem[], at: number, item: ChatItem) => items.map((i, n) => (n === at ? item : i))
+
+function closeThinking(items: ChatItem[]) {
+  const { item: last, at } = flowTail(items)
+  return last?.kind === 'thinking' && last.streaming
+    ? replaceAt(items, at, { ...last, streaming: false, endedAt: Date.now() })
+    : items
+}
+
+function sealAssistant(items: ChatItem[]) {
+  const { item: last, at } = flowTail(items)
+  return last?.kind === 'assistant' && last.streaming
+    ? replaceAt(items, at, { ...last, text: last.text.trim(), streaming: false })
+    : items
+}
+
+/** Nothing is live anymore: seal the reply, close its thinking and tick off its steps. */
+function settle(items: ChatItem[]) {
+  return closeThinking(sealAssistant(items)).map((i) =>
+    i.kind === 'tool' && i.status === 'running' ? { ...i, status: 'done' as const, endedAt: Date.now() } : i,
+  )
+}
+
+function errorText(e: unknown) {
+  return friendlyError(e instanceof Error ? e.message : String(e))
+}
+
+/** Hermes errors are written for terminals. Say it like a person would (src/features/chat/errors.ts). */
+export function friendlyError(raw: string) {
+  return explainError(raw).text
+}
+
+// ── Wiring ──────────────────────────────────────────────────────────────────
+
+let wired = false
+
+export function wireChats() {
+  if (wired) return
+  wired = true
+  gateway.onEvent(onEvent)
+  gateway.onRequest(onServerRequest)
+  gateway.onEvent((ev) => {
+    if (ev.type === 'session.reclaimed') {
+      const runtimeId = String((ev as { payload?: P }).payload?.session_id ?? '')
+      const id = runtimeToStored.get(runtimeId)
+      runtimeToStored.delete(runtimeId)
+      if (id) patch(id, () => ({ runtimeId: undefined }))
+    }
+  })
+  // After a reconnect, re-attach the chat on screen and any that are busy, so
+  // their events flow again (Hermes's client replays anything we missed). The
+  // rest are let go: Hermes reaps them, and they re-attach when next used.
+  gateway.onState((state) => {
+    if (state !== 'open') return
+    for (const chat of Object.values(useChats.getState().chats)) {
+      if (!chat.runtimeId) continue
+      if (viewing.has(chat.id) || isBusy(chat)) {
+        attach(chat.id).catch(() => patch(chat.id, () => ({ runtimeId: undefined })))
+      } else {
+        runtimeToStored.delete(chat.runtimeId)
+        patch(chat.id, () => ({ runtimeId: undefined }))
+      }
+    }
+  })
+}

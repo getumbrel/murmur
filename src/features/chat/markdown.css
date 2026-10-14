@@ -1,0 +1,258 @@
+/* Assistant prose. Calm, readable, 16/1.6, on an 4/8pt rhythm. */
+
+.md {
+  font-size: 1rem;
+  line-height: 1.6;
+  color: var(--ink);
+  overflow-wrap: break-word;
+}
+.md > * {
+  margin: 0;
+}
+.md > * + * {
+  margin-top: 12px;
+}
+
+.md strong {
+  font-weight: 600;
+}
+
+.md a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in oklch, var(--accent) 35%, transparent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  transition: text-decoration-color 160ms var(--ease-out);
+}
+.md a:hover {
+  text-decoration-color: var(--accent);
+}
+
+.md h3,
+.md h4,
+.md h5 {
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 1.35;
+}
+.md h3 {
+  font-size: 1.1875rem;
+}
+.md h4 {
+  font-size: 1.0625rem;
+}
+.md h5 {
+  font-size: 1rem;
+}
+.md > :is(h3, h4, h5):not(:first-child) {
+  margin-top: 24px;
+}
+.md > :is(h3, h4, h5) + * {
+  margin-top: 8px;
+}
+
+.md ul,
+.md ol {
+  padding-left: 1.375em;
+}
+.md ul {
+  list-style: disc;
+}
+.md ol {
+  list-style: decimal;
+}
+.md li + li,
+.md li > :is(ul, ol) {
+  margin-top: 4px;
+}
+.md li::marker {
+  color: var(--ink-3);
+}
+.md ol > li::marker {
+  font-variant-numeric: tabular-nums;
+}
+.md li > p + p {
+  margin-top: 8px;
+}
+
+.md blockquote {
+  padding-left: 14px;
+  box-shadow: inset 2px 0 0 var(--line-strong);
+  color: var(--ink-2);
+}
+
+.md hr {
+  border: 0;
+  height: 0.5px;
+  background: var(--line-strong);
+  margin-block: 24px;
+}
+
+.md img {
+  max-width: 100%;
+  border-radius: var(--radius-md);
+}
+
+.md-inline {
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+  padding: 0.1em 0.38em;
+  border-radius: 6px;
+  background: var(--fill-2);
+}
+
+/* Code */
+
+.md-code {
+  border-radius: var(--radius-md);
+  background: var(--bg-sunken);
+  box-shadow: inset 0 0 0 0.5px var(--line-strong);
+  overflow: hidden;
+}
+.md > .md-code,
+.md > * + .md-code,
+.md > .md-code + * {
+  margin-top: 16px;
+}
+.md-code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 36px;
+  padding: 0 6px 0 14px;
+  font-size: 0.75rem;
+  color: var(--ink-3);
+  letter-spacing: 0;
+}
+.md-code-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 8px;
+  color: var(--ink-2);
+}
+.md-code-copy:hover {
+  background: var(--fill-2);
+  color: var(--ink);
+}
+.md-code-copy:disabled {
+  opacity: 0;
+}
+.md-code pre {
+  margin: 0;
+  padding: 2px 16px 14px;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  line-height: 1.65;
+  letter-spacing: 0;
+  tab-size: 2;
+  font-variant-ligatures: none;
+}
+.md-code pre code {
+  display: block;
+  width: max-content;
+  min-width: 100%;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .md-code [style*='--shiki-dark'] {
+    color: var(--shiki-dark) !important;
+  }
+}
+:root[data-theme='dark'] .md-code [style*='--shiki-dark'] {
+  color: var(--shiki-dark) !important;
+}
+
+/* Tables */
+
+.md-table {
+  overflow-x: auto;
+  border-radius: var(--radius-md);
+  box-shadow: inset 0 0 0 0.5px var(--line-strong);
+}
+.md > .md-table,
+.md > .md-table + * {
+  margin-top: 16px;
+}
+.md-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9375rem;
+  line-height: 1.45;
+  font-variant-numeric: tabular-nums;
+}
+.md-table th {
+  text-align: left;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--ink-2);
+  background: var(--fill-1);
+  white-space: nowrap;
+}
+.md-table th,
+.md-table td {
+  padding: 9px 14px;
+  vertical-align: top;
+}
+.md-table tr + tr td,
+.md-table tbody tr:first-child td {
+  box-shadow: inset 0 0.5px 0 var(--line-strong);
+}
+
+/* Streaming words: each one is its own inline span (streamdown's animate
+   plugin). Inline boxes can't take a transform, and making them inline-blocks
+   would swallow soft line breaks, so the 2px lift is a relative offset: it
+   moves only the word itself, never the text around it. */
+.md-streaming [data-sd-animate] {
+  position: relative;
+}
+
+@keyframes sd-murmur {
+  from {
+    opacity: 0;
+    top: 2px;
+  }
+  to {
+    opacity: 1;
+    top: 0;
+  }
+}
+
+/* While a reply streams, a soft caret in the agent's hue breathes where the
+   next words will land. */
+.md-streaming > :is(p, h3, h4, h5, blockquote):last-child::after,
+.md-streaming > :is(ul, ol):last-child > li:last-child::after {
+  content: '';
+  display: inline-block;
+  width: 0.5em;
+  height: 0.5em;
+  margin-left: 0.3em;
+  border-radius: 9999px;
+  background: var(--accent);
+  vertical-align: 0.05em;
+  animation: md-caret 1.2s ease-in-out infinite;
+}
+
+@keyframes md-caret {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.8);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .md-streaming > :is(p, h3, h4, h5, blockquote):last-child::after,
+  .md-streaming > :is(ul, ol):last-child > li:last-child::after {
+    animation: none;
+    opacity: 0.7;
+  }
+}

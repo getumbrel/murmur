@@ -1,0 +1,22 @@
+# Local Hermes Agent mirroring the umbrelOS store app (getumbrel/umbrel-apps/hermes-agent)
+name: murmur-dev
+services:
+  hermes:
+    image: ghcr.io/getumbrel/hermes-agent-umbrel:v2026.9.24@sha256:1cc27c346ccefe75c0cd52f281a231a47f864cab1c2cc26271ad8b8ad9531ad0
+    container_name: hermes-agent_web_1
+    restart: on-failure
+    stop_grace_period: 1m
+    ports:
+      - "18789:18789"
+    volumes:
+      - ./hermes-data:/opt/data
+    environment:
+      HERMES_UID: "1000"
+      HERMES_GID: "1000"
+      HERMES_DASHBOARD: "1"
+      HERMES_DASHBOARD_PORT: "18789"
+      HERMES_UMBREL_APP_PROXY_AUTH: "1"
+      HERMES_TUI_DIR: "/app/umbrel-tui"
+      HERMES_UPSTREAM_TUI_ENTRY: "/opt/hermes/ui-tui/dist/entry.js"
+      HERMES_GATEWAY_BOOTSTRAP_STATE: "running"
+    command: ["gateway", "run"]

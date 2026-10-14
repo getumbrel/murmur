@@ -1,0 +1,89 @@
+/* The composer: a floating glass capsule. While the agent works, a slow
+   comet of light travels around its rim in the agent's hue. */
+
+@property --rim-angle {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+
+.composer {
+  background: color-mix(in oklch, var(--bg-elevated) 82%, transparent);
+  box-shadow:
+    inset 0 0 0 0.5px var(--line-strong),
+    var(--shadow-float);
+  transition: box-shadow 240ms var(--ease-out);
+}
+.composer:focus-within {
+  box-shadow:
+    inset 0 0 0 0.5px color-mix(in oklch, var(--ink) 22%, transparent),
+    var(--shadow-float);
+}
+.composer[data-dragging] {
+  box-shadow:
+    inset 0 0 0 1.5px var(--accent),
+    var(--shadow-float);
+}
+
+.composer-rim {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  pointer-events: none;
+  background: conic-gradient(
+    from var(--rim-angle),
+    transparent 0deg,
+    color-mix(in oklch, var(--accent) 30%, transparent) 40deg,
+    var(--accent) 80deg,
+    transparent 120deg,
+    transparent 360deg
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box exclude,
+    linear-gradient(#000 0 0);
+  opacity: 0;
+  transition: opacity 600ms var(--ease-out);
+}
+.composer[data-busy] .composer-rim {
+  opacity: 0.75;
+  animation: composer-rim 3.6s linear infinite;
+}
+
+@keyframes composer-rim {
+  to {
+    --rim-angle: 360deg;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer[data-busy] .composer-rim {
+    animation: none;
+    opacity: 0.35;
+  }
+}
+
+/* Dictation: the panel takes over the capsule while the mic is open. */
+/* What it covers steps out of sight (the capsule keeps its size and glass). */
+.composer[data-dictating] > :not(.dictation, .composer-rim) {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms var(--ease-out);
+}
+.dictation-dot {
+  animation: dictation-dot 1.2s ease-in-out infinite;
+}
+@keyframes dictation-dot {
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dictation-dot {
+    animation: none;
+  }
+}

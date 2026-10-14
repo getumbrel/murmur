@@ -1,0 +1,69 @@
+/* Steps: each one rises in; a running one spins a thin ring that lets go as
+   its check draws in. */
+
+.animate-step {
+  animation: step-rise 240ms var(--ease-out) both;
+}
+
+@keyframes step-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+.step-ring {
+  stroke-dasharray: 0.28 1;
+  transform-origin: center;
+  animation: step-spin 0.9s linear infinite;
+  transition: opacity 220ms var(--ease-out);
+}
+.step-ring-done {
+  animation-play-state: paused;
+  opacity: 0;
+}
+
+@keyframes step-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.step-check {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: step-draw 220ms var(--ease-out) 60ms forwards;
+}
+
+@keyframes step-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .step-ring {
+    stroke-dasharray: 1 0;
+    opacity: 0.5;
+  }
+  .step-check {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* A request you just allowed settles into its receipt with a brief success
+   tint; one you declined settles without it. */
+.receipt-tint {
+  border-radius: var(--radius-sm);
+  animation: receipt-tint 900ms var(--ease-out) both;
+}
+
+@keyframes receipt-tint {
+  0%,
+  33% {
+    background-color: color-mix(in oklch, var(--success) 14%, transparent);
+  }
+  100% {
+    background-color: transparent;
+  }
+}

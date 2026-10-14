@@ -1,0 +1,658 @@
+@import 'tailwindcss';
+@import '@fontsource-variable/inter';
+
+@source '../node_modules/streamdown/dist/*.js';
+
+/* ── Tokens ──────────────────────────────────────────────────────────────────
+   Semantic colours flip with the system appearance. Accents are OKLCH so every
+   agent hue lands at the same perceived brightness. --hue is set per agent. */
+
+:root {
+  --hue: 278;
+  --font-sans: 'Inter Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace;
+
+  --bg: #fbfbfa;
+  --bg-elevated: #ffffff;
+  --bg-sunken: #f3f3f1;
+  --ink: #0e0e10;
+  /* ink-2/3 clear WCAG AA (4.5:1) for text on bg, elevated and fill-1, and
+     stay far enough apart to read as two steps of hierarchy. */
+  --ink-2: rgb(14 14 16 / 0.7);
+  --ink-3: rgb(14 14 16 / 0.58);
+  --fill-1: rgb(0 0 0 / 0.035);
+  --fill-2: rgb(0 0 0 / 0.06);
+  --fill-3: rgb(0 0 0 / 0.1);
+  /* An opaque fill (for disabled buttons that float over content). */
+  --fill-solid: color-mix(in oklab, var(--ink) 9%, var(--bg));
+  --line: rgb(0 0 0 / 0.08);
+  --line-strong: rgb(0 0 0 / 0.14);
+  --glass: rgb(251 251 250 / 0.72);
+  --scrim: rgb(0 0 0 / 0.28);
+  --shadow-color: 220 10% 20%;
+  --shimmer: rgb(255 255 255 / 0.75);
+
+  /* L 0.54 keeps an agent hue at ≥4.5:1, as text on bg and under white text,
+     except through green–cyan–sky, where sRGB runs brightest at this chroma:
+     there L eases down to 0.49 (a cos² bump centred on 192), which holds every
+     hue at ≥4.9:1 with headroom for a hover's brightness. */
+  --accent-l: calc(0.54 - 0.05 * max(0, cos((var(--hue) - 192) * 1deg)) * max(0, cos((var(--hue) - 192) * 1deg)));
+  --accent: oklch(var(--accent-l) 0.19 var(--hue));
+  --accent-soft: oklch(var(--accent-l) 0.19 var(--hue) / 0.1);
+  --accent-ink: #fff;
+  --user-bubble: oklch(0.955 0.012 var(--hue));
+  --danger: oklch(0.56 0.21 25);
+  --success: oklch(0.6 0.16 150);
+  --warning: oklch(0.62 0.16 62);
+
+  color-scheme: light;
+}
+
+/* Dark: the system's, unless Settings → Appearance forces one on <html>
+   (src/features/settings/theme.ts). The two blocks below must match. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --bg: #0b0b0c;
+    --bg-elevated: #161618;
+    --bg-sunken: #070708;
+    --ink: #f5f5f6;
+    --ink-2: rgb(245 245 246 / 0.66);
+    --ink-3: rgb(245 245 246 / 0.5);
+    --fill-1: rgb(255 255 255 / 0.045);
+    --fill-2: rgb(255 255 255 / 0.075);
+    --fill-3: rgb(255 255 255 / 0.12);
+    --line: rgb(255 255 255 / 0.08);
+    --line-strong: rgb(255 255 255 / 0.14);
+    --glass: rgb(11 11 12 / 0.7);
+    --scrim: rgb(0 0 0 / 0.55);
+    --shadow-color: 0 0% 0%;
+    --shimmer: rgb(255 255 255 / 0.06);
+
+    --accent: oklch(0.72 0.16 var(--hue));
+    --accent-soft: oklch(0.72 0.16 var(--hue) / 0.14);
+    --accent-ink: #0b0b0c;
+    --user-bubble: oklch(0.25 0.03 var(--hue));
+    --danger: oklch(0.68 0.19 25);
+    --success: oklch(0.74 0.15 150);
+    --warning: oklch(0.8 0.15 75);
+
+    color-scheme: dark;
+  }
+}
+:root[data-theme='dark'] {
+  --bg: #0b0b0c;
+  --bg-elevated: #161618;
+  --bg-sunken: #070708;
+  --ink: #f5f5f6;
+  --ink-2: rgb(245 245 246 / 0.66);
+  --ink-3: rgb(245 245 246 / 0.5);
+  --fill-1: rgb(255 255 255 / 0.045);
+  --fill-2: rgb(255 255 255 / 0.075);
+  --fill-3: rgb(255 255 255 / 0.12);
+  --line: rgb(255 255 255 / 0.08);
+  --line-strong: rgb(255 255 255 / 0.14);
+  --glass: rgb(11 11 12 / 0.7);
+  --scrim: rgb(0 0 0 / 0.55);
+  --shadow-color: 0 0% 0%;
+  --shimmer: rgb(255 255 255 / 0.06);
+
+  --accent: oklch(0.72 0.16 var(--hue));
+  --accent-soft: oklch(0.72 0.16 var(--hue) / 0.14);
+  --accent-ink: #0b0b0c;
+  --user-bubble: oklch(0.25 0.03 var(--hue));
+  --danger: oklch(0.68 0.19 25);
+  --success: oklch(0.74 0.15 150);
+  --warning: oklch(0.8 0.15 75);
+
+  color-scheme: dark;
+}
+
+/* Anything that sets --hue (an agent's chat, a speaker's message) re-derives
+   the accent from it; custom properties resolve where they're declared. */
+.hue-scope {
+  --accent-l: calc(0.54 - 0.05 * max(0, cos((var(--hue) - 192) * 1deg)) * max(0, cos((var(--hue) - 192) * 1deg)));
+  --accent: oklch(var(--accent-l) 0.19 var(--hue));
+  --accent-soft: oklch(var(--accent-l) 0.19 var(--hue) / 0.1);
+  --user-bubble: oklch(0.955 0.012 var(--hue));
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .hue-scope {
+    --accent: oklch(0.72 0.16 var(--hue));
+    --accent-soft: oklch(0.72 0.16 var(--hue) / 0.14);
+    --user-bubble: oklch(0.25 0.03 var(--hue));
+  }
+}
+:root[data-theme='dark'] .hue-scope {
+  --accent: oklch(0.72 0.16 var(--hue));
+  --accent-soft: oklch(0.72 0.16 var(--hue) / 0.14);
+  --user-bubble: oklch(0.25 0.03 var(--hue));
+}
+
+@theme inline {
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+
+  --color-bg: var(--bg);
+  --color-elevated: var(--bg-elevated);
+  --color-sunken: var(--bg-sunken);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-fill-1: var(--fill-1);
+  --color-fill-2: var(--fill-2);
+  --color-fill-3: var(--fill-3);
+  --color-fill-solid: var(--fill-solid);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-glass: var(--glass);
+  --color-scrim: var(--scrim);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-ink: var(--accent-ink);
+  --color-user-bubble: var(--user-bubble);
+  --color-danger: var(--danger);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+
+  --text-caption: 0.75rem;
+  --text-caption--line-height: 1rem;
+  --text-footnote: 0.8125rem;
+  --text-footnote--line-height: 1.125rem;
+  --text-subhead: 0.9375rem;
+  --text-subhead--line-height: 1.375rem;
+  --text-body: 1rem;
+  --text-body--line-height: 1.5rem;
+  --text-title: 1.25rem;
+  --text-title--line-height: 1.625rem;
+  --text-large: 1.875rem;
+  --text-large--line-height: 2.25rem;
+
+  --radius-sm: 0.5rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1rem;
+  --radius-xl: 1.375rem;
+  --radius-2xl: 1.75rem;
+
+  --shadow-float:
+    0 1px 1px hsl(var(--shadow-color) / 0.04), 0 4px 12px -2px hsl(var(--shadow-color) / 0.08),
+    0 16px 40px -8px hsl(var(--shadow-color) / 0.14);
+  --shadow-sheet: 0 -1px 0 var(--line), 0 24px 80px -12px hsl(var(--shadow-color) / 0.35);
+
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-sheet: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+  /* Real springs for CSS (sampled physics). The curve includes the settle, so
+     give it ~1.6x the time the move should feel like: 'spring' bounce .15,
+     'spring-bouncy' bounce .3. */
+  --ease-spring-soft: linear(
+    0,
+    0.026,
+    0.09,
+    0.177,
+    0.275,
+    0.374,
+    0.47,
+    0.559,
+    0.64,
+    0.71,
+    0.771,
+    0.822,
+    0.864,
+    0.899,
+    0.927,
+    0.949,
+    0.966,
+    0.978,
+    0.988,
+    0.995,
+    1,
+    1.003,
+    1.005,
+    1.006,
+    1.006,
+    1.006,
+    1.006,
+    1.005,
+    1.005,
+    1.004,
+    1.004,
+    1.003,
+    1.002,
+    1.002,
+    1.002,
+    1.001,
+    1
+  );
+  --ease-spring-bouncy: linear(
+    0,
+    0.029,
+    0.104,
+    0.205,
+    0.32,
+    0.438,
+    0.551,
+    0.655,
+    0.746,
+    0.824,
+    0.888,
+    0.939,
+    0.978,
+    1.006,
+    1.026,
+    1.038,
+    1.044,
+    1.046,
+    1.045,
+    1.042,
+    1.037,
+    1.032,
+    1.026,
+    1.021,
+    1.016,
+    1.012,
+    1.008,
+    1.005,
+    1.003,
+    1.001,
+    1,
+    0.999,
+    0.998,
+    0.998,
+    0.998,
+    0.998,
+    0.998,
+    0.998,
+    0.999,
+    0.999,
+    1
+  );
+
+  --animate-rise: rise 460ms var(--ease-out) both;
+  --animate-pop: pop 380ms var(--ease-out) both;
+  --animate-fade: fade 240ms var(--ease-out) both;
+}
+
+/* ── Base ─────────────────────────────────────────────────────────────────── */
+
+@layer base {
+  html {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-feature-settings: 'cv11', 'ss01', 'ss03';
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-text-size-adjust: 100%;
+    overscroll-behavior: none;
+  }
+
+  body {
+    min-height: 100dvh;
+    letter-spacing: -0.011em;
+  }
+
+  #root {
+    isolation: isolate;
+  }
+
+  ::selection {
+    background: var(--accent-soft);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  button {
+    cursor: pointer;
+  }
+
+  /* Taps act at once (no double-tap-zoom wait) and never select chrome. */
+  button,
+  a,
+  label,
+  [role='button'],
+  [role='switch'],
+  [role='radio'] {
+    touch-action: manipulation;
+  }
+
+  /* Native-feeling scrollbars that only appear when needed. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--fill-3) transparent;
+  }
+}
+
+/* ── Motion ───────────────────────────────────────────────────────────────── */
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+@keyframes pop {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.94);
+  }
+}
+
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
+/* Present-tense activity text ("Searching the web") with a light sweep. */
+.text-shimmer {
+  background: linear-gradient(
+      90deg,
+      var(--ink-3) 0%,
+      var(--ink-3) 40%,
+      var(--ink) 50%,
+      var(--ink-3) 60%,
+      var(--ink-3) 100%
+    )
+    0 0 / 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer 2.2s linear infinite;
+}
+
+/* Loading placeholders (src/ui/skeleton.tsx). A light band sweeps across on
+   the compositor; the block itself never repaints. */
+@layer components {
+  .skeleton {
+    position: relative;
+    display: block;
+    overflow: hidden;
+    border-radius: var(--radius-md);
+    background: var(--fill-2);
+    isolation: isolate;
+  }
+}
+.skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 25%, var(--shimmer) 50%, transparent 75%);
+  transform: translateX(-100%);
+  animation: skeleton-sweep 1.8s var(--ease-sheet) infinite;
+}
+@keyframes skeleton-sweep {
+  60%,
+  to {
+    transform: translateX(100%);
+  }
+}
+
+/* Reduced motion is designed, not deleted: movement becomes a short fade,
+   loops stop on a legible frame, and progress spinners keep turning (they
+   carry meaning and don't travel). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+  .animate-rise,
+  .animate-pop,
+  .animate-fade {
+    animation: fade 150ms ease-out both !important;
+  }
+  .animate-spin {
+    animation-duration: 1s !important;
+    animation-iteration-count: infinite !important;
+  }
+  .text-shimmer {
+    animation: none;
+    color: var(--ink-2);
+    background: none;
+  }
+  .skeleton::after {
+    display: none;
+  }
+  /* Page pushes and the buddy morph become a plain crossfade. */
+  ::view-transition-group(*) {
+    animation: none !important;
+  }
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation-duration: 150ms !important;
+  }
+}
+
+/* ── Toasts (sonner, toastOptions.className = 'murmur-toast') ─────────────────
+   Glass capsules that drop in from the top like the Dynamic Island, hug their
+   message, and flick away upward. Selectors are doubled up to outrank
+   sonner's injected sheet without !important. */
+
+html [data-sonner-toaster][data-y-position='top'] {
+  top: calc(env(safe-area-inset-top) + 10px);
+  font-family: var(--font-sans);
+}
+html [data-sonner-toaster][data-x-position='center'] {
+  left: 0;
+  right: 0;
+  width: 100%;
+  transform: none;
+}
+/* Toasts centre on the conversation pane beside the sidebar (an inline `left`
+   from app.tsx), but a dialog is modal to the whole window and centres on it:
+   while one is open, toasts drop onto the dialog's axis instead. */
+html:has([data-sheet][data-state='open']) [data-sonner-toaster][data-x-position='center'] {
+  left: 0 !important;
+}
+
+html [data-sonner-toast].murmur-toast {
+  left: 0;
+  right: 0;
+  width: fit-content;
+  min-width: 0;
+  max-width: min(420px, calc(100vw - 32px));
+  margin-inline: auto;
+  padding: 11px 18px;
+  gap: 10px;
+  border: 0;
+  border-radius: 22px;
+  background: color-mix(in oklab, var(--bg-elevated) 80%, transparent);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(24px) saturate(180%);
+  color: var(--ink);
+  box-shadow:
+    0 0 0 0.5px var(--line-strong),
+    0 2px 6px -1px hsl(var(--shadow-color) / 0.08),
+    0 12px 32px -6px hsl(var(--shadow-color) / 0.2);
+  font-size: var(--text-subhead);
+  line-height: 1.3;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  /* In: a soft spring drop. Height/stacking: the sheet curve. */
+  transition:
+    transform 560ms var(--ease-spring-bouncy),
+    opacity 240ms var(--ease-out),
+    height 360ms var(--ease-sheet),
+    box-shadow 200ms ease;
+}
+html [data-sonner-toast].murmur-toast:has([data-icon]) {
+  padding-left: 14px;
+}
+/* Collapsed toasts behind the front one tuck in narrower, never wider. */
+html [data-sonner-toast].murmur-toast[data-expanded='false'][data-front='false'] {
+  max-width: 160px;
+}
+html [data-sonner-toast].murmur-toast[data-mounted='false'] {
+  --y: translateY(-70%) scale(0.88);
+}
+/* Out: up and a touch smaller, quicker than it came. */
+html [data-sonner-toast].murmur-toast[data-removed='true'] {
+  transition:
+    transform 260ms var(--ease-out),
+    opacity 200ms var(--ease-out),
+    height 260ms var(--ease-sheet);
+}
+html [data-sonner-toast].murmur-toast[data-removed='true'][data-front='true'][data-swipe-out='false'] {
+  --y: translateY(-60%) scale(0.9);
+}
+html [data-sonner-toast].murmur-toast[data-swipe-out='true'] {
+  animation-duration: 220ms;
+  animation-timing-function: var(--ease-out);
+}
+html [data-sonner-toast].murmur-toast [data-icon] {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  justify-content: center;
+  color: var(--ink-2);
+}
+html [data-sonner-toast].murmur-toast [data-icon] svg {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+}
+html [data-sonner-toast].murmur-toast[data-type='success'] [data-icon] {
+  color: var(--success);
+}
+html [data-sonner-toast].murmur-toast[data-type='error'] [data-icon] {
+  color: var(--danger);
+}
+html [data-sonner-toast].murmur-toast[data-type='warning'] [data-icon] {
+  color: var(--warning);
+}
+html [data-sonner-toast].murmur-toast [data-content] {
+  flex: 0 1 auto;
+}
+html [data-sonner-toast].murmur-toast [data-title] {
+  line-height: 1.3;
+  font-weight: 500;
+  text-wrap: pretty;
+}
+html [data-sonner-toast].murmur-toast [data-description] {
+  color: var(--ink-2);
+  font-size: var(--text-footnote);
+  font-weight: 400;
+}
+html [data-sonner-toast].murmur-toast [data-button] {
+  height: 28px;
+  margin-left: 4px;
+  margin-right: -8px;
+  padding: 0 12px;
+  border-radius: 9999px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: var(--text-footnote);
+  font-weight: 600;
+  transition: transform 160ms var(--ease-out);
+}
+html [data-sonner-toast].murmur-toast [data-button]:active {
+  transform: scale(0.95);
+}
+html [data-sonner-toast].murmur-toast .sonner-loading-bar {
+  background: var(--ink-2);
+}
+@media (prefers-reduced-motion: reduce) {
+  html [data-sonner-toast].murmur-toast,
+  html [data-sonner-toast].murmur-toast[data-mounted='false'],
+  html [data-sonner-toast].murmur-toast[data-removed='true'][data-front='true'][data-swipe-out='false'] {
+    --y: translateY(0);
+    transition: opacity 150ms ease-out !important;
+  }
+}
+
+/* ── Utilities ────────────────────────────────────────────────────────────── */
+
+@utility glass {
+  background: var(--glass);
+  /* Prefixed first: minifiers merge the pair and keep the last one. */
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(24px) saturate(180%);
+}
+
+@utility hairline-b {
+  box-shadow: inset 0 -0.5px 0 var(--line-strong);
+}
+
+@utility hairline-t {
+  box-shadow: inset 0 0.5px 0 var(--line-strong);
+}
+
+/* Presses land at once (90ms) and let go with a soft spring. */
+@utility pressable {
+  transition:
+    transform 420ms var(--ease-spring-soft),
+    background-color 150ms ease,
+    color 150ms ease,
+    opacity 150ms ease;
+  &:active:not(:disabled) {
+    transform: scale(0.97);
+    transition-duration: 90ms;
+    transition-timing-function: var(--ease-out);
+  }
+}
+
+@utility safe-top {
+  padding-top: env(safe-area-inset-top);
+}
+
+@utility safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+@utility no-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Small controls (32-40px) keep their look but get a 44px hit area on touch
+   screens. The slop is invisible and never shrinks a control that's bigger. */
+@utility touch-target {
+  @media (pointer: coarse) {
+    &::after {
+      content: '';
+      position: absolute;
+      inset: min(0px, calc((100% - 44px) / 2));
+    }
+  }
+}
+
+/* Inset separators for ListGroup (src/ui/list.tsx): a hairline from where
+   the text starts to the right edge, past the icon gutter when there is one. */
+.list-group > * + * {
+  background-image: linear-gradient(var(--line-strong), var(--line-strong));
+  background-position: right top;
+  background-size: calc(100% - 16px) 0.5px;
+  background-repeat: no-repeat;
+}
+.list-group > * + [data-has-icon] {
+  background-size: calc(100% - 56px) 0.5px;
+}
+
+@utility hairline-l {
+  box-shadow: inset 0.5px 0 0 var(--line-strong);
+}
+
+@utility hairline-r {
+  box-shadow: inset -0.5px 0 0 var(--line-strong);
+}

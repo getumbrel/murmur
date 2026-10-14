@@ -1,0 +1,167 @@
+/* Murmur brand mark, wordmark and endorsement (src/ui/brand.tsx). */
+
+.murmur-mark {
+  display: block;
+  overflow: visible;
+}
+
+/* Idle life: the two buddies blink, never in unison. */
+.murmur-mark .mm-eyes {
+  transform-box: fill-box;
+  transform-origin: 50% 55%;
+  animation: mm-blink 6.2s ease-in-out infinite;
+}
+.murmur-mark .mm-eyes-right {
+  animation-duration: 7.4s;
+  animation-delay: -2.9s;
+}
+.murmur-mark[data-still] .mm-eyes {
+  animation: none;
+}
+
+/* Breathing: the two of them rise and settle together, pivoting on their feet. */
+.murmur-mark[data-breathe] {
+  transform-origin: 50% 93%;
+  animation: mm-breathe 5.2s ease-in-out infinite;
+}
+
+@keyframes mm-breathe {
+  0%,
+  100% {
+    transform: scale(1, 1);
+  }
+  50% {
+    transform: scale(0.994, 1.02);
+  }
+}
+
+@keyframes mm-blink {
+  0%,
+  91%,
+  96%,
+  100% {
+    transform: scaleY(1);
+  }
+  93.5% {
+    transform: scaleY(0.1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .murmur-mark .mm-eyes,
+  .murmur-mark[data-breathe] {
+    animation: none !important;
+  }
+}
+[data-motion='reduce'] .murmur-mark .mm-eyes,
+[data-motion='reduce'] .murmur-mark[data-breathe] {
+  animation: none !important;
+}
+
+/* theme='auto': follow the page's colour scheme. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .murmur-mark[data-theme='auto'] .mm-bg0 {
+    stop-color: #241d2e;
+  }
+  :root:not([data-theme='light']) .murmur-mark[data-theme='auto'] .mm-bg1 {
+    stop-color: #120f17;
+  }
+  :root:not([data-theme='light']) .murmur-mark[data-theme='auto'] :is(.mm-sh0, .mm-sh1, .mm-sh2) {
+    stop-color: #000;
+  }
+}
+:root[data-theme='dark'] .murmur-mark[data-theme='auto'] .mm-bg0 {
+  stop-color: #241d2e;
+}
+:root[data-theme='dark'] .murmur-mark[data-theme='auto'] .mm-bg1 {
+  stop-color: #120f17;
+}
+:root[data-theme='dark'] .murmur-mark[data-theme='auto'] :is(.mm-sh0, .mm-sh1, .mm-sh2) {
+  stop-color: #000;
+}
+
+/* ── Wordmark ────────────────────────────────────────────────────────────── */
+/* Lowercase "murmur" in Inter 600: heavy enough to sit with the plump mark,
+   light enough to stay crisp at 14px. Display-tight tracking stands in for
+   Inter's optical size axis (the app loads the wght-only cut). The word's
+   baseline sits on the buddies' feet; its x-height lands at their eyes. */
+
+.murmur-wordmark {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: calc(var(--mw) * 0.26);
+  color: inherit;
+  line-height: 1;
+}
+.murmur-wordmark-mark {
+  /* The bare mark's feet sit 7% above its box bottom. */
+  margin-bottom: calc(var(--mw) * -0.005);
+}
+.murmur-wordmark-word {
+  font-family: var(--font-sans);
+  font-size: calc(var(--mw) * 0.94);
+  font-weight: 600;
+  letter-spacing: -0.042em;
+  line-height: 1;
+  /* Pull the word down so its baseline meets the feet. Inter's baseline
+     sits 0.137em above a line-height-1 box (0.129 × mw at 0.94); the feet
+     sit 0.062 × mw above the mark's box: −0.066 closes the gap. */
+  margin-bottom: calc(var(--mw) * -0.066);
+  font-feature-settings: 'ss01', 'cv11';
+  white-space: nowrap;
+}
+
+/* ── By Umbrel ───────────────────────────────────────────────────────────── */
+
+.by-umbrel {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3em;
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 0.75rem;
+  line-height: 1rem;
+  letter-spacing: 0;
+  color: var(--ink-3);
+}
+.by-umbrel > svg {
+  margin-right: 0.15em;
+}
+.by-umbrel-name {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--ink-2);
+}
+.by-umbrel-link {
+  position: relative;
+  font-weight: 500;
+  color: var(--ink-2);
+  text-decoration: none;
+  border-radius: 4px;
+  background-image: linear-gradient(currentColor, currentColor);
+  background-size: 0% 1px;
+  background-position: 0 100%;
+  background-repeat: no-repeat;
+  transition:
+    background-size 200ms var(--ease-out),
+    color 150ms ease;
+}
+@media (hover: hover) and (pointer: fine) {
+  .by-umbrel-link:hover {
+    color: var(--ink);
+    background-size: 100% 1px;
+  }
+}
+/* A caption-sized link still gets a thumb-sized target on touch screens. */
+@media (pointer: coarse) {
+  .by-umbrel-link::after {
+    content: '';
+    position: absolute;
+    inset: -14px -8px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .by-umbrel-link {
+    transition: none;
+  }
+}

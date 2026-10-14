@@ -1,0 +1,23 @@
+// Per-chat model switch on a live session (no inference call). TEST profile only.
+import { rest, gw, show, sleep } from './models-lib.mjs';
+const P = process.env.PROFILE || 'murmur-test-models';
+if (!P.startsWith('murmur-test-')) throw new Error('refusing: test profiles only');
+show(`PUT /api/profiles/${P}/model (profile default)`, await rest('PUT', `/api/profiles/${P}/model`, { provider: 'openai-codex', model: 'gpt-6.1-sol' }));
+const g = await gw();
+const c = await g.call('session.create', { profile: P });
+const sid = c.result.session_id;
+show('session.create {profile} -> info', c.result.info);
+const sw = await g.call('config.set', { key: 'model', value: 'gpt-5.5 --provider openai-codex --session', session_id: sid, profile: P });
+show('config.set model "gpt-5.5 --provider openai-codex --session"', sw);
+await sleep(800);
+const infos = g.events.filter((f) => f.params?.type === 'session.info' && f.params?.session_id === sid);
+const last = infos.at(-1)?.params?.payload;
+show('session.info after switch (subset)', last && { model: last.model, provider: last.provider, reasoning_effort: last.reasoning_effort, reasoning_effort_wire: last.reasoning_effort_wire });
+show('config.set reasoning=max on gpt-5.5 (legacy codex: no max)', await g.call('config.set', { key: 'reasoning', value: 'max', session_id: sid, profile: P }));
+await sleep(500);
+const last2 = g.events.filter((f) => f.params?.type === 'session.info' && f.params?.session_id === sid).at(-1)?.params?.payload;
+show('session.info after reasoning=max', last2 && { model: last2.model, reasoning_effort: last2.reasoning_effort, reasoning_effort_wire: last2.reasoning_effort_wire });
+show('GET /api/model/info?profile (profile default unchanged)', await rest('GET', `/api/model/info?profile=${P}`));
+show('config.set model with no session (sessionless)', await g.call('config.set', { key: 'model', value: 'gpt-5.5 --provider openai-codex', profile: P }));
+show('session.close', await g.call('session.close', { session_id: sid }));
+g.close();

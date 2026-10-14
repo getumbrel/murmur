@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <title>Murmur · Buddy</title>
+    <style>
+      /* Throwaway preview only: lets the page force light or dark over the
+         system setting by re-declaring the app's tokens. */
+      html[data-theme='light'] {
+        --bg: #fbfbfa;
+        --bg-elevated: #ffffff;
+        --bg-sunken: #f3f3f1;
+        --ink: #0e0e10;
+        --ink-2: rgb(14 14 16 / 0.66);
+        --ink-3: rgb(14 14 16 / 0.58);
+        --fill-1: rgb(0 0 0 / 0.035);
+        --fill-2: rgb(0 0 0 / 0.06);
+        --fill-3: rgb(0 0 0 / 0.1);
+        --line: rgb(0 0 0 / 0.08);
+        --line-strong: rgb(0 0 0 / 0.14);
+        --glass: rgb(251 251 250 / 0.72);
+        --shadow-color: 220 10% 20%;
+        --accent: oklch(0.54 0.19 var(--hue));
+        --accent-soft: oklch(0.54 0.19 var(--hue) / 0.1);
+        --accent-ink: #fff;
+        --user-bubble: oklch(0.955 0.012 var(--hue));
+        --warning: oklch(0.62 0.16 62);
+        color-scheme: light;
+      }
+      html[data-theme='dark'] {
+        --bg: #0b0b0c;
+        --bg-elevated: #161618;
+        --bg-sunken: #070708;
+        --ink: #f5f5f6;
+        --ink-2: rgb(245 245 246 / 0.66);
+        --ink-3: rgb(245 245 246 / 0.5);
+        --fill-1: rgb(255 255 255 / 0.045);
+        --fill-2: rgb(255 255 255 / 0.075);
+        --fill-3: rgb(255 255 255 / 0.12);
+        --line: rgb(255 255 255 / 0.08);
+        --line-strong: rgb(255 255 255 / 0.14);
+        --glass: rgb(11 11 12 / 0.7);
+        --shadow-color: 0 0% 0%;
+        --accent: oklch(0.72 0.16 var(--hue));
+        --accent-soft: oklch(0.72 0.16 var(--hue) / 0.14);
+        --accent-ink: #0b0b0c;
+        --user-bubble: oklch(0.25 0.03 var(--hue));
+        --warning: oklch(0.8 0.15 75);
+        color-scheme: dark;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/buddy-main.tsx"></script>
+  </body>
+</html>

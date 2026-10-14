@@ -1,0 +1,71 @@
+// Is there a model Hermes can think with? Hermes Desktop asks the same
+// question with setup.runtime_check; its `ok` is authoritative.
+
+import { useQuery } from '@tanstack/react-query'
+import { create } from 'zustand'
+import { rpc, useConnection } from '@/hermes/gateway'
+
+export type RuntimeCheck = { ok: boolean; provider?: string; model?: string; source?: string; error?: string }
+
+export const readinessKey = (profile?: string) => ['readiness', profile ?? 'default'] as const
+
+export function useRuntimeCheck(profile?: string) {
+  return useQuery({
+    queryKey: readinessKey(profile),
+    queryFn: async () => {
+      const params = profile ? { profile } : {}
+      try {
+        return await rpc<RuntimeCheck>('setup.runtime_check', params, 20_000)
+      } catch {
+        // Older or busy backends: the boot record is the next best answer.
+        const s = await rpc<{ provider_configured?: boolean }>('setup.status', params, 10_000)
+        return { ok: !!s.provider_configured }
+      }
+    },
+    staleTime: 60_000,
+  })
+}
+
+// Give up waiting after a few seconds so a missing Hermes shows the app (and
+// the connection banner) instead of an endless splash.
+const useBoot = create(() => ({ late: false }))
+setTimeout(() => useBoot.setState({ late: true }), 6000)
+
+// The welcome plays once per browser.
+const WELCOMED = 'murmur:welcomed'
+const useWelcomedStore = create(() => {
+  try {
+    return { welcomed: localStorage.getItem(WELCOMED) === '1' }
+  } catch {
+    return { welcomed: false }
+  }
+})
+export const useWelcomed = () => useWelcomedStore((s) => s.welcomed)
+export function markWelcomed() {
+  try {
+    localStorage.setItem(WELCOMED, '1')
+  } catch {
+    // Private mode: it just plays again next time.
+  }
+  useWelcomedStore.setState({ welcomed: true })
+}
+
+/**
+ * - `loading`: still asking (the splash shows).
+ * - `ready`: the main agent can think, and this browser has seen the welcome.
+ * - `needs-welcome`: ready, but first visit here.
+ * - `needs-setup`: no model yet.
+ * - `unknown`: Hermes didn't answer in time; show the app and let the banner explain.
+ */
+export type Readiness = 'loading' | 'ready' | 'needs-welcome' | 'needs-setup' | 'unknown'
+
+export function useReadiness(): Readiness {
+  const { data, isPending, isError } = useRuntimeCheck()
+  const late = useBoot((s) => s.late)
+  const open = useConnection((s) => s.state === 'open')
+  const welcomed = useWelcomed()
+  if (isPending) return late && !open ? 'unknown' : 'loading'
+  if (isError || !data) return 'unknown'
+  if (!data.ok) return 'needs-setup'
+  return welcomed ? 'ready' : 'needs-welcome'
+}

@@ -1,0 +1,587 @@
+// Dev-only playground: Thread + Composer with fake data and simulated
+// streaming, so the chat can be designed and reviewed without Hermes.
+// Scenes: ?scene=solo | live | group | empty | media | cards | errors. Sending anything plays a reply.
+// (media shows files from the connected Hermes: /opt/data/murmur-media-test.)
+
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
+import { Orb, OrbStack } from '@/ui/orb'
+import { Segmented } from '@/ui/segmented'
+import type { ApprovalChoice, ChatItem, Speaker } from './types'
+import { ErrorNote, Thread } from './thread'
+import { Toaster, toast } from 'sonner'
+import { ERROR_ACTION_LABEL, explainError } from './errors'
+import { Composer, useKeyboardInset } from './composer'
+import { toolLabel } from './tool-labels'
+
+const ATLAS: Speaker = { id: 'atlas', name: 'Atlas', hue: 278 }
+const JUNIPER: Speaker = { id: 'juniper', name: 'Juniper', hue: 160 }
+const WREN: Speaker = { id: 'wren', name: 'Wren', hue: 28 }
+
+type Scene = 'solo' | 'live' | 'group' | 'empty' | 'media' | 'cards' | 'errors'
+
+let n = 0
+const uid = (p: string) => `${p}-${++n}`
+const T0 = Date.now() - 1000 * 60 * 20
+
+function tool(name: string, args: object, at: number, took: number, speaker?: Speaker): ChatItem {
+  const { label, detail } = toolLabel(name, args)
+  return {
+    kind: 'tool',
+    id: uid('tool'),
+    name,
+    label,
+    detail,
+    status: 'done',
+    startedAt: at,
+    endedAt: at + took,
+    speaker,
+  }
+}
+
+const PHOTO = `data:image/svg+xml;utf8,${encodeURIComponent(
+  `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"><defs><linearGradient id="s" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f6c28b"/><stop offset="1" stop-color="#e98a6b"/></linearGradient></defs><rect width="400" height="300" fill="url(#s)"/><circle cx="290" cy="120" r="34" fill="#fff3d6"/><path d="M0 210 L90 140 L170 200 L250 130 L400 230 L400 300 L0 300Z" fill="#6b4a63"/><path d="M0 250 L120 190 L220 250 L320 200 L400 250 L400 300 L0 300Z" fill="#3e2d48"/></svg>`,
+)}`
+
+const RUST_ANSWER = `Short version: return \`Result\` from every async function, use \`?\` to bubble errors up, and give your app **one error type** with [\`thiserror\`](https://docs.rs/thiserror) (libraries) or \`anyhow\` (apps).
+
+### A small example
+
+\`\`\`rust
+use anyhow::{Context, Result};
+
+async fn fetch_profile(id: u64) -> Result<Profile> {
+    let res = reqwest::get(format!("https://api.example.com/u/{id}"))
+        .await
+        .context("couldn't reach the profile service")?;
+
+    let profile = res.json::<Profile>().await?;
+    Ok(profile)
+}
+\`\`\`
+
+A few things worth knowing:
+
+1. \`?\` works in async functions exactly like in sync ones.
+2. Add \`.context(...)\` where a failure would otherwise be a mystery.
+3. Errors inside \`tokio::spawn\` come back as a \`JoinError\`, so check both layers.
+
+| Crate | Best for | Adds context |
+|---|---|---|
+| anyhow | Apps and scripts | Yes |
+| thiserror | Libraries | You define it |
+| eyre | Apps with rich reports | Yes |
+
+If you tell me what you're building, I can sketch the error type for it.`
+
+const WEEKEND = `Here’s a relaxed plan for **Saturday in Lisbon**:
+
+- **Morning:** pastéis de nata at Manteigaria, then a slow walk up through Alfama.
+- **Afternoon:** tram 28 to Estrela, coffee in the garden.
+- **Evening:** sunset at Miradouro da Senhora do Monte.
+
+Want me to book a table for dinner?`
+
+function soloHistory(pending: boolean): ChatItem[] {
+  const t = T0
+  const items: ChatItem[] = [
+    {
+      kind: 'user',
+      id: uid('u'),
+      text: 'What’s the cleanest way to handle errors in async Rust? An example would help.',
+      at: t,
+    },
+    {
+      kind: 'thinking',
+      id: uid('th'),
+      text: 'They want idiomatic async error handling. The answer is mostly the same as sync Rust: Result and the ? operator. Worth mentioning anyhow vs thiserror, and the JoinError gotcha with tokio::spawn. A short code sample plus a comparison table should cover it without overwhelming them.',
+      streaming: false,
+      startedAt: t + 1000,
+      endedAt: t + 9000,
+    },
+    tool('web_search', { query: 'rust async error handling best practices' }, t + 9000, 2100),
+    tool('web_extract', { urls: ['https://tokio.rs/tokio/tutorial/spawning'] }, t + 11200, 1400),
+    tool('read_file', { path: '/home/umbrel/notes/rust.md' }, t + 12700, 300),
+    { kind: 'assistant', id: uid('a'), text: RUST_ANSWER, streaming: false, at: t + 13500 },
+    { kind: 'user', id: uid('u'), text: 'Where was this taken?', images: [PHOTO], at: t + 60_000 },
+    tool('vision_analyze', {}, t + 61_000, 3200),
+    {
+      kind: 'assistant',
+      id: uid('a'),
+      text: 'It looks like dusk over layered hills, with a low sun and warm haze. There’s no landmark to pin it down, but the light suggests late summer.',
+      streaming: false,
+      at: t + 65_000,
+    },
+    { kind: 'user', id: uid('u'), text: 'Clear out the old build caches, they’re taking up space.', at: t + 120_000 },
+    tool('terminal', { command: 'du -sh /tmp/build-cache' }, t + 121_000, 900),
+    {
+      kind: 'approval',
+      id: uid('ap'),
+      requestId: 'r1',
+      title: 'Atlas wants to delete files',
+      command: 'rm -rf /tmp/build-cache',
+      choices: ['once', 'session', 'always', 'deny'],
+      status: 'approved',
+      choice: 'once',
+    },
+    tool('terminal', { command: 'rm -rf /tmp/build-cache' }, t + 126_000, 1200),
+    { kind: 'assistant', id: uid('a'), text: 'Done. That freed up **1.2 GB**.', streaming: false, at: t + 128_000 },
+  ]
+  if (pending) {
+    items.push(
+      { kind: 'user', id: uid('u'), text: 'Can you update the server too?', at: t + 200_000 },
+      tool('terminal', { command: 'apt list --upgradable' }, t + 201_000, 2400),
+      {
+        kind: 'approval',
+        id: uid('ap'),
+        requestId: 'r2',
+        title: 'Atlas wants to run a command',
+        command:
+          'sudo apt-get update && sudo apt-get upgrade -y --with-new-pkgs -o Dpkg::Options::="--force-confold" && sudo systemctl restart umbrel-app-proxy nginx docker',
+        choices: ['once', 'session', 'always', 'deny'],
+        status: 'pending',
+      },
+    )
+  }
+  return items
+}
+
+function groupHistory(): ChatItem[] {
+  const t = T0
+  return [
+    { kind: 'user', id: uid('u'), text: 'Let’s plan a weekend in Lisbon. Ideas?', at: t },
+    tool('web_search', { query: 'lisbon weekend october' }, t + 1000, 1800, JUNIPER),
+    { kind: 'assistant', id: uid('a'), text: WEEKEND, streaming: false, at: t + 4000, speaker: JUNIPER },
+    tool('session_search', { query: 'lisbon' }, t + 6000, 700, WREN),
+    {
+      kind: 'assistant',
+      id: uid('a'),
+      text: 'Last time you mentioned you’re vegetarian, so I’d swap dinner for **Ao 26**. They do a lovely tasting menu.',
+      streaming: false,
+      at: t + 8000,
+      speaker: WREN,
+    },
+    {
+      kind: 'assistant',
+      id: uid('a'),
+      text: 'I can keep an eye on flight prices. Before I do:',
+      streaming: false,
+      at: t + 10_000,
+      speaker: ATLAS,
+    },
+    {
+      kind: 'clarify',
+      id: uid('cl'),
+      requestId: 'c1',
+      status: 'pending',
+      speaker: ATLAS,
+      questions: [
+        {
+          qid: 'from',
+          question: 'Which airport are you flying from?',
+          choices: ['London Heathrow', 'Gatwick', 'Stansted'],
+        },
+        { qid: 'when', question: 'Which days work?', choices: ['Fri – Sun', 'Sat – Mon', 'Thu – Sun'], multi: true },
+      ],
+    },
+  ]
+}
+
+// ── Simulated agent ──────────────────────────────────────────────────────────
+
+type Step = { wait: number; run: (items: ChatItem[]) => ChatItem[] }
+
+function replyScript(speaker?: Speaker): Step[] {
+  const thinkId = uid('th')
+  const t1 = uid('tool')
+  const t2 = uid('tool')
+  const aId = uid('a')
+  const now = () => Date.now()
+  const reasoning =
+    'Let me look up current guidance first, then check the official docs so the example compiles on the latest version.'
+  const steps: Step[] = [
+    {
+      wait: 500,
+      run: (it) => [...it, { kind: 'thinking', id: thinkId, text: '', streaming: true, startedAt: now(), speaker }],
+    },
+  ]
+  for (const chunk of reasoning.match(/.{1,6}/g) ?? []) {
+    steps.push({
+      wait: 40,
+      run: (it) => it.map((i) => (i.id === thinkId && i.kind === 'thinking' ? { ...i, text: i.text + chunk } : i)),
+    })
+  }
+  const done =
+    (id: string) =>
+    (it: ChatItem[]): ChatItem[] =>
+      it.map((i) => {
+        if (i.id !== id) return i
+        if (i.kind === 'tool') return { ...i, status: 'done', endedAt: now() }
+        if (i.kind === 'thinking') return { ...i, streaming: false, endedAt: now() }
+        return i
+      })
+  const start = (id: string, name: string, args: object) => (it: ChatItem[]) => {
+    const { label, detail } = toolLabel(name, args)
+    return [...it, { kind: 'tool', id, name, label, detail, status: 'running', startedAt: now(), speaker } as ChatItem]
+  }
+  steps.push(
+    { wait: 300, run: done(thinkId) },
+    { wait: 200, run: start(t1, 'web_search', { query: 'rust async error handling' }) },
+    { wait: 2200, run: done(t1) },
+    { wait: 300, run: start(t2, 'browser_navigate', { url: 'https://docs.rs/anyhow/latest/anyhow/' }) },
+    { wait: 1800, run: done(t2) },
+    { wait: 500, run: (it) => [...it, { kind: 'assistant', id: aId, text: '', streaming: true, at: now(), speaker }] },
+  )
+  for (const chunk of RUST_ANSWER.match(/[\s\S]{1,5}/g) ?? []) {
+    steps.push({
+      wait: 18,
+      run: (it) => it.map((i) => (i.id === aId && i.kind === 'assistant' ? { ...i, text: i.text + chunk } : i)),
+    })
+  }
+  steps.push({
+    wait: 100,
+    run: (it) => it.map((i) => (i.id === aId && i.kind === 'assistant' ? { ...i, streaming: false } : i)),
+  })
+  return steps
+}
+
+function useSimulation(initial: () => ChatItem[]) {
+  const [items, setItems] = useState(initial)
+  const [busy, setBusy] = useState(false)
+  const timer = useRef<number | undefined>(undefined)
+
+  const stop = useCallback(() => {
+    window.clearTimeout(timer.current)
+    setBusy(false)
+    setItems((it) =>
+      it.map((i) =>
+        i.kind === 'assistant' && i.streaming
+          ? { ...i, streaming: false }
+          : i.kind === 'tool' && i.status === 'running'
+            ? { ...i, status: 'error', endedAt: Date.now() }
+            : i,
+      ),
+    )
+  }, [])
+
+  const play = useCallback((steps: Step[]) => {
+    window.clearTimeout(timer.current)
+    setBusy(true)
+    let i = 0
+    const tick = () => {
+      const step = steps[i++]
+      if (!step) return setBusy(false)
+      timer.current = window.setTimeout(() => {
+        setItems(step.run)
+        tick()
+      }, step.wait)
+    }
+    tick()
+  }, [])
+
+  useEffect(() => () => window.clearTimeout(timer.current), [])
+  return { items, setItems, busy, setBusy, play, stop }
+}
+
+function Chat({ scene }: { scene: Scene }) {
+  const group = scene === 'group'
+  const { items, setItems, busy, setBusy, play, stop } = useSimulation(() =>
+    scene === 'solo'
+      ? soloHistory(true)
+      : scene === 'live'
+        ? [
+            ...soloHistory(false).slice(0, 9),
+            { kind: 'user', id: uid('u'), text: 'Show me async error handling in Rust again?', at: Date.now() },
+          ]
+        : scene === 'group'
+          ? groupHistory()
+          : scene === 'media'
+            ? mediaHistory()
+            : scene === 'cards'
+              ? cardsHistory()
+              : [],
+  )
+  const inset = useKeyboardInset()
+
+  useEffect(() => {
+    if (scene === 'solo' || scene === 'group') setBusy(true)
+    if (scene === 'live') play(replyScript())
+  }, [scene, play, setBusy])
+
+  const send = (text: string, files: File[]) => {
+    const images = files.map((f) => URL.createObjectURL(f))
+    setItems((it) => [...it, { kind: 'user', id: uid('u'), text, images, at: Date.now() }])
+    play(replyScript(group ? JUNIPER : undefined))
+  }
+
+  const approve = (requestId: string, choice: ApprovalChoice) => {
+    window.setTimeout(() => {
+      setItems((it) =>
+        it.map((i) =>
+          i.kind === 'approval' && i.requestId === requestId
+            ? { ...i, status: choice === 'deny' ? 'denied' : 'approved', choice }
+            : i,
+        ),
+      )
+      if (choice === 'deny') {
+        setBusy(false)
+        setItems((it) => [
+          ...it,
+          {
+            kind: 'assistant',
+            id: uid('a'),
+            text: 'No problem, I’ll leave the server as it is.',
+            streaming: false,
+            at: Date.now(),
+          },
+        ])
+      } else {
+        const a = uid('tool')
+        play([
+          {
+            wait: 200,
+            run: (it) => [
+              ...it,
+              {
+                ...(tool('terminal', { command: 'sudo apt-get upgrade -y' }, Date.now(), 0) as Extract<
+                  ChatItem,
+                  { kind: 'tool' }
+                >),
+                id: a,
+                status: 'running',
+                endedAt: undefined,
+              },
+            ],
+          },
+          {
+            wait: 2600,
+            run: (it) =>
+              it.map((i) => (i.id === a && i.kind === 'tool' ? { ...i, status: 'done', endedAt: Date.now() } : i)),
+          },
+          {
+            wait: 400,
+            run: (it) => [
+              ...it,
+              {
+                kind: 'assistant',
+                id: uid('a'),
+                text: 'All up to date. **14 packages** were upgraded and the services restarted cleanly.',
+                streaming: false,
+                at: Date.now(),
+              },
+            ],
+          },
+        ])
+      }
+    }, 500)
+  }
+
+  const answer = (requestId: string, answers: Record<string, string>) => {
+    window.setTimeout(() => {
+      setItems((it) =>
+        it.map((i) => (i.kind === 'clarify' && i.requestId === requestId ? { ...i, status: 'answered', answers } : i)),
+      )
+      play([
+        {
+          wait: 600,
+          run: (it) => [
+            ...it,
+            {
+              kind: 'assistant',
+              id: uid('a'),
+              text: `Got it. I’ll watch fares from **${answers.from}** and let you know when they dip.`,
+              streaming: false,
+              at: Date.now(),
+              speaker: ATLAS,
+            },
+          ],
+        },
+      ])
+    }, 500)
+  }
+
+  const retry = () => {
+    setItems((it) => {
+      const lastUser = it.findLastIndex((i) => i.kind === 'user')
+      return it.slice(0, lastUser + 1)
+    })
+    play(replyScript(group ? JUNIPER : undefined))
+  }
+
+  const agentHue = group ? undefined : ATLAS.hue
+
+  return (
+    <div className="flex h-dvh flex-col" style={agentHue ? ({ '--hue': agentHue } as CSSProperties) : undefined}>
+      <header className="glass hairline-b safe-top relative z-20 flex-none">
+        <div className="mx-auto flex h-14 max-w-[720px] items-center gap-3 px-4 sm:px-6">
+          {group ? (
+            <OrbStack hues={[ATLAS.hue, JUNIPER.hue, WREN.hue]} seeds={['atlas', 'juniper', 'wren']} size={32} />
+          ) : (
+            <Orb hue={ATLAS.hue} size={32} seed="atlas" state={busy ? 'working' : 'idle'} />
+          )}
+          <div className="min-w-0 flex-1">
+            <h1 className="truncate text-subhead font-semibold tracking-[-0.01em]">
+              {group ? 'Weekend plans' : 'Atlas'}
+            </h1>
+            <p className="truncate text-caption text-ink-3">
+              {group ? 'Atlas, Juniper and Wren' : busy ? 'Working…' : 'Here for you'}
+            </p>
+          </div>
+        </div>
+      </header>
+      <Thread
+        className="flex-1"
+        items={items}
+        busy={busy}
+        agent={group ? undefined : ATLAS}
+        onApprove={approve}
+        onAnswer={answer}
+        onRetry={retry}
+        emptyState={
+          <div className="flex flex-col items-center gap-4 pb-16 text-center">
+            <Orb hue={ATLAS.hue} size={96} seed="atlas" />
+            <div>
+              <h2 className="text-title font-semibold tracking-[-0.02em]">Atlas</h2>
+              <p className="mt-1 max-w-72 text-subhead text-balance text-ink-2">
+                Ask anything. I can search, read and get things done.
+              </p>
+            </div>
+          </div>
+        }
+        footer={
+          <div style={{ paddingBottom: inset }}>
+            <Composer
+              onSend={send}
+              onStop={stop}
+              busy={busy}
+              draftKey={`playground-${scene}`}
+              placeholder={group ? 'Message the group' : 'Message Atlas'}
+              // Dictation transcribes with the main agent's speech settings.
+              voice="default"
+            />
+          </div>
+        }
+      />
+    </div>
+  )
+}
+
+const MEDIA_DIR = '/opt/data/murmur-media-test'
+
+function mediaHistory(): ChatItem[] {
+  const at = T0
+  return [
+    {
+      kind: 'user',
+      id: uid('u'),
+      text: 'Here’s the photo and my notes',
+      at,
+      attachments: [
+        { kind: 'image', name: 'sunny.png', path: `${MEDIA_DIR}/sunny.png` },
+        { kind: 'file', name: 'list.md', path: `${MEDIA_DIR}/list.md`, size: 47 },
+      ],
+    },
+    {
+      kind: 'assistant',
+      id: uid('a'),
+      at,
+      streaming: false,
+      text: `Here’s everything, all in one place.\n\nMEDIA:${MEDIA_DIR}/sunny.png\n\nA short clip:\n\nMEDIA:${MEDIA_DIR}/clip.mp4\n\nAnd the tone: MEDIA:${MEDIA_DIR}/tone.mp3\n\nYour files:\n\nMEDIA:${MEDIA_DIR}/list.md\nMEDIA:${MEDIA_DIR}/data.json\nMEDIA:${MEDIA_DIR}/bundle.zip\n\nA remote one too:\n\n![A mountain lake](https://picsum.photos/id/1018/800/500)\n\n::preview{file="/opt/data/fruits-chart.html"}`,
+    },
+  ]
+}
+
+/** The quieter pieces of a thread: a notice, a side question, a command's output, an error. */
+function cardsHistory(): ChatItem[] {
+  const at = T0
+  return [
+    { kind: 'notice', id: uid('n'), text: 'Atlas switched to GPT‑6.1 Sol for this chat' },
+    { kind: 'user', id: uid('u'), text: 'Find me a quiet café near Alfama with good Wi‑Fi', at },
+    { kind: 'assistant', id: uid('a'), at, streaming: false, text: 'Try **Copenhagen Coffee Lab** on Rua Nova da Piedade: calm, big tables and fast Wi‑Fi.' },
+    {
+      kind: 'aside',
+      id: uid('s'),
+      question: 'Do they take cards?',
+      answer: 'Yes, cards and Apple Pay. There’s no minimum spend.',
+      status: 'done',
+    },
+    {
+      kind: 'command',
+      id: uid('c'),
+      command: '/usage',
+      output: 'Today        12 replies   48 steps\nThis week    61 replies  233 steps\nThis month  240 replies  911 steps',
+      status: 'done',
+    },
+    { kind: 'user', id: uid('u'), text: 'https://www.example.com/a/really/long/link/that/keeps/going/and/going/without/any/spaces/at/all?ref=murmur', at },
+    { kind: 'error', id: uid('e'), message: 'Atlas couldn’t finish that reply. The connection dropped partway through.', retryable: true },
+  ]
+}
+
+const SCENES: { value: Scene; label: string }[] = [
+  { value: 'media', label: 'Media' },
+  { value: 'solo', label: 'Solo' },
+  { value: 'live', label: 'Live' },
+  { value: 'group', label: 'Group' },
+  { value: 'empty', label: 'Empty' },
+  { value: 'cards', label: 'Cards' },
+  { value: 'errors', label: 'Errors' },
+]
+
+/** Raw errors as Hermes passes them on, and what Murmur says instead. */
+const RAW_ERRORS = [
+  'Error code: 401 - {"error": {"message": "Incorrect API key provided: sk-proj-***", "code": "invalid_api_key"}}',
+  'anthropic.AuthenticationError: invalid x-api-key',
+  'Error code: 429 - {"error": {"message": "You exceeded your current quota, please check your plan and billing details.", "code": "insufficient_quota"}}',
+  'Your credit balance is too low to access the Anthropic API.',
+  "This model's maximum context length is 128000 tokens. However, your messages resulted in 130512 tokens.",
+  'prompt is too long: 210000 tokens > 200000 maximum',
+  'Rate limit reached for gpt-4o on tokens per min. Please try again in 6s.',
+  'Tool crashed: unexpected EOF while parsing\nTraceback (most recent call last): …',
+]
+
+function ErrorsGallery() {
+  return (
+    <div className="hue-scope min-h-dvh bg-bg" style={{ '--hue': ATLAS.hue } as CSSProperties}>
+      <div className="mx-auto max-w-[736px] space-y-6 px-4 pt-[calc(env(safe-area-inset-top)+24px)] pb-16 sm:px-6">
+        <h1 className="text-title font-semibold tracking-[-0.02em]">Errors</h1>
+        {RAW_ERRORS.map((raw) => {
+          const { text, action } = explainError(raw)
+          return (
+            <section key={raw} className="space-y-2">
+              <p className="font-mono text-caption break-words text-ink-3">
+                {raw.split('\n')[0]}
+                <span className="ml-2 font-sans font-medium text-ink-2">→ {action ? ERROR_ACTION_LABEL[action] : 'no action'}</span>
+              </p>
+              <ErrorNote
+                item={{ kind: 'error', id: raw, message: text, retryable: true }}
+                onRetry={() => toast('Trying again')}
+                onAction={(a) => toast(ERROR_ACTION_LABEL[a])}
+              />
+            </section>
+          )
+        })}
+      </div>
+      <Toaster position="top-center" toastOptions={{ className: 'murmur-toast' }} />
+    </div>
+  )
+}
+
+export function Playground() {
+  const [scene, setScene] = useState<Scene>(() => {
+    const s = new URLSearchParams(location.search).get('scene')
+    return SCENES.some((o) => o.value === s) ? (s as Scene) : 'live'
+  })
+  const pick = (s: Scene) => {
+    history.replaceState(null, '', `?scene=${s}`)
+    setScene(s)
+  }
+  return (
+    <>
+      {scene === 'errors' ? <ErrorsGallery /> : <Chat key={scene} scene={scene} />}
+      {!new URLSearchParams(location.search).has('bare') && (
+        <div className="fixed top-[calc(env(safe-area-inset-top)+10px)] right-3 z-30 hidden sm:block">
+          <Segmented value={scene} options={SCENES} onChange={pick} className="glass shadow-float" />
+        </div>
+      )}
+    </>
+  )
+}

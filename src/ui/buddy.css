@@ -1,0 +1,1252 @@
+/* The Buddy: every agent's face (src/ui/buddy.tsx).
+
+   Layers, outside in. Each one owns exactly one kind of motion so they stack
+   without fighting over `transform`:
+
+   .buddy          the size × size box. Colour vars live here.
+     .buddy-glow     state halo behind everything (waiting, speaking)
+     .buddy-shadow   contact shadow on the floor; shrinks when it hops
+     .buddy-pose     the state's held pose (lean, slump, perk). Springs between states.
+       .buddy-act      the state's loop (hop, sway, bob, talk) or one-shot (joy, shiver)
+         .buddy-breath   always-on breathing
+           svg            the body, painted once
+           .buddy-face → .buddy-look → .buddy-eye → .buddy-blink → pill | arc
+
+   Everything pivots on the feet (50% 91%). Only transform and opacity animate. */
+
+.buddy {
+  --s: 44px;
+  --h: 278;
+  --l: 0.66;
+  --c: 0.19;
+  --base: oklch(var(--l) var(--c) var(--h));
+  --rim: oklch(0.98 0.03 var(--h));
+  --bounce: color-mix(in oklab, var(--base) 55%, oklch(0.93 0.06 var(--h)));
+  --eye: oklch(0.25 0.07 var(--h));
+  /* State pose (consumed by .buddy-pose) */
+  --p-rot: 0deg;
+  --p-sx: 1;
+  --p-sy: 1;
+  --p-y: 0%;
+  /* State gaze (consumed by .buddy-face), as fractions of --s */
+  --g-x: 0;
+  --g-y: 0;
+  --e-sx: 1;
+  --e-sy: 1;
+  --e-rot: 0deg;
+
+  position: relative;
+  display: block;
+  flex: none;
+  width: var(--s);
+  height: var(--s);
+  isolation: isolate;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.buddy-pose,
+.buddy-act,
+.buddy-breath,
+.buddy-face,
+.buddy-look {
+  position: absolute;
+  inset: 0;
+  display: block;
+  transform-origin: 50% 91%;
+}
+
+.buddy-body {
+  position: absolute;
+  inset: 0;
+  display: block;
+  overflow: visible;
+}
+
+/* ── Paint ───────────────────────────────────────────────────────────────── */
+
+/* Warm key light from the upper left, cool shadow underneath: highlights mix
+   toward a warm white, shadows toward a deep indigo, so every hue gets the
+   same soft-toy lighting. OKLCH keeps every hue at the same brightness. */
+.buddy .bd-hi {
+  stop-color: color-mix(in oklab, var(--base) 42%, oklch(0.97 0.045 60));
+}
+.buddy .bd-mid {
+  stop-color: var(--base);
+}
+.buddy .bd-lo {
+  stop-color: color-mix(in oklab, oklch(from var(--base) calc(l - 0.13) calc(c * 1.06) h) 86%, oklch(0.42 0.15 285));
+}
+.buddy .bd-f-shade {
+  flood-color: color-mix(in oklab, oklch(from var(--base) calc(l - 0.3) calc(c * 0.95) h) 85%, oklch(0.3 0.12 285));
+  flood-opacity: 0.5;
+}
+/* Light bounced up off the floor along the lower edge. */
+.buddy .bd-f-bounce {
+  flood-color: var(--bounce);
+  flood-opacity: 0.4;
+}
+.buddy .bd-f-rim {
+  flood-color: var(--rim);
+  flood-opacity: 0.38;
+}
+
+.buddy .bd-stalk {
+  stroke: oklch(calc(var(--l) - 0.1) calc(var(--c) * 1.05) calc(var(--h) + 8));
+}
+.buddy .bd-leaf {
+  fill: oklch(min(calc(var(--l) + 0.06), 0.92) calc(var(--c) * 1.05) calc(var(--h) - 4));
+}
+.buddy .bd-leaf-2 {
+  fill: oklch(min(calc(var(--l) + 0.12), 0.94) calc(var(--c) * 0.85) calc(var(--h) - 8));
+}
+.buddy .bd-tuft {
+  fill: oklch(min(calc(var(--l) + 0.1), 0.94) calc(var(--c) * 0.85) calc(var(--h) - 8));
+}
+.buddy .bd-bulb {
+  fill: oklch(min(calc(var(--l) + 0.08), 0.94) calc(var(--c) * 1.1) calc(var(--h) - 6));
+}
+.buddy .bd-bulb-shine {
+  fill: oklch(1 0 0 / 0.75);
+}
+
+
+/* ── Contact shadow & halo ───────────────────────────────────────────────── */
+
+.buddy-shadow {
+  position: absolute;
+  left: calc(50% - var(--bd-w) * 0.6);
+  width: calc(var(--bd-w) * 1.2);
+  top: 86.5%;
+  height: 9%;
+  border-radius: 50%;
+  background:
+    radial-gradient(closest-side, hsl(220 30% 18% / 0.34), hsl(220 30% 18% / 0.12) 55%, transparent 100%) 50% 50% /
+      78% 62% no-repeat,
+    radial-gradient(closest-side, oklch(0.4 0.08 var(--h) / 0.14), transparent);
+  transform-origin: 50% 50%;
+  pointer-events: none;
+}
+
+.buddy-glow {
+  position: absolute;
+  left: -14%;
+  top: calc(var(--bd-mid) - 64%);
+  width: 128%;
+  height: 128%;
+  border-radius: 50%;
+  opacity: 0;
+  transition: opacity 400ms var(--ease-out);
+  pointer-events: none;
+}
+
+/* ── Accessory, sheen, cheeks ────────────────────────────────────────────── */
+
+.buddy-acc {
+  position: absolute;
+  width: 20%;
+  height: 20%;
+  display: block;
+  transform-origin: 50% 100%;
+  animation: bd-acc-sway 5.2s ease-in-out infinite;
+  animation-delay: var(--bd-delay);
+  transition: transform 500ms var(--ease-spring);
+}
+.buddy[data-size='sm'] .buddy-acc {
+  /* Keep the silhouette, lose the fiddly bits. */
+  transform: scale(1.1);
+}
+.buddy[data-size='sm'] .bd-bulb-shine {
+  display: none;
+}
+
+/* An inner shimmer clipped to the body (thinking, working). */
+.buddy-sheen {
+  position: absolute;
+  inset: 0;
+  display: block;
+  overflow: hidden;
+  -webkit-mask: var(--bd-mask) 0 0 / 100% 100% no-repeat;
+  mask: var(--bd-mask) 0 0 / 100% 100% no-repeat;
+  opacity: 0;
+  transition: opacity 400ms var(--ease-out);
+  pointer-events: none;
+}
+.buddy-sheen > span {
+  position: absolute;
+  top: -10%;
+  bottom: -10%;
+  left: 0;
+  width: 46%;
+  display: block;
+  background: linear-gradient(
+    100deg,
+    transparent 0%,
+    oklch(0.98 0.04 var(--h) / 0.32) 45%,
+    oklch(1 0 0 / 0.42) 52%,
+    transparent 100%
+  );
+  transform: translateX(-110%) skewX(-12deg);
+}
+.buddy[data-size='xs'] .buddy-sheen,
+.buddy[data-size='xs'] .buddy-cheek {
+  display: none;
+}
+
+.buddy-cheek {
+  position: absolute;
+  display: block;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, oklch(0.78 0.14 12 / 0.75), oklch(0.78 0.14 12 / 0));
+  opacity: 0;
+  transform: scale(0.8);
+  transition:
+    opacity 360ms var(--ease-out),
+    transform 500ms var(--ease-spring);
+}
+.buddy[data-rosy] .buddy-cheek {
+  opacity: 0.38;
+  transform: none;
+}
+
+/* ── Pose & face ─────────────────────────────────────────────────────────── */
+
+.buddy-pose {
+  transform: translateY(var(--p-y)) rotate(calc(var(--bd-tilt) + var(--bd-lean, 0deg) + var(--p-rot)))
+    scale(var(--p-sx), var(--p-sy));
+  transition: transform 620ms var(--ease-spring);
+}
+
+.buddy-breath {
+  animation: bd-breathe var(--bd-breath) ease-in-out infinite;
+  animation-delay: var(--bd-delay);
+}
+
+.buddy-face {
+  transform: translate(
+    calc(var(--s) * (var(--g-x) + var(--bd-gaze-x, 0))),
+    calc(var(--s) * var(--g-y))
+  );
+  transition: transform 460ms var(--ease-out);
+}
+
+.buddy-look {
+  transform-origin: 50% 50%;
+  animation: bd-glance var(--bd-glance) ease-in-out infinite;
+  animation-delay: var(--bd-delay);
+}
+
+.buddy-eye {
+  position: absolute;
+  display: block;
+  transform: rotate(var(--e-rot)) scale(var(--e-sx), var(--e-sy));
+  transition: transform 320ms var(--ease-spring);
+}
+.buddy-eye-r {
+  --e-rot: calc(var(--e-rot-r, 0deg));
+}
+.buddy-eye-l {
+  --e-rot: calc(var(--e-rot-r, 0deg) * -1);
+}
+
+.buddy-blink {
+  position: absolute;
+  inset: 0;
+  display: block;
+  transform-origin: 50% 60%;
+  animation: bd-blink var(--bd-blink) ease-in-out infinite;
+  animation-delay: calc(var(--bd-delay) * 0.7);
+}
+.buddy[data-blink='double'] .buddy-blink {
+  animation-name: bd-blink-double;
+}
+
+/* A glossy pill, set a hair into the body. */
+.buddy-pill {
+  position: absolute;
+  inset: 0;
+  display: block;
+  border-radius: 9999px;
+  background: radial-gradient(
+    120% 90% at 40% 30%,
+    oklch(from var(--eye) calc(l + 0.08) c h) 0%,
+    var(--eye) 55%,
+    oklch(from var(--eye) calc(l - 0.06) c h) 100%
+  );
+  box-shadow:
+    0 calc(var(--s) * 0.006) calc(var(--s) * 0.004) oklch(1 0 0 / 0.28),
+    0 0 0 calc(var(--s) * 0.004) oklch(1 0 0 / 0.08);
+  transition:
+    opacity 220ms var(--ease-out),
+    transform 320ms var(--ease-spring);
+}
+.buddy-pill::after {
+  content: '';
+  position: absolute;
+  left: 26%;
+  top: 13%;
+  width: 34%;
+  height: 26%;
+  border-radius: 50%;
+  background: oklch(1 0 0 / 0.92);
+  transform: rotate(-12deg);
+}
+.buddy[data-size='xs'] .buddy-pill,
+.buddy[data-size='sm'] .buddy-pill {
+  box-shadow: none;
+  background: var(--eye);
+}
+.buddy[data-size='xs'] .buddy-pill::after,
+.buddy[data-size='sm'] .buddy-pill::after {
+  display: none;
+}
+
+/* Closed eyes: an arc the width of the pill and a bit. ∩ = happy, ∪ = asleep. */
+.buddy-arc {
+  position: absolute;
+  left: -55%;
+  width: 210%;
+  aspect-ratio: 1;
+  top: 6%;
+  display: block;
+  border-radius: 50%;
+  border: max(1.2px, calc(var(--s) * 0.026)) solid transparent;
+  border-top-color: var(--eye);
+  opacity: 0;
+  transform: scale(0.6);
+  transition:
+    opacity 200ms var(--ease-out),
+    transform 360ms var(--ease-spring);
+}
+
+/* ── States ──────────────────────────────────────────────────────────────── */
+
+/* Listening: leans in, head cocked, big attentive eyes looking down to the
+   composer, a little "mm-hm" nod now and then. */
+.buddy[data-state='listening'] {
+  --p-rot: calc(var(--bd-side) * 3deg);
+  --p-sx: 1.025;
+  --p-sy: 0.975;
+  --g-y: 0.05;
+  --e-sx: 1.08;
+  --e-sy: 1.08;
+}
+.buddy[data-state='listening'] .buddy-act {
+  animation: bd-nod 3.2s ease-in-out infinite;
+  animation-delay: calc(var(--bd-delay) * 0.3);
+}
+.buddy[data-from][data-state='listening'] .buddy-act {
+  animation:
+    bd-attend 520ms var(--ease-out) 1,
+    bd-nod 3.2s ease-in-out 520ms infinite;
+}
+.buddy[data-state='listening'] .buddy-look {
+  animation: none;
+}
+
+/* Thinking: eyes drift up and aside, lids half lowered; sways gently while a
+   soft light moves through the body. */
+.buddy[data-state='thinking'] {
+  --g-x: calc(var(--bd-side) * 0.035);
+  --g-y: -0.055;
+  --e-sy: 0.78;
+  --p-sy: 1.01;
+}
+.buddy[data-state='thinking'] .buddy-act {
+  animation: bd-sway 3.4s ease-in-out infinite;
+}
+.buddy[data-state='thinking'] .buddy-look {
+  animation: bd-ponder 3.4s ease-in-out infinite;
+}
+.buddy[data-state='thinking'] .buddy-sheen {
+  opacity: 1;
+}
+.buddy[data-state='thinking'] .buddy-sheen > span {
+  animation: bd-sheen 2.6s var(--ease-sheet) infinite;
+}
+.buddy[data-state='thinking'] .buddy-acc {
+  animation: bd-acc-sway 3.4s ease-in-out infinite;
+  animation-delay: 0.25s;
+}
+
+/* Working: busy little double-hops, eyes narrowed and scanning. */
+.buddy[data-state='working'] {
+  --p-sx: 1.02;
+  --p-sy: 0.98;
+  --g-y: 0.03;
+  --e-sy: 0.8;
+}
+.buddy[data-state='working'] .buddy-act {
+  animation: bd-hop 1.5s linear infinite;
+}
+.buddy[data-state='working'] .buddy-shadow {
+  animation: bd-hop-shadow 1.5s linear infinite;
+}
+.buddy[data-state='working'] .buddy-look {
+  animation: bd-scan 3s ease-in-out infinite;
+}
+.buddy[data-state='working'] .buddy-acc {
+  animation: bd-acc-hop 1.5s linear infinite;
+}
+.buddy[data-state='working'] .buddy-sheen {
+  opacity: 0.7;
+}
+.buddy[data-state='working'] .buddy-sheen > span {
+  animation: bd-sheen 1.5s var(--ease-sheet) infinite;
+}
+
+/* Waiting / needs you: perks up tall with wide eyes, a warm amber glow and a
+   "hey!" bob every couple of seconds. */
+.buddy[data-state='waiting'] {
+  --rim: oklch(0.9 0.17 80);
+  --bounce: oklch(0.86 0.15 72);
+  --p-sx: 0.975;
+  --p-sy: 1.045;
+  --g-y: -0.015;
+  --e-sx: 1.14;
+  --e-sy: 1.14;
+}
+.buddy[data-state='waiting'] .buddy-glow {
+  opacity: 1;
+  background: radial-gradient(
+    closest-side,
+    oklch(0.84 0.15 75 / 0.55) 0%,
+    oklch(0.82 0.15 72 / 0.28) 45%,
+    oklch(0.8 0.15 70 / 0) 100%
+  );
+  animation: bd-glow 2.4s ease-in-out infinite;
+}
+.buddy[data-state='waiting'] .buddy-act {
+  animation:
+    bd-perk 680ms linear 1,
+    bd-hey 2.4s var(--ease-out) 680ms infinite;
+}
+.buddy[data-state='waiting'] .buddy-shadow {
+  animation:
+    bd-perk-shadow 680ms linear 1,
+    bd-hey-shadow 2.4s var(--ease-out) 680ms infinite;
+}
+.buddy[data-state='waiting'] .buddy-look {
+  animation: none;
+}
+
+/* Speaking: no mouth, so the whole body murmurs in uneven syllables while a
+   soft ring of its own colour ripples out. */
+.buddy[data-state='speaking'] {
+  --g-y: -0.02;
+  --e-sy: 0.92;
+}
+.buddy[data-state='speaking'] .buddy-act {
+  animation:
+    bd-inhale 380ms var(--ease-out) 1,
+    bd-talk 1.7s ease-in-out 380ms infinite;
+}
+.buddy[data-state='speaking'] .buddy-glow {
+  opacity: 1;
+  background: radial-gradient(
+    closest-side,
+    oklch(0.75 0.15 var(--h) / 0) 62%,
+    oklch(0.75 0.15 var(--h) / 0.38) 78%,
+    oklch(0.75 0.15 var(--h) / 0) 100%
+  );
+  animation: bd-ripple 1.7s var(--ease-out) infinite;
+}
+.buddy[data-state='speaking'] .buddy-look {
+  animation: bd-chatter 1.7s ease-in-out infinite;
+}
+
+/* Done: happy ∩ ∩ eyes, rosy cheeks and a joyful hop, then a contented sway. */
+.buddy[data-state='done'] .buddy-act {
+  animation:
+    bd-joy 1200ms linear 1,
+    bd-content 3.6s ease-in-out 1200ms infinite;
+}
+.buddy[data-state='done'] .buddy-shadow {
+  animation: bd-joy-shadow 1200ms linear 1;
+}
+.buddy[data-state='done'] .buddy-pill {
+  opacity: 0;
+  transform: scale(0.7);
+}
+.buddy[data-state='done'] .buddy-arc {
+  opacity: 1;
+  transform: none;
+}
+.buddy[data-state='done'] .buddy-cheek {
+  opacity: 0.85;
+  transform: none;
+}
+.buddy[data-state='done'] .buddy-blink,
+.buddy[data-state='done'] .buddy-look {
+  animation: none;
+}
+.buddy[data-state='done'] {
+  --g-y: -0.01;
+}
+
+/* Error: a startled shiver, then it slumps; eyes go flat and worried, the
+   colour drains a little. */
+.buddy[data-state='error'] {
+  --c: 0.1;
+  --l: 0.66;
+  --p-rot: calc(var(--bd-side) * -4deg);
+  --p-sx: 1.04;
+  --p-sy: 0.93;
+  --g-y: 0.035;
+  --e-sx: 1.15;
+  --e-sy: 0.36;
+  --e-rot-r: 14deg;
+}
+.buddy[data-state='error'] .buddy-act {
+  animation: bd-shiver 520ms ease-in-out 1;
+}
+.buddy[data-state='error'] .buddy-breath {
+  animation-duration: calc(var(--bd-breath) * 1.4);
+}
+.buddy[data-state='error'] .buddy-blink,
+.buddy[data-state='error'] .buddy-look {
+  animation: none;
+}
+.buddy[data-state='error'] .buddy-acc {
+  animation: none;
+  transform: rotate(calc(var(--bd-side) * 26deg));
+}
+
+/* Offline: grey and asleep. Eyes closed, slow deep breaths, a little slumped. */
+.buddy[data-state='offline'] {
+  --c: 0.018;
+  --l: 0.74;
+  --eye: oklch(0.36 0.01 var(--h));
+  --p-sx: 1.035;
+  --p-sy: 0.955;
+  --g-y: 0.03;
+  opacity: 0.85;
+}
+.buddy[data-state='offline'] .buddy-shadow {
+  opacity: 0.7;
+}
+.buddy[data-state='offline'] .buddy-breath {
+  animation: bd-sleep 6.5s ease-in-out infinite;
+  animation-delay: var(--bd-delay);
+}
+.buddy[data-from][data-state='offline'] .buddy-act {
+  animation: bd-doze 1400ms ease-in-out 1;
+}
+.buddy[data-state='offline'] .buddy-pill {
+  opacity: 0;
+  transform: scale(0.7);
+}
+.buddy[data-state='offline'] .buddy-arc {
+  opacity: 1;
+  transform: rotate(180deg);
+  top: -64%;
+}
+.buddy[data-state='offline'] .buddy-blink,
+.buddy[data-state='offline'] .buddy-look,
+.buddy[data-state='offline'] .buddy-acc {
+  animation: none;
+}
+.buddy[data-state='offline'] .buddy-acc {
+  transform: rotate(calc(var(--bd-side) * 32deg));
+}
+.buddy[data-state='offline'] .buddy-cheek {
+  opacity: 0;
+}
+
+/* Back to idle: a soft exhale and settle. From asleep: a wake-up stretch. */
+.buddy[data-from][data-state='idle'] .buddy-act {
+  animation: bd-settle 900ms ease-in-out 1;
+}
+.buddy[data-from='offline'][data-state='idle'] .buddy-act {
+  animation: bd-wake 1200ms ease-in-out 1;
+}
+
+/* ── Light & dark ────────────────────────────────────────────────────────── */
+/* On dark the floor shadow is invisible, so it becomes a faint pool of the
+   buddy's own light instead, and the rim catches a touch more. */
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .buddy-shadow {
+    background:
+      radial-gradient(closest-side, oklch(0 0 0 / 0.7), oklch(0 0 0 / 0.25) 55%, transparent 100%) 50% 50% / 78% 62%
+        no-repeat,
+      radial-gradient(closest-side, oklch(0.62 0.12 var(--h) / 0.26), transparent);
+  }
+}
+:root[data-theme='dark'] .buddy-shadow {
+  background:
+    radial-gradient(closest-side, oklch(0 0 0 / 0.7), oklch(0 0 0 / 0.25) 55%, transparent 100%) 50% 50% / 78% 62%
+      no-repeat,
+    radial-gradient(closest-side, oklch(0.62 0.12 var(--h) / 0.26), transparent);
+}
+
+/* ── Groups ──────────────────────────────────────────────────────────────── */
+
+.buddy-group {
+  position: relative;
+  display: block;
+  flex: none;
+}
+.buddy-slot {
+  position: absolute;
+  display: block;
+}
+/* Cheeks squish a little where they touch. */
+.buddy-group .buddy-pose {
+  --p-sx: 0.97;
+}
+
+.buddy-row {
+  display: inline-flex;
+  align-items: flex-end;
+  flex: none;
+}
+.buddy-row-slot {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  overflow: visible;
+}
+.buddy-row-slot > .buddy {
+  transform: scale(var(--bd-row-scale, 1));
+  transform-origin: 50% 91%;
+  transition: transform 620ms var(--ease-spring);
+}
+
+/* ── Keyframes ───────────────────────────────────────────────────────────── */
+/* Every loop starts and ends on the rest pose, so stopping one anywhere (or
+   reduced motion collapsing it) lands on a legible frame. */
+
+@keyframes bd-breathe {
+  0%,
+  100% {
+    transform: scale(1, 1);
+  }
+  50% {
+    transform: scale(0.994, 1.02);
+  }
+}
+
+@keyframes bd-sleep {
+  0%,
+  100% {
+    transform: scale(1, 1);
+  }
+  45% {
+    transform: scale(1.012, 1.04);
+  }
+}
+
+@keyframes bd-blink {
+  0%,
+  90%,
+  96%,
+  100% {
+    transform: scaleY(1);
+  }
+  93% {
+    transform: scaleY(0.08);
+  }
+}
+
+@keyframes bd-blink-double {
+  0%,
+  84%,
+  89%,
+  93%,
+  98%,
+  100% {
+    transform: scaleY(1);
+  }
+  86.5% {
+    transform: scaleY(0.08);
+  }
+  95.5% {
+    transform: scaleY(0.08);
+  }
+}
+
+/* Idle curiosity: now and then a look to one side, then the other. */
+@keyframes bd-glance {
+  0%,
+  38%,
+  58%,
+  80%,
+  100% {
+    transform: translate(0, 0);
+  }
+  42%,
+  54% {
+    transform: translate(calc(var(--s) * -0.035), calc(var(--s) * 0.004));
+  }
+  84%,
+  92% {
+    transform: translate(calc(var(--s) * 0.03), calc(var(--s) * -0.012));
+  }
+  96% {
+    transform: translate(0, 0);
+  }
+}
+
+@keyframes bd-nod {
+  0%,
+  58%,
+  100% {
+    transform: none;
+  }
+  66% {
+    transform: translateY(1.2%) scale(1.02, 0.965);
+  }
+  76% {
+    transform: translateY(-0.6%) scale(0.99, 1.015);
+  }
+  86% {
+    transform: none;
+  }
+}
+
+@keyframes bd-sway {
+  0%,
+  100% {
+    transform: rotate(0deg);
+  }
+  25% {
+    transform: rotate(-2.6deg);
+  }
+  75% {
+    transform: rotate(2.6deg);
+  }
+}
+
+/* The eyes lag the sway: follow-through. */
+@keyframes bd-ponder {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  35% {
+    transform: translateX(calc(var(--s) * 0.014));
+  }
+  85% {
+    transform: translateX(calc(var(--s) * -0.014));
+  }
+}
+
+@keyframes bd-sheen {
+  0% {
+    transform: translateX(-110%) skewX(-12deg);
+  }
+  70%,
+  100% {
+    transform: translateX(240%) skewX(-12deg);
+  }
+}
+
+/* Two busy hops (anticipate, stretch, land, settle), then a beat of rest. */
+@keyframes bd-hop {
+  0% {
+    transform: none;
+    animation-timing-function: ease-out;
+  }
+  7% {
+    transform: scale(1.07, 0.9);
+    animation-timing-function: ease-out;
+  }
+  17% {
+    transform: translateY(-6.5%) scale(0.95, 1.07);
+    animation-timing-function: ease-out;
+  }
+  25% {
+    transform: translateY(-8.5%) scale(1, 1.01);
+    animation-timing-function: ease-in;
+  }
+  34% {
+    transform: translateY(0) scale(1.08, 0.9);
+    animation-timing-function: ease-out;
+  }
+  41% {
+    transform: scale(0.98, 1.03);
+    animation-timing-function: ease-in-out;
+  }
+  46% {
+    transform: scale(1.05, 0.94);
+    animation-timing-function: ease-out;
+  }
+  54% {
+    transform: translateY(-4%) scale(0.97, 1.04);
+    animation-timing-function: ease-in;
+  }
+  62% {
+    transform: translateY(0) scale(1.06, 0.92);
+    animation-timing-function: ease-out;
+  }
+  70% {
+    transform: scale(0.99, 1.015);
+    animation-timing-function: ease-in-out;
+  }
+  78%,
+  100% {
+    transform: none;
+  }
+}
+
+@keyframes bd-hop-shadow {
+  0%,
+  7% {
+    transform: scale(1.04, 1);
+    opacity: 1;
+    animation-timing-function: ease-out;
+  }
+  25% {
+    transform: scale(0.72);
+    opacity: 0.55;
+    animation-timing-function: ease-in;
+  }
+  34% {
+    transform: scale(1.06, 1);
+    opacity: 1;
+  }
+  46% {
+    transform: none;
+    animation-timing-function: ease-out;
+  }
+  54% {
+    transform: scale(0.84);
+    opacity: 0.75;
+    animation-timing-function: ease-in;
+  }
+  62% {
+    transform: scale(1.04, 1);
+    opacity: 1;
+  }
+  78%,
+  100% {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+@keyframes bd-scan {
+  0%,
+  100% {
+    transform: translateX(calc(var(--s) * -0.04));
+  }
+  45%,
+  55% {
+    transform: translateX(calc(var(--s) * 0.04));
+  }
+}
+
+@keyframes bd-acc-sway {
+  0%,
+  100% {
+    transform: rotate(-3deg);
+  }
+  50% {
+    transform: rotate(4deg);
+  }
+}
+
+/* Lags the body's hop by a beat and overshoots: follow-through. */
+@keyframes bd-acc-hop {
+  0%,
+  10% {
+    transform: rotate(0deg);
+  }
+  20% {
+    transform: rotate(-14deg) scaleY(0.92);
+  }
+  31% {
+    transform: rotate(10deg) scaleY(1.06);
+  }
+  40% {
+    transform: rotate(-12deg) scaleY(0.94);
+  }
+  50% {
+    transform: rotate(7deg);
+  }
+  58% {
+    transform: rotate(-9deg);
+  }
+  67% {
+    transform: rotate(8deg);
+  }
+  78% {
+    transform: rotate(-4deg);
+  }
+  90%,
+  100% {
+    transform: rotate(0deg);
+  }
+}
+
+@keyframes bd-glow {
+  0%,
+  100% {
+    transform: scale(0.92);
+    opacity: 0.75;
+  }
+  50% {
+    transform: scale(1.06);
+    opacity: 1;
+  }
+}
+
+/* "Hey!": a quick up-down-up with a wiggle, then waits for you. */
+@keyframes bd-hey {
+  0%,
+  52% {
+    transform: none;
+  }
+  58% {
+    transform: scale(1.05, 0.93);
+  }
+  65% {
+    transform: translateY(-7%) scale(0.96, 1.05) rotate(-3deg);
+  }
+  72% {
+    transform: translateY(0) scale(1.04, 0.95) rotate(0deg);
+  }
+  78% {
+    transform: translateY(-4%) scale(0.98, 1.03) rotate(3deg);
+  }
+  85% {
+    transform: translateY(0) scale(1.02, 0.98);
+  }
+  92%,
+  100% {
+    transform: none;
+  }
+}
+
+@keyframes bd-hey-shadow {
+  0%,
+  58% {
+    transform: none;
+    opacity: 1;
+  }
+  65% {
+    transform: scale(0.8);
+    opacity: 0.7;
+  }
+  72% {
+    transform: none;
+    opacity: 1;
+  }
+  78% {
+    transform: scale(0.88);
+    opacity: 0.8;
+  }
+  85%,
+  100% {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+/* Uneven syllables: stretch on the stress, squash between words. */
+@keyframes bd-talk {
+  0%,
+  100% {
+    transform: none;
+  }
+  9% {
+    transform: scale(0.975, 1.045);
+  }
+  17% {
+    transform: scale(1.015, 0.98);
+  }
+  27% {
+    transform: scale(0.97, 1.055);
+  }
+  36% {
+    transform: scale(1.02, 0.975);
+  }
+  44% {
+    transform: none;
+  }
+  55% {
+    transform: scale(0.985, 1.03);
+  }
+  62% {
+    transform: scale(1.01, 0.99);
+  }
+  74% {
+    transform: scale(0.965, 1.06);
+  }
+  85% {
+    transform: scale(1.015, 0.98);
+  }
+}
+
+@keyframes bd-chatter {
+  0%,
+  44%,
+  100% {
+    transform: none;
+  }
+  27% {
+    transform: translateY(calc(var(--s) * -0.012));
+  }
+  74% {
+    transform: translateY(calc(var(--s) * -0.014));
+  }
+}
+
+@keyframes bd-ripple {
+  0% {
+    transform: scale(0.82);
+    opacity: 0;
+  }
+  25% {
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1.18);
+    opacity: 0;
+  }
+}
+
+/* One big happy jump with a twist in the air. */
+/* Anticipation dip, one big happy jump with a twist in the air, a squashy
+   landing and a wobbly settle. */
+@keyframes bd-joy {
+  0% {
+    transform: none;
+    animation-timing-function: ease-in-out;
+  }
+  18% {
+    transform: translateY(1%) scale(1.1, 0.84);
+    animation-timing-function: cubic-bezier(0.2, 0.8, 0.4, 1);
+  }
+  34% {
+    transform: translateY(-15%) scale(0.92, 1.1) rotate(-5deg);
+    animation-timing-function: ease-out;
+  }
+  46% {
+    transform: translateY(-18%) scale(1.01, 1) rotate(4deg);
+    animation-timing-function: ease-in;
+  }
+  58% {
+    transform: translateY(0) scale(1.1, 0.87);
+    animation-timing-function: ease-out;
+  }
+  70% {
+    transform: scale(0.96, 1.05);
+    animation-timing-function: ease-in-out;
+  }
+  82% {
+    transform: scale(1.02, 0.98);
+    animation-timing-function: ease-in-out;
+  }
+  92%,
+  100% {
+    transform: none;
+  }
+}
+
+@keyframes bd-joy-shadow {
+  0% {
+    transform: none;
+  }
+  18% {
+    transform: scale(1.08, 1);
+    opacity: 1;
+  }
+  46% {
+    transform: scale(0.66);
+    opacity: 0.45;
+    animation-timing-function: ease-in;
+  }
+  58% {
+    transform: scale(1.08, 1);
+    opacity: 1;
+  }
+  92%,
+  100% {
+    transform: none;
+  }
+}
+
+@keyframes bd-content {
+  0%,
+  100% {
+    transform: rotate(0deg);
+  }
+  30% {
+    transform: rotate(-2deg);
+  }
+  70% {
+    transform: rotate(2deg);
+  }
+}
+
+@keyframes bd-shiver {
+  0%,
+  100% {
+    transform: none;
+  }
+  12% {
+    transform: translateX(-2.2%) scale(1.03, 0.97);
+  }
+  26% {
+    transform: translateX(2%);
+  }
+  40% {
+    transform: translateX(-1.6%);
+  }
+  54% {
+    transform: translateX(1.2%);
+  }
+  68% {
+    transform: translateX(-0.7%);
+  }
+  82% {
+    transform: translateX(0.3%);
+  }
+}
+
+/* Entering "needs you": crouch, spring up tall, land perked. */
+@keyframes bd-perk {
+  0% {
+    transform: none;
+    animation-timing-function: ease-in-out;
+  }
+  22% {
+    transform: scale(1.06, 0.9);
+    animation-timing-function: cubic-bezier(0.2, 0.8, 0.4, 1);
+  }
+  48% {
+    transform: translateY(-7%) scale(0.94, 1.09);
+    animation-timing-function: ease-in;
+  }
+  68% {
+    transform: translateY(0) scale(1.04, 0.95);
+    animation-timing-function: ease-out;
+  }
+  84% {
+    transform: scale(0.99, 1.015);
+  }
+  100% {
+    transform: none;
+  }
+}
+
+@keyframes bd-perk-shadow {
+  0%,
+  22% {
+    transform: none;
+    opacity: 1;
+  }
+  48% {
+    transform: scale(0.78);
+    opacity: 0.6;
+  }
+  68%,
+  100% {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+/* "Oh, you're typing": a small lift toward you. */
+@keyframes bd-attend {
+  0%,
+  100% {
+    transform: none;
+  }
+  40% {
+    transform: translateY(-2%) scale(0.98, 1.035);
+  }
+}
+
+/* A breath in before the first word. */
+@keyframes bd-inhale {
+  0%,
+  100% {
+    transform: none;
+  }
+  60% {
+    transform: scale(0.975, 1.045);
+  }
+}
+
+@keyframes bd-settle {
+  0%,
+  100% {
+    transform: none;
+  }
+  28% {
+    transform: scale(1.035, 0.955);
+  }
+  56% {
+    transform: scale(0.99, 1.015);
+  }
+  80% {
+    transform: scale(1.004, 0.997);
+  }
+}
+
+/* Waking: a big stretch up, then back down to standing. */
+@keyframes bd-wake {
+  0% {
+    transform: none;
+  }
+  38% {
+    transform: translateY(-1.5%) scale(0.95, 1.08) rotate(calc(var(--bd-side) * 2deg));
+  }
+  64% {
+    transform: scale(1.03, 0.965);
+  }
+  84% {
+    transform: scale(0.995, 1.008);
+  }
+  100% {
+    transform: none;
+  }
+}
+
+/* Dozing off: a yawn-stretch, then sinking into sleep. */
+@keyframes bd-doze {
+  0% {
+    transform: none;
+  }
+  32% {
+    transform: scale(0.96, 1.06);
+  }
+  70% {
+    transform: scale(1.015, 0.985);
+  }
+  100% {
+    transform: none;
+  }
+}
+
+/* ── Reduced motion ──────────────────────────────────────────────────────── */
+/* Loops stop on their rest frame; pose, eyes, glow and colour still say what
+   the agent is doing. `data-motion="reduce"` on any ancestor forces the same
+   (used by the preview page; handy for an in-app setting too). */
+
+@media (prefers-reduced-motion: reduce) {
+  .buddy *,
+  .buddy *::after {
+    animation: none !important;
+  }
+  .buddy-pose,
+  .buddy-face,
+  .buddy-eye,
+  .buddy-row-slot > .buddy {
+    transition-duration: 150ms !important;
+    transition-timing-function: ease-out !important;
+  }
+}
+[data-motion='reduce'] .buddy *,
+[data-motion='reduce'] .buddy *::after {
+  animation: none !important;
+}
+[data-motion='reduce'] .buddy-pose,
+[data-motion='reduce'] .buddy-face,
+[data-motion='reduce'] .buddy-eye,
+[data-motion='reduce'] .buddy-row-slot > .buddy {
+  transition-duration: 150ms !important;
+  transition-timing-function: ease-out !important;
+}

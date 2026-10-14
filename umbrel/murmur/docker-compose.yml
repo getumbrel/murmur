@@ -1,0 +1,28 @@
+version: "3.7"
+
+services:
+  app_proxy:
+    environment:
+      APP_HOST: murmur_web_1
+      APP_PORT: 3000
+      # Umbrel login stays on; only the files a phone fetches without cookies
+      # when Murmur is added to the home screen are let through.
+      PROXY_AUTH_WHITELIST: "/manifest.webmanifest,/favicon.svg,/icon.svg,/icon-192.png,/icon-512.png,/icon-maskable-512.png,/apple-touch-icon.png"
+
+  web:
+    # TODO(digest): v0.1.0 hasn't been pushed yet. Pushing the v0.1.0 tag runs
+    # .github/workflows/release.yml, which prints this line with the real digest.
+    # Or read it from the pushed image:
+    #   docker buildx imagetools inspect ghcr.io/getumbrel/murmur:v0.1.0 --format '{{json .Manifest.Digest}}'
+    image: ghcr.io/getumbrel/murmur:v0.1.0@sha256:<digest>
+    user: "1000:1000"
+    init: true
+    restart: on-failure
+    volumes:
+      - ${APP_DATA_DIR}/data:/data
+    environment:
+      # Hermes Agent's dashboard, reached directly on the shared Umbrel network.
+      HERMES_URL: "http://hermes-agent_web_1:18789"
+      # The app proxy signs people in before they reach Murmur, which already
+      # stops DNS rebinding, so any name the Umbrel is reached by is fine.
+      MURMUR_ALLOWED_HOSTS: "*"

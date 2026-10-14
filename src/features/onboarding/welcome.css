@@ -1,0 +1,28 @@
+/* Once the mark has formed, each buddy blinks once, one just after the other,
+   then they fall back into their own rhythms (src/ui/brand.css). */
+.welcome-mark .mm-eyes-left {
+  animation:
+    mm-blink 6.2s ease-in-out infinite,
+    welcome-blink 300ms ease-in-out 520ms 1;
+}
+.welcome-mark .mm-eyes-right {
+  animation:
+    mm-blink 7.4s ease-in-out -2.9s infinite,
+    welcome-blink 300ms ease-in-out 680ms 1;
+}
+
+@keyframes welcome-blink {
+  0%,
+  100% {
+    transform: scaleY(1);
+  }
+  45% {
+    transform: scaleY(0.1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .welcome-mark .mm-eyes {
+    animation: none !important;
+  }
+}

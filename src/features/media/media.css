@@ -1,0 +1,43 @@
+/* Media in messages. */
+
+/* A quiet sweep across a placeholder while a file loads. */
+.media-skeleton {
+  background:
+    linear-gradient(100deg, transparent 30%, var(--fill-1) 50%, transparent 70%) 0 0 / 200% 100%,
+    var(--fill-1);
+  animation: media-sweep 1.6s linear infinite;
+}
+@keyframes media-sweep {
+  from {
+    background-position: 150% 0;
+  }
+  to {
+    background-position: -50% 0;
+  }
+}
+
+.media-photo {
+  transition: scale 160ms var(--ease-out);
+}
+.media-photo:active {
+  scale: 0.985;
+}
+
+.media-audio {
+  height: 40px;
+  border-radius: 999px;
+}
+
+/* Widgets: hold their last height while re-rendering so nothing jumps. */
+.media-frame {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .media-skeleton {
+    animation: none;
+  }
+}

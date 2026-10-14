@@ -1,0 +1,43 @@
+/* An @mention in a message: the agent's colour on a whisper of it. Inline and
+   unpadded vertically, so it never moves the line it sits on, and the pill
+   wraps cleanly if a long name breaks across lines. */
+
+.mention {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 0.375em;
+  padding: 0 0.1875em;
+  font-weight: 500;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  transition: background-color 150ms ease;
+}
+
+/* Bold or a heading around it already speaks louder. */
+:where(strong, b, h3, h4, h5, th) .mention {
+  font-weight: inherit;
+}
+
+.mention[role='button'] {
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+@media (hover: hover) and (pointer: fine) {
+  .mention[role='button']:hover {
+    background: color-mix(in oklch, var(--accent) 18%, transparent);
+  }
+}
+.mention[role='button']:active,
+.mention[aria-expanded='true'] {
+  background: color-mix(in oklch, var(--accent) 22%, transparent);
+}
+.mention[role='button']:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* @everyone / @all: nobody's colour. */
+.mention-all {
+  color: var(--ink);
+  background: var(--fill-2);
+}

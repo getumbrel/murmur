@@ -1,0 +1,98 @@
+// View model for a conversation. The Hermes event stream is folded into this
+// shape by the chat store; components render it and never see wire types.
+
+export type Speaker = { id: string; name: string; hue: number }
+
+export type ApprovalChoice = 'once' | 'session' | 'always' | 'deny'
+
+export type ClarifyQuestion = {
+  qid: string
+  question: string
+  choices?: string[]
+  multi?: boolean
+}
+
+/** A file the person sent: an image (shown as a thumbnail) or any other file (a chip). */
+export type UserAttachment =
+  | {
+      kind: 'image'
+      name: string
+      /** On the Hermes host. */ path?: string
+      /** Already in the browser. */ url?: string
+    }
+  | { kind: 'file'; name: string; path?: string; size?: number }
+
+export type ChatItem =
+  | {
+      kind: 'user'
+      id: string
+      text: string
+      /** Image URLs (older shape; prefer `attachments`). */
+      images?: string[]
+      attachments?: UserAttachment[]
+      at: number
+      pending?: boolean
+      /** Hermes's row id for this message once it's saved: lets you edit and resend it. */
+      rowId?: number
+      /** The message this one rewrote (edit and resend): it takes that one's place. */
+      was?: string
+    }
+  | { kind: 'assistant'; id: string; text: string; streaming: boolean; at: number; speaker?: Speaker }
+  | {
+      kind: 'thinking'
+      id: string
+      text: string
+      streaming: boolean
+      startedAt: number
+      endedAt?: number
+      speaker?: Speaker
+    }
+  | {
+      kind: 'tool'
+      id: string
+      /** Raw tool name, e.g. "web_search". Never shown to people. */
+      name: string
+      /** Human, present-tense label: "Searching the web". */
+      label: string
+      /** Short supporting detail: a query, a file name, a domain. */
+      detail?: string
+      status: 'running' | 'done' | 'error'
+      startedAt: number
+      endedAt?: number
+      speaker?: Speaker
+      /** Images the tool produced (paths on the Hermes host, or URLs). */
+      media?: string[]
+      /** Hermes's id for the call, so a live result finds a step loaded from history. */
+      callId?: string
+    }
+  | {
+      kind: 'approval'
+      id: string
+      requestId: string
+      /** What the agent wants to do, in plain words. */
+      title: string
+      /** The exact command or action, shown on request. */
+      command?: string
+      choices: ApprovalChoice[]
+      status: 'pending' | 'approved' | 'denied' | 'expired'
+      /** What the person picked, once resolved. */
+      choice?: ApprovalChoice
+      speaker?: Speaker
+    }
+  | {
+      kind: 'clarify'
+      id: string
+      requestId: string
+      questions: ClarifyQuestion[]
+      status: 'pending' | 'answered'
+      answers?: Record<string, string>
+      speaker?: Speaker
+    }
+  | { kind: 'error'; id: string; message: string; retryable?: boolean }
+  | { kind: 'notice'; id: string; text: string }
+  /** A slash command you ran, and what it printed. */
+  | { kind: 'command'; id: string; command: string; output?: string; status: 'running' | 'done' | 'error' }
+  /** A side question (/btw): answered off to the side, without interrupting the conversation. */
+  | { kind: 'aside'; id: string; taskId?: string; question: string; answer?: string; status: 'pending' | 'done' | 'error' }
+
+export type ChatStatus = 'idle' | 'thinking' | 'working' | 'waiting' | 'error'

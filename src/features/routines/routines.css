@@ -1,0 +1,49 @@
+/* Routines: the time wheel's drum, and small touches. */
+
+.wheel-mask {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 30%, #000 70%, transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0%, #000 30%, #000 70%, transparent 100%);
+}
+
+/* Items lean away from the centre like a drum, where scroll timelines exist. */
+@media (prefers-reduced-motion: no-preference) {
+  @supports (animation-timeline: view()) {
+    .wheel-item {
+      animation: wheel-tilt linear both;
+      animation-timeline: view(block);
+      transform-origin: center;
+    }
+    @keyframes wheel-tilt {
+      0% {
+        transform: perspective(360px) rotateX(-48deg) scale(0.94);
+      }
+      50% {
+        transform: none;
+      }
+      100% {
+        transform: perspective(360px) rotateX(48deg) scale(0.94);
+      }
+    }
+  }
+}
+
+/* A soft one-time glow when a routine is born: the row lights up in the
+   agent's colour and settles. Inset, so the grouped list's corners keep it. */
+@keyframes routine-glow {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+.routine-born::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent);
+  animation: routine-glow 1400ms var(--ease-out) 200ms both;
+}

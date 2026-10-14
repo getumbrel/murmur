@@ -1,0 +1,63 @@
+manifestVersion: 1.1
+id: murmur
+category: ai
+name: Murmur
+version: "0.1.0"
+tagline: A beautiful way to use Hermes
+description: >-
+  Murmur is a calm, beautiful home for your Hermes agents. Open it on your phone or your computer and just talk.
+
+
+  Every agent is a little character with its own name, colour and personality. Chat with one, or bring a few together in a group. Replies appear as they're written, and you can see what your agents are doing as they work — searching the web, reading a file, running a command — and approve anything important with a single tap.
+
+
+  Murmur works with the Hermes Agent app you already have. Your agents, chats and models stay right where they are on your Umbrel, so anything you start in Murmur shows up in Hermes, and the other way around.
+
+
+  Add Murmur to your home screen and it feels just like a native app.
+
+
+  ## Highlights
+
+    - **Talk to your agents** - Quick, calm chats that look great on any screen, in light or dark.
+
+    - **Groups** - Put several agents in one conversation and let them work together.
+
+    - **See what's happening** - Follow along as your agents work, and say yes before anything important happens.
+
+    - **Make agents your own** - Give each agent a name, a colour and the model it thinks with.
+developer: Umbrel
+website: https://umbrel.com
+dependencies:
+  - hermes-agent
+repo: https://github.com/getumbrel/murmur
+support: https://github.com/getumbrel/murmur/issues
+port: 18793
+# Store images, uploaded to getumbrel/umbrel-apps-gallery under murmur/. This
+# repo keeps the same files, plus icon.svg, in umbrel/gallery/murmur/.
+gallery:
+  - 1.jpg
+  - 2.jpg
+  - 3.jpg
+  - 4.jpg
+  - 5.jpg
+path: ""
+defaultUsername: ""
+defaultPassword: ""
+releaseNotes: >-
+  This is the first release of Murmur, a calm and beautiful way to talk to your Hermes agents from your phone or computer.
+
+
+  What's included:
+    - **Agents and templates** - Start from a ready-made helper like a Researcher, Writer, Planner or Chef, or make your own. Give each agent a name, a colour and the model it thinks with.
+    - **Groups** - Bring two to six agents into one chat. They take turns, build on each other's ideas and answer when you mention them.
+    - **See the work** - Follow along as your agents search, read and run things, and say yes before anything important happens.
+    - **More than one Hermes** - Add a Hermes running on another computer next to the one on your Umbrel, and switch between them in a tap.
+    - **Voice** - Tap the mic to talk instead of type, and have any reply read aloud.
+    - **Each agent's page** - Set up routines that run on a schedule, see what your agent remembers, and connect it to Telegram.
+
+
+  About voice: browsers only let a web page use your microphone over a secure (https) connection. If you open Murmur at a plain http address, like http://umbrel.local, the mic button stays hidden. Everything else works the same, including read aloud.
+submitter: Umbrel
+# TODO(submission): replace with the getumbrel/umbrel-apps pull request URL once it's opened.
+submission: https://github.com/getumbrel/umbrel-apps/pull/TODO

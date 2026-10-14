@@ -1,0 +1,17 @@
+# Only what the build needs goes into the context.
+.git
+.github
+node_modules
+dist
+dev
+docs
+umbrel
+scripts
+test-results
+playwright-report
+Dockerfile
+.dockerignore
+README.md
+*.log
+.DS_Store
+data

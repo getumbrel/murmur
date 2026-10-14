@@ -1,0 +1,157 @@
+/* Page transitions (see transitions.ts). <html data-nav> says which kind is
+   running; the buddy that flies between screens is named `buddy`. */
+
+:root {
+  --vt-ease: cubic-bezier(0.32, 0.72, 0, 1);
+  /* How far the page underneath dims, like the settings stack's scrim. */
+  --vt-dim: 0.88;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --vt-dim: 0.72;
+  }
+}
+:root[data-theme='dark'] {
+  --vt-dim: 0.72;
+}
+
+::view-transition-group(*),
+::view-transition-old(*),
+::view-transition-new(*) {
+  animation-duration: 320ms;
+  animation-timing-function: var(--vt-ease);
+}
+
+/* The buddy lands like a sheet settles; its two looks blend as it flies. */
+::view-transition-group(buddy) {
+  animation-duration: 380ms;
+}
+::view-transition-old(buddy),
+::view-transition-new(buddy) {
+  animation-duration: 220ms;
+}
+
+/* ── Push and pop (phones) ─────────────────────────────────────────────────── */
+
+html[data-nav='push']::view-transition,
+html[data-nav='pop']::view-transition {
+  background: #000;
+}
+
+html[data-nav='push']::view-transition-old(root),
+html[data-nav='push']::view-transition-new(root),
+html[data-nav='pop']::view-transition-old(root),
+html[data-nav='pop']::view-transition-new(root) {
+  mix-blend-mode: normal;
+  animation-fill-mode: both;
+}
+
+html[data-nav='push']::view-transition-old(root) {
+  animation-name: vt-drift-out;
+}
+html[data-nav='push']::view-transition-new(root) {
+  animation-name: vt-slide-in;
+  box-shadow: -12px 0 32px -16px hsl(var(--shadow-color) / 0.3);
+}
+
+/* Back is a touch quicker, and the leaving page stays on top. */
+html[data-nav='pop']::view-transition-group(*),
+html[data-nav='pop']::view-transition-old(*),
+html[data-nav='pop']::view-transition-new(*) {
+  animation-duration: 280ms;
+}
+html[data-nav='pop']::view-transition-group(buddy) {
+  animation-duration: 340ms;
+}
+/* The rule above would stretch the buddy's quick blend to 280ms; keep it brisk. */
+html[data-nav='pop']::view-transition-old(buddy),
+html[data-nav='pop']::view-transition-new(buddy) {
+  animation-duration: 180ms;
+}
+html[data-nav='pop']::view-transition-old(root) {
+  z-index: 1;
+  animation-name: vt-slide-out;
+  box-shadow: -12px 0 32px -16px hsl(var(--shadow-color) / 0.3);
+}
+html[data-nav='pop']::view-transition-new(root) {
+  animation-name: vt-drift-in;
+}
+
+@keyframes vt-slide-in {
+  from {
+    transform: translateX(100%);
+  }
+}
+@keyframes vt-slide-out {
+  to {
+    transform: translateX(100%);
+  }
+}
+@keyframes vt-drift-out {
+  to {
+    transform: translateX(-25%);
+    opacity: var(--vt-dim);
+  }
+}
+@keyframes vt-drift-in {
+  from {
+    transform: translateX(-25%);
+    opacity: var(--vt-dim);
+  }
+}
+
+/* ── Wide: the sidebar holds still, the pane crossfades ────────────────────── */
+
+html[data-nav='pane']::view-transition-old(root) {
+  animation: none;
+  opacity: 0;
+}
+html[data-nav='pane']::view-transition-new(root) {
+  animation: none;
+}
+html[data-nav='pane']::view-transition-old(pane) {
+  animation: vt-fade-out 160ms ease-out both;
+}
+html[data-nav='pane']::view-transition-new(pane) {
+  animation: vt-fade-in 260ms cubic-bezier(0.16, 1, 0.3, 1) 40ms both;
+}
+
+@keyframes vt-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes vt-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* ── Splash and onboarding into the app: a slow, soft dissolve ─────────────── */
+
+html[data-nav='handoff']::view-transition-old(*),
+html[data-nav='handoff']::view-transition-new(*) {
+  animation-duration: 420ms;
+  animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+}
+html[data-nav='handoff']::view-transition-group(buddy) {
+  animation-duration: 560ms;
+}
+
+/* ── Reduced motion: nothing travels, everything crossfades ────────────────── */
+
+html[data-nav='fade']::view-transition-group(*),
+html[data-nav='fade']::view-transition-old(*),
+html[data-nav='fade']::view-transition-new(*) {
+  animation-duration: 220ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation-duration: 150ms !important;
+    animation-delay: 0s !important;
+  }
+}

@@ -1,0 +1,85 @@
+name: Release
+
+# Push a version tag (git tag v0.1.0 && git push origin v0.1.0), or publish a
+# GitHub release with a new v* tag: either builds and pushes the multi-arch
+# image, then writes its digest into the release for umbrel-apps.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  IMAGE: ghcr.io/getumbrel/murmur
+
+# Actions are pinned to commit SHAs (the tag is in the comment); Dependabot
+# keeps both up to date.
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # A tag that doesn't match the version the app and the store listing
+      # declare would ship an image whose release notes describe another one.
+      - name: Tag matches package.json and umbrel-app.yml
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(node -p 'require("./package.json").version')"
+          app="$(sed -n 's/^version: *"\{0,1\}\([^"]*\)"\{0,1\} *$/\1/p' umbrel/murmur/umbrel-app.yml)"
+          echo "tag $tag, package.json $pkg, umbrel-app.yml $app"
+          if [ "$tag" != "$pkg" ] || [ "$tag" != "$app" ]; then
+            echo "::error::Tag v$tag doesn't match package.json ($pkg) and umbrel-app.yml ($app). Bump both, then tag again."
+            exit 1
+          fi
+
+      # The Dockerfile builds the web app on the native platform and the
+      # runtime stage only copies files, so no QEMU is needed for arm64.
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=ref,event=tag
+            type=semver,pattern={{major}}.{{minor}}
+
+      - id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # umbrel-apps pins the multi-arch index digest, never a per-arch one.
+      - name: Check both architectures
+        run: |
+          docker buildx imagetools inspect "${IMAGE}:${GITHUB_REF_NAME}" | tee manifest.txt
+          grep -q 'linux/amd64' manifest.txt && grep -q 'linux/arm64' manifest.txt
+
+      - name: Release with the image to pin
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          pin="${IMAGE}:${GITHUB_REF_NAME}@${DIGEST}"
+          echo "image: ${pin}" | tee -a "$GITHUB_STEP_SUMMARY"
+          notes="Image for umbrel/murmur/docker-compose.yml:"$'\n\n```yaml\nimage: '"${pin}"$'\n```'
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release edit "$GITHUB_REF_NAME" --notes "$(gh release view "$GITHUB_REF_NAME" --json body --jq .body)"$'\n\n'"${notes}"
+          else
+            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes --notes "${notes}"
+          fi
