@@ -30,7 +30,7 @@ services:
       - "host.docker.internal:host-gateway"
 
   hermes:
-    image: ghcr.io/getumbrel/hermes-agent-umbrel:v0.22.0@sha256:3377aa4f92d91408c6267991c3a6d167d3d064a1df8ea2efb754406ae5861d93
+    image: ghcr.io/getumbrel/hermes-agent-umbrel:v0.22.0-1@sha256:1e27bebbb8998a2d54e47f1b838720440aea1a99c3465f03199277a16cda4e3c
     restart: on-failure
     stop_grace_period: 1m
     volumes:
@@ -45,6 +45,8 @@ services:
       HERMES_DASHBOARD_BASIC_AUTH_SECRET: ${MURMUR_HERMES_SECRET:-}
       # Routines and Telegram run in Hermes's messaging gateway.
       HERMES_GATEWAY_BOOTSTRAP_STATE: "running"
+      # The image is Umbrel's; off an Umbrel, its agents shouldn't think they're on one.
+      HERMES_UMBREL_CONTEXT: "0"
     command: ["gateway", "run"]
 
 volumes:
