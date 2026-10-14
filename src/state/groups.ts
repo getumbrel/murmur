@@ -18,6 +18,7 @@ import type { ApprovalChoice, ChatItem, Speaker } from '@/features/chat/types'
 import { mentionedIds, toHandles, toNames } from '@/features/group/mentions'
 import { scoped } from '@/hermes/instance'
 import { isMissingMethod } from '@/hermes/compat'
+import { approvalText } from '@/features/chat/approval-text'
 
 // ── Wire shapes (groups.* JSON-RPC) ─────────────────────────────────────────
 
@@ -45,7 +46,7 @@ type PendingAction = {
   execution_generation?: number
   request_id?: string
   member_id?: string
-  approval?: { command?: string; description?: string; request_id?: string }
+  approval?: { command?: string; description?: string; request_id?: string; pattern_key?: string }
 }
 type DriverStatus = { working?: boolean; blocked?: boolean; pending_actions?: PendingAction[] }
 type StateResult = { room: WireRoom; driver_status?: DriverStatus }
@@ -304,6 +305,8 @@ type Approval = {
   member: string
   command?: string
   description?: string
+  /** "mcp_elicitation" for a connected tool's request, which reads differently. */
+  patternKey?: string
   /** Log position it arrived at, for placing it once the turn is over. */
   after: number
   status: 'pending' | 'approved' | 'denied'
@@ -544,6 +547,7 @@ function apply(id: string, state: StateResult, fresh: RoomEvent[], cursor: numbe
           member: a.member_id ?? '',
           command: a.approval?.command,
           description: a.approval?.description,
+          patternKey: a.approval?.pattern_key,
           after: end,
           status: 'pending',
         })
@@ -747,6 +751,7 @@ function onServerRequest(req: ServerRequest) {
           member: who.member,
           command: typeof params.command === 'string' ? params.command : undefined,
           description: typeof params.description === 'string' ? params.description : undefined,
+          patternKey: typeof params.pattern_key === 'string' ? params.pattern_key : undefined,
           after: l.cursor,
           status: 'pending',
         },
@@ -1002,16 +1007,18 @@ function castOf(members: GroupMember[]) {
   }
   const approvalItem = (a: Approval): ChatItem => {
     const who = speaker(a.member)
+    const text = approvalText({
+      who: who.name,
+      command: a.command,
+      description: a.description,
+      patternKeys: a.patternKey ? [a.patternKey] : [],
+    })
     return {
       kind: 'approval',
       id: a.id,
       requestId: a.requestId,
-      title: a.command
-        ? `${who.name} wants to run a command`
-        : a.description
-          ? `${who.name} wants to ${a.description}`
-          : `${who.name} needs your OK`,
-      command: a.command,
+      ...text,
+      // A room answers for one turn at a time: no "always".
       choices: ['once', 'deny'],
       status: a.status,
       choice: a.choice,

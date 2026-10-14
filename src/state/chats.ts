@@ -11,6 +11,7 @@ import { gateway, rpc, type GatewayEvent, type ServerRequest } from '@/hermes/ga
 import { api } from '@/hermes/rest'
 import { isMissingMethod } from '@/hermes/compat'
 import { toolLabel } from '@/features/chat/tool-labels'
+import { approvalText, detailOf, isCallTo, toolAsked, type ToolCall } from '@/features/chat/approval-text'
 import { explainError } from '@/features/chat/errors'
 import type { ApprovalChoice, ChatItem, ChatStatus, ClarifyQuestion, Speaker } from '@/features/chat/types'
 import { parseUserMessage, rememberUpload, type UserAttachment } from '@/features/media/parse'
@@ -51,6 +52,8 @@ const parked = new Map<string, ServerRequest[]>()
 let attaching = 0
 /** Reasoning that may just echo the answer (a Codex quirk) — held until complete. */
 const pendingReasoning = new Map<string, string>()
+/** Each chat's tool calls still running, so an approval about one can say what it will act on. */
+const runningCalls = new Map<string, Map<string, ToolCall>>()
 
 let n = 0
 const uid = (p: string) => `${p}-${Date.now().toString(36)}-${(n++).toString(36)}`
@@ -118,9 +121,23 @@ const SKIPPED = new Set(['hidden', 'process_complete', 'model_switch'])
 const INTERRUPTED = /^\s*Operation interrupted\b/
 const STEER = /^\s*\[OUT-OF-BAND USER MESSAGE[^\]]*\]\s*([\s\S]*?)\s*\[\/OUT-OF-BAND USER MESSAGE\]\s*$/
 
+/** A stored call, or the calls a "tool_call" made: `{"calls":[{"name":"mcp__umbrel__…","arguments":{…}}]}`. */
+function viaToolCall(name = 'tool', args?: unknown): { name: string; args?: unknown }[] {
+  if (name !== 'tool_call') return [{ name, args }]
+  try {
+    const parsed = (typeof args === 'string' ? JSON.parse(args) : args) as { calls?: unknown }
+    const calls = Array.isArray(parsed?.calls) ? (parsed.calls as { name?: unknown; arguments?: unknown }[]) : []
+    const named = calls.filter((c) => typeof c?.name === 'string')
+    if (named.length) return named.map((c) => ({ name: String(c.name), args: c.arguments }))
+  } catch {
+    /* not the shape we know: keep the call as it was */
+  }
+  return [{ name, args }]
+}
+
 function rowsToItems(rows: Row[], speaker?: Speaker): ChatItem[] {
   const items: ChatItem[] = []
-  const tools = new Map<string, Extract<ChatItem, { kind: 'tool' }>>()
+  const tools = new Map<string, Extract<ChatItem, { kind: 'tool' }>[]>()
   for (const row of rows) {
     const at = (row.timestamp ?? 0) * 1000
     const key = `h${row.id ?? items.length}`
@@ -163,31 +180,35 @@ function rowsToItems(rows: Row[], speaker?: Speaker): ChatItem[] {
           speaker,
         })
       }
-      for (const call of row.tool_calls ?? []) {
-        const name = call.function?.name ?? 'tool'
-        const label = toolLabel(name, call.function?.arguments)
-        const tool: Extract<ChatItem, { kind: 'tool' }> = {
-          kind: 'tool',
-          id: `${key}-${call.id ?? call.call_id}`,
-          callId: call.id ?? call.call_id,
-          name,
-          label: label.label,
-          detail: label.detail,
-          status: 'done',
-          startedAt: at,
-          endedAt: at,
-          speaker,
-        }
-        items.push(tool)
-        if (call.id) tools.set(call.id, tool)
-        if (call.call_id) tools.set(call.call_id, tool)
-      }
+      // The model writes before it calls tools: its words go first.
       const text = row.content?.trim()
       if (text) items.push({ kind: 'assistant', id: key, text, streaming: false, at, speaker })
+      for (const call of row.tool_calls ?? []) {
+        const callId = call.id ?? call.call_id
+        // Tools reached through Hermes's tool search are stored as one "tool_call" wrapping the real calls.
+        const steps = viaToolCall(call.function?.name, call.function?.arguments).map(({ name, args }, n) => {
+          const label = toolLabel(name, args)
+          const tool: Extract<ChatItem, { kind: 'tool' }> = {
+            kind: 'tool',
+            id: `${key}-${callId}${n ? `-${n}` : ''}`,
+            callId: n ? undefined : callId,
+            name,
+            label: label.label,
+            detail: label.detail,
+            // Done once its result row turns up; one still waiting (on your OK, say) is still going.
+            status: 'running',
+            startedAt: at,
+            speaker,
+          }
+          return tool
+        })
+        items.push(...steps)
+        if (call.id) tools.set(call.id, steps)
+        if (call.call_id) tools.set(call.call_id, steps)
+      }
     } else if (row.role === 'tool' && row.tool_call_id) {
-      const tool = tools.get(row.tool_call_id)
-      if (tool && /"exit_code":\s*-1|BLOCKED:|"error":\s*"/.test(row.content ?? '')) tool.status = 'error'
-      if (tool) {
+      for (const tool of tools.get(row.tool_call_id) ?? []) {
+        tool.status = /"exit_code":\s*-1|BLOCKED:|"error":\s*"/.test(row.content ?? '') ? 'error' : 'done'
         tool.endedAt = (row.timestamp ?? 0) * 1000
         const media = toolMedia(tool.name, row.content)
         if (media.length) tool.media = media
@@ -292,11 +313,14 @@ async function resume(id: string, first: boolean) {
   // A message sent while we asked started a turn this answer doesn't know about.
   const fresher = (asked.get(id) ?? 0) >= since
   patch(id, (c) => {
-    let items = c.items
+    // Steps from history with no result are still going only if the turn is.
+    let items = busy
+      ? c.items
+      : c.items.map((i): ChatItem => (i.kind === 'tool' && i.status === 'running' ? { ...i, status: 'done' } : i))
     // A reply was mid-stream when we arrived: show what it has so far.
     // (On a reconnect, the replayed events carry it instead.)
     const partial = first ? res.inflight?.assistant?.trim() : undefined
-    if (busy && partial && flowTail(items).item?.kind !== 'assistant') {
+    if (busy && partial && flowTail(items).item?.kind !== 'assistant' && !saidSinceAsked(items, partial)) {
       items = [
         ...items,
         { kind: 'assistant', id: uid('a'), text: partial, streaming: true, at: Date.now(), speaker: c.speaker },
@@ -945,8 +969,20 @@ function onServerRequest(req: ServerRequest) {
   const speaker = getChat(id)?.speaker
   if (req.method === 'approval') {
     const command = typeof params.command === 'string' ? params.command : undefined
-    const description = typeof params.description === 'string' ? params.description : ''
-    const choices = (Array.isArray(params.choices) ? params.choices : ['once', 'always', 'deny']) as ApprovalChoice[]
+    const tool = toolAsked(command)
+    const text = approvalText({
+      who: speaker?.name,
+      command,
+      description: typeof params.description === 'string' ? params.description : '',
+      choices: Array.isArray(params.choices) ? (params.choices as ApprovalChoice[]) : undefined,
+      patternKeys: Array.isArray(params.pattern_keys)
+        ? params.pattern_keys.map(String)
+        : typeof params.pattern_key === 'string'
+          ? [params.pattern_key]
+          : [],
+      // (It can arrive a moment before the call itself; then tool.start fills it in.)
+      call: tool ? callFor(id, tool) : undefined,
+    })
     patch(id, (c) => ({
       status: 'waiting',
       items: [
@@ -955,9 +991,7 @@ function onServerRequest(req: ServerRequest) {
           kind: 'approval',
           id: uid('ap'),
           requestId: req.id,
-          title: approvalTitle(c.speaker?.name, description, command),
-          command,
-          choices,
+          ...text,
           status: 'pending',
           speaker,
         },
@@ -981,10 +1015,12 @@ function onServerRequest(req: ServerRequest) {
   return true
 }
 
-function approvalTitle(name: string | undefined, description: string, command?: string) {
-  const who = name ?? 'Your agent'
-  if (command) return `${who} wants to run a command`
-  return description ? `${who} wants to ${description}` : `${who} needs your OK`
+/** The newest call to a tool an approval names: running now, or its step from history (opened while it waits). */
+function callFor(id: string, tool: string): ToolCall | undefined {
+  const live = [...(runningCalls.get(id)?.values() ?? [])].reverse().find((c) => isCallTo(c.name, tool))
+  if (live) return live
+  const step = getChat(id)?.items.findLast((i) => i.kind === 'tool' && isCallTo(i.name, tool))
+  return step?.kind === 'tool' ? { name: step.name, context: step.detail } : undefined
 }
 
 // ── The event stream ────────────────────────────────────────────────────────
@@ -1071,6 +1107,11 @@ function onEvent(ev: GatewayEvent) {
       const name = String(payload.name ?? 'tool')
       const label = toolLabel(name, payload.args, typeof payload.context === 'string' ? payload.context : undefined)
       const toolId = payload.tool_id == null ? '' : String(payload.tool_id)
+      const context = typeof payload.context === 'string' ? payload.context : undefined
+      if (toolId) {
+        const calls = runningCalls.get(id) ?? new Map<string, ToolCall>()
+        runningCalls.set(id, calls.set(toolId, { name, args: payload.args, context }))
+      }
       // Already here from history (a reload mid-reply, then a replay): it carries on in place.
       const loaded = toolId ? getChat(id)?.items.findIndex((i) => i.kind === 'tool' && i.callId === toolId) : -1
       if (loaded !== undefined && loaded >= 0)
@@ -1078,26 +1119,40 @@ function onEvent(ev: GatewayEvent) {
           status: c.status === 'waiting' ? 'waiting' : 'working',
           items: c.items.map((i, at) => (at === loaded && i.kind === 'tool' ? { ...i, status: 'running', endedAt: undefined } : i)),
         }))
-      return patch(id, (c) => ({
-        status: c.status === 'waiting' ? 'waiting' : 'working',
-        items: [
-          ...closeThinking(sealAssistant(c.items)),
-          {
-            kind: 'tool',
-            id: `tool-${String(payload.tool_id ?? uid('x'))}`,
-            name,
-            label: label.label,
-            detail: label.detail,
-            status: 'running',
-            startedAt: Date.now(),
-            speaker: c.speaker,
-          },
-        ],
-      }))
+      return patch(id, (c) => {
+        const step: ChatItem = {
+          kind: 'tool',
+          id: `tool-${String(payload.tool_id ?? uid('x'))}`,
+          name,
+          label: label.label,
+          detail: label.detail,
+          status: 'running',
+          startedAt: Date.now(),
+          speaker: c.speaker,
+        }
+        // Its approval got here first: the step goes above the card, and the card learns what it's about.
+        const asked = c.items.findIndex(
+          (i) => i.kind === 'approval' && i.status === 'pending' && !!i.tool && isCallTo(name, i.tool),
+        )
+        if (asked >= 0) {
+          const card = c.items[asked] as Extract<ChatItem, { kind: 'approval' }>
+          const items = [...c.items]
+          items.splice(asked, 1, step, {
+            ...card,
+            command: card.command ?? detailOf({ name, args: payload.args, context }),
+          })
+          return { status: c.status, items }
+        }
+        return {
+          status: c.status === 'waiting' ? 'waiting' : 'working',
+          items: [...closeThinking(sealAssistant(c.items)), step],
+        }
+      })
     }
 
     case 'tool.complete': {
       const toolId = String(payload.tool_id ?? '')
+      runningCalls.get(id)?.delete(toolId)
       const key = `tool-${toolId}`
       // (A step loaded from history, after a reload mid-reply, is known by its call id.)
       const isIt = (i: ChatItem) => i.kind === 'tool' && (i.id === key || (!!toolId && i.callId === toolId))
@@ -1106,18 +1161,32 @@ function onEvent(ev: GatewayEvent) {
         result && (result.status === 'blocked' || result.exit_code === -1 || (result.error && result.error !== null)),
       )
       const media = failed ? [] : toolMedia(String(payload.name ?? ''), payload.result)
-      return patch(id, (c) => ({
-        status: hasPending(c.items) ? 'waiting' : 'working',
-        items: c.items.map((i) =>
-          i.kind === 'tool' && isIt(i)
-            ? { ...i, status: failed ? 'error' : 'done', endedAt: Date.now(), media: media.length ? media : undefined }
-            : i,
-        ),
-      }))
+      const name = String(payload.name ?? '')
+      return patch(id, (c) => {
+        const items = c.items.flatMap((i): ChatItem[] => {
+          if (i.kind === 'tool' && isIt(i))
+            return [
+              {
+                ...i,
+                status: failed ? 'error' : 'done',
+                endedAt: Date.now(),
+                media: media.length ? media : undefined,
+              },
+            ]
+          // Answered somewhere else (another window, Telegram): the step says how it went, so the card goes.
+          if (i.kind === 'approval' && i.status === 'pending' && i.tool && name && isCallTo(name, i.tool)) {
+            requests.delete(i.requestId)
+            return []
+          }
+          return [i]
+        })
+        return { status: hasPending(items) ? 'waiting' : 'working', items }
+      })
     }
 
     case 'message.complete': {
       const status = String(payload.status ?? 'complete')
+      runningCalls.delete(id)
       const persisted = payload.persisted_turn as { user_row_id?: number } | undefined
       const reasoning = pendingReasoning.get(id)
       pendingReasoning.delete(id)
@@ -1246,6 +1315,14 @@ const hasPending = (items: ChatItem[]) =>
 
 /** Side questions and command cards sit beside the conversation: a reply carries on past them. */
 const isSide = (i: ChatItem) => i.kind === 'aside' || i.kind === 'command'
+
+/** This turn already shows the text: Hermes saved it before pausing (to ask you, say). */
+function saidSinceAsked(items: ChatItem[], text: string) {
+  const asked = items.findLastIndex((i) => i.kind === 'user')
+  return items
+    .slice(asked + 1)
+    .some((i) => i.kind === 'assistant' && (text.startsWith(i.text) || i.text.startsWith(text)))
+}
 
 function flowTail(items: ChatItem[]) {
   const at = items.findLastIndex((i) => !isSide(i))

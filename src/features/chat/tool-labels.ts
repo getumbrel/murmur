@@ -109,6 +109,55 @@ const PREFIXES: [string, Rule][] = [
   ['web_', { label: 'Searching the web', category: 'web', detail: query }],
 ]
 
+// Tools from connected servers (umbrelOS and other MCP servers) arrive as
+// "mcp__umbrel__delete_files". Common verbs read naturally ("Deleting files",
+// then "Deleted files"); anything else is the tool's own name, tidied.
+const VERBS: Record<string, [string, string]> = {
+  get: ['Checking', 'Checked'],
+  check: ['Checking', 'Checked'],
+  list: ['Listing', 'Listed'],
+  find: ['Finding', 'Found'],
+  search: ['Searching', 'Searched'],
+  read: ['Reading', 'Read'],
+  fetch: ['Fetching', 'Fetched'],
+  open: ['Opening', 'Opened'],
+  create: ['Creating', 'Created'],
+  add: ['Adding', 'Added'],
+  update: ['Updating', 'Updated'],
+  set: ['Setting', 'Set'],
+  rename: ['Renaming', 'Renamed'],
+  move: ['Moving', 'Moved'],
+  copy: ['Copying', 'Copied'],
+  delete: ['Deleting', 'Deleted'],
+  remove: ['Removing', 'Removed'],
+  install: ['Installing', 'Installed'],
+  uninstall: ['Uninstalling', 'Uninstalled'],
+  start: ['Starting', 'Started'],
+  stop: ['Stopping', 'Stopped'],
+  restart: ['Restarting', 'Restarted'],
+  upload: ['Uploading', 'Uploaded'],
+  download: ['Downloading', 'Downloaded'],
+  send: ['Sending', 'Sent'],
+  run: ['Running', 'Ran'],
+}
+
+const MCP = /^mcp__(.+?)__(.+)$/
+
+/** "umbrel" → "your Umbrel"; other servers by name. */
+export function serverName(server: string) {
+  return /^umbrel(os)?$/i.test(server) ? 'your Umbrel' : humanize(server)
+}
+
+function connected(name: string, args: Args): ToolLabel | undefined {
+  const m = MCP.exec(name)
+  if (!m) return undefined
+  const [verb, ...rest] = humanize(m[2]).toLowerCase().split(' ')
+  const known = VERBS[verb]
+  const label = known ? [known[0], ...rest].join(' ') : humanize(m[2])
+  const value = Object.values(args).find((v) => typeof v === 'string' && v.trim()) as string | undefined
+  return { label, category: 'other', detail: clip(value ?? serverName(m[1])) }
+}
+
 function humanize(name: string) {
   const words = name
     .replace(/^mcp_+/, '')
@@ -146,6 +195,8 @@ const clip = (s: string, max = 48) => {
 export function toolLabel(name: string, args?: unknown, preview?: string): ToolLabel {
   const rule = RULES[name] ?? PREFIXES.find(([p]) => name.startsWith(p))?.[1]
   const a = parseArgs(args)
+  const tool = connected(name, a)
+  if (tool) return tool
   if (!rule) {
     const detail = str(preview)
     return { label: humanize(name), category: 'other', detail: detail && clip(detail) }
@@ -191,7 +242,7 @@ const PAST: Record<string, string> = {
 /** "Searching the web" → "Searched the web". Labels it doesn't know stay as they are. */
 export function pastLabel(label: string) {
   const [verb, ...rest] = label.split(' ')
-  const past = PAST[verb]
+  const past = PAST[verb] ?? Object.values(VERBS).find(([now]) => now === verb)?.[1]
   return past ? [past, ...rest].join(' ') : label
 }
 
@@ -238,7 +289,11 @@ const OTHER: Done = { key: 'other', one: 'Used a tool', many: (n) => `Used ${n} 
 export function didSummary(names: string[]): string | undefined {
   const groups = new Map<string, { done: Done; n: number }>()
   for (const name of names) {
-    const done = DONE[name] ?? DONE_PREFIXES.find(([p]) => name.startsWith(p))?.[1] ?? OTHER
+    const server = MCP.exec(name)?.[1]
+    const done =
+      DONE[name] ??
+      DONE_PREFIXES.find(([p]) => name.startsWith(p))?.[1] ??
+      (server ? { key: `mcp:${server}`, one: `Used ${serverName(server)}` } : OTHER)
     const g = groups.get(done.key)
     if (g) g.n++
     else groups.set(done.key, { done, n: 1 })

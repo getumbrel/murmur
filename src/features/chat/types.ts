@@ -73,6 +73,10 @@ export type ChatItem =
       title: string
       /** The exact command or action, shown on request. */
       command?: string
+      /** `command` is a sentence from a connected tool, not code. */
+      prose?: boolean
+      /** The connected tool it's about (Hermes asking before using it). */
+      tool?: string
       choices: ApprovalChoice[]
       status: 'pending' | 'approved' | 'denied' | 'expired'
       /** What the person picked, once resolved. */

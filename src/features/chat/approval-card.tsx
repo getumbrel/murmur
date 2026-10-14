@@ -109,7 +109,7 @@ function Card({
         )}
       </div>
 
-      {item.command && <Command text={item.command} />}
+      {item.command && <Command text={item.command} prose={item.prose} />}
 
       <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
         {button('deny', 'Don’t allow', 'secondary')}
@@ -120,7 +120,7 @@ function Card({
   )
 }
 
-function Command({ text }: { text: string }) {
+function Command({ text, prose }: { text: string; prose?: boolean }) {
   const ref = useRef<HTMLPreElement>(null)
   const [open, setOpen] = useState(false)
   const [clipped, setClipped] = useState(false)
@@ -134,7 +134,9 @@ function Command({ text }: { text: string }) {
       <pre
         ref={ref}
         className={cn(
-          'font-mono text-footnote leading-5 tracking-normal wrap-anywhere whitespace-pre-wrap text-ink',
+          prose
+            ? 'font-sans text-subhead leading-5 wrap-break-word whitespace-pre-wrap text-ink'
+            : 'font-mono text-footnote leading-5 tracking-normal wrap-anywhere whitespace-pre-wrap text-ink',
           !open && 'line-clamp-2',
         )}
       >
@@ -174,8 +176,8 @@ function Receipt({ item, fresh }: { item: Item; fresh: boolean }) {
       <Icon size={14} strokeWidth={2} aria-hidden className={cn('flex-none', allowed && 'text-success')} />
       <span className="flex-none text-ink-2">{label}</span>
       <span aria-hidden>·</span>
-      <span className={cn('truncate', item.command && 'font-mono text-caption tracking-normal')}>
-        {item.command ?? item.title}
+      <span className={cn('truncate', item.command && !item.prose && 'font-mono text-caption tracking-normal')}>
+        {item.command && !item.prose ? item.command : item.title}
       </span>
     </p>
   )
