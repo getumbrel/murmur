@@ -1,114 +1,214 @@
-# Murmur
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/readme/icon-dark.png">
+    <img src="docs/readme/icon-light.png" width="128" height="128" alt="Murmur">
+  </picture>
+</p>
 
-**A beautiful way to use Hermes.**
+<h1 align="center">Murmur</h1>
 
-Murmur is a mobile-first web app for talking to [Hermes Agent](https://github.com/NousResearch/hermes-agent) agents. You can chat with one agent, or with several together in a group. It ships as an umbrelOS app next to the Hermes Agent app and uses that app's agents, chats and models, and it also runs on its own ([`docs/STANDALONE.md`](docs/STANDALONE.md)). Agents, chats and models all live in Hermes. Murmur itself only remembers its connection settings: on a standalone install, `DATA_DIR/murmur.json` holds the Hermes address (and its password, if it has one) and the key that signs Murmur's sign-in cookie.
+<p align="center">
+  <b>A beautiful way to use Hermes.</b><br>
+  Chat with your own AI agents, one at a time or all together.<br>
+  In the browser, on your Mac or PC, and on your phone.
+</p>
+
+<p align="center">
+  <a href="#get-murmur"><b>Get Murmur</b></a> ·
+  <a href="#bring-your-hermes-or-start-fresh">Your Hermes</a> ·
+  <a href="#what-you-can-do">Features</a> ·
+  <a href="#how-it-works">How it works</a> ·
+  <a href="docs/DEVELOPMENT.md">Develop</a>
+</p>
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/readme/hero-dark.png">
+    <img src="docs/readme/hero-light.png" alt="Murmur in a browser at umbrel.local: the sidebar with every agent, and Atlas answering a question about heat pumps" width="100%">
+  </picture>
+</p>
+
+Murmur is the app for [Hermes Agent](https://github.com/NousResearch/hermes-agent), the open-source agent that runs on your own hardware, remembers what matters, uses tools and gets things done. Murmur is the friendly face on top. There are no terminals, config files or jargon. Make a few agents, give each one a personality, and talk to them from anywhere.
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/readme/preview-dark.webp">
+    <img src="docs/readme/preview-light.webp" alt="Asking Atlas a question: he listens, searches the web, and the answer streams in" width="600">
+  </picture>
+</p>
+
+## One Murmur, everywhere
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/readme/everywhere-dark.png">
+  <img src="docs/readme/everywhere-light.png" alt="The same Murmur in a browser, as a Mac app, as a Windows app and on a phone" width="100%">
+</picture>
+
+Open it in any browser on your network, install the app for **macOS**, **Windows** or **Linux**, or add it to your phone's home screen. It's the same Murmur everywhere, with the same agents and chats, and every chat picks up where you left off on another device.
+
+## Bring your Hermes, or start fresh
+
+### Make an agent in seconds
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/readme/agents-edit-dark.png">
+  <img src="docs/readme/agents-edit-light.png" alt="Making a new agent from the Coach template: picking its name and colour before creating it" width="100%">
+</picture>
+
+Start from a template (Researcher, Writer, Planner, Coder, Coach or Chef) or from scratch. Pick a name and a colour, say what it's for, and it's ready to talk.
+
+### Or connect the Hermes you already have
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/readme/connect-dark.png">
+  <img src="docs/readme/connect-light.png" alt="Connecting Murmur to a Hermes it found on the network" width="100%">
+</picture>
+
+Hermes can live anywhere: on your Umbrel, a Mac in the closet, a Linux box, a Raspberry Pi or a server in the cloud. Murmur finds the ones on your network for you, or you can paste an address. On umbrelOS there's nothing to set up at all.
+
+### No model yet? Connect one in a minute
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/readme/onboarding-wide-dark.png">
+  <img src="docs/readme/onboarding-wide-light.png" alt="Connect a model: continue with ChatGPT, use a model on your network, or use an API key" width="100%">
+</picture>
+
+Sign in with your ChatGPT plan, use a model running on your network such as Ollama, or paste an API key from OpenRouter, OpenAI, Anthropic and others. You can switch any time.
+
+### Every chat comes with you
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/readme/history-dark.png">
+  <img src="docs/readme/history-light.png" alt="Months of chats with an agent, including ones started on Telegram and in the terminal" width="100%">
+</picture>
+
+Your agents, their memories and every past chat show up the moment you connect. That includes chats from the Hermes dashboard, Hermes Desktop, the terminal and Telegram. Nothing to import, nothing copied: it all stays in your Hermes.
+
+### More than one Hermes? No problem
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/readme/servers-dark.png">
+  <img src="docs/readme/servers-light.png" alt="Switching between three Hermes: on this Umbrel, a Mac and a cloud server" width="100%">
+</picture>
+
+Keep a Hermes at home and another at work, and switch between them in one tap.
+
+## What you can do
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/readme/buddies-dark.png">
+  <img src="docs/readme/buddies-light.png" alt="Nine Buddies, each in its own colour: idle, listening, thinking, working, needs you, speaking, done, uh-oh and asleep" width="100%">
+</picture>
+
+### Agents with a personality
+Every agent is a **Buddy**, a little character in its own colour that shows what it's doing at a glance: listening, thinking, working, waiting on you, or done. Anything that needs you rises to the top.
+
+### Chats that show their work
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/readme/work-dark.png">
+  <img src="docs/readme/work-light.png" alt="Atlas's steps, opened up: searched the web, read a page, ran a command" width="100%">
+</picture>
+
+Answers stream in as they're written. When an agent searches the web, reads a file or runs a command, you see it in plain words, and you can open any step. Stop it, steer it mid-answer, edit your last message, or have the answer read aloud.
+
+### You stay in charge
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/readme/approval-wide-dark.png">
+  <img src="docs/readme/approval-wide-light.png" alt="Hermes checked storage and listed files on the Umbrel, then asks before deleting the old phone backups" width="100%">
+</picture>
+
+On umbrelOS, your agents can work with your Umbrel itself, through the tools it offers them. Before anything changes, like deleting files, the agent asks in plain words and waits for *Allow* or *Don't allow*. Whatever is waiting on you rises to the top.
+
+### Group chats
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/readme/group-wide-dark.png">
+  <img src="docs/readme/group-wide-light.png" alt="Atlas, Juniper and Basil planning a weekend in Lisbon together" width="100%">
+</picture>
+
+Put a few agents in one room and let them work it out together. Mention one with **@** to ask just them. Each one speaks in its own colour.
+
+### In your pocket, too
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/readme/phones-dark.png">
+  <img src="docs/readme/phones-light.png" alt="On a phone: approving a cleanup on the Umbrel, a chart and a file from an agent, and an agent's page" width="100%">
+</picture>
+
+- **Answer from anywhere.** Approvals, questions and replies follow you to your phone.
+- **Pictures, files and live widgets.** Send photos and files, and get images, downloads and little interactive tools back right in the chat.
+- **Routines, memory and Telegram.** Ask for a briefing every morning at 8. See what an agent remembers, and change or forget any of it. Text your agent on Telegram after scanning a QR code.
+
+### And the details
+- **Choose the model and how hard it thinks** for each agent or chat.
+- **Give it a goal** with `/goal`, and the agent keeps working until it's done. Ask a quick side question with `/btw` without interrupting it.
+- **Search every chat**, with a command palette and keyboard shortcuts on desktop.
+- **Light and dark**, desktop notifications and a Dock badge, and fluid at every screen size.
+
+## Get Murmur
+
+<table>
+<tr>
+<td width="50%" valign="top">
+
+#### On umbrelOS
+Install **Hermes Agent**, then **Murmur**, from the Umbrel App Store. Murmur finds your Hermes by itself, so there's nothing to set up.
+
+</td>
+<td width="50%" valign="top">
+
+#### On your Mac or PC
+Download Murmur for macOS, Windows or Linux from [Releases](https://github.com/getumbrel/murmur/releases), open it, and pick your Hermes from the list.
+
+</td>
+</tr>
+</table>
+
+#### With Docker
+Run Murmur anywhere and point it at your Hermes. [`docs/STANDALONE.md`](docs/STANDALONE.md) has every option.
+
+```sh
+docker run -d -p 3000:3000 -v murmur:/data ghcr.io/getumbrel/murmur:0.1
+```
+
+Murmur works with **Hermes Agent 0.21.4 or newer**. If yours is older, Murmur shows you how to update it.
+
+## How it works
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/readme/how-it-works-dark.png">
+  <img src="docs/readme/how-it-works-light.png" alt="Your browser, desktop app and phone talk to Murmur, which connects to Hermes on your Umbrel, a computer or Pi, or in the cloud" width="100%">
+</picture>
+
+- **Hermes does the work.** Agents are Hermes profiles and chats are Hermes sessions. Murmur reads and writes the same data, so it stays in sync with the Hermes dashboard, Hermes Desktop and Telegram.
+- **Murmur is the experience.** A mobile-first React app and a tiny Node server with no dependencies. The browser never sees Hermes's access key.
+- **The desktop app** is the same Murmur in a native window, with its server built in.
+
+## Privacy and security
+
+- Everything runs on hardware you control. Murmur talks only to your Hermes.
+- On umbrelOS, Murmur sits behind your Umbrel login. On its own, you can give it a password (`MURMUR_PASSWORD`).
+- Hermes's access key stays on Murmur's server, and Murmur refuses requests from other websites.
 
 ## Develop
 
-You need Node 22.18+ (it runs the server's TypeScript directly) and Docker.
-
 ```sh
 npm install
-
-# 1. A local Hermes, the same image and settings as the Umbrel store app
-docker compose -f dev/docker-compose.yml up -d        # http://localhost:18789
-
-# 2. In one terminal, the Murmur server (proxies Hermes)
-HERMES_URL=http://localhost:18789 npm run dev:server   # :3000
-
-# 3. In another, the web app with HMR
-npm run dev:web                                        # http://localhost:5173
+docker compose -f dev/docker-compose.yml up -d        # a local Hermes, like the Umbrel app
+HERMES_URL=http://localhost:18789 npm run dev:server   # Murmur's server on :3000
+npm run dev:web                                        # the app on :5173, with hot reload
 ```
 
-The dev Hermes container is named `hermes-agent_web_1`, just like on Umbrel, and keeps its data in `dev/hermes-data/` (gitignored). The first time you open Murmur it walks you through connecting a model. Vite forwards `/hermes` and `/murmur` to the server. To point it at a server on another port, set `MURMUR_SERVER=http://localhost:3001`.
+[`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) covers the architecture, server settings, tests, releases and updating the Hermes client. [`docs/DESKTOP.md`](docs/DESKTOP.md) covers the desktop app, and [`docs/DESIGN.md`](docs/DESIGN.md) and [`docs/BRAND.md`](docs/BRAND.md) cover design and brand.
 
-| Command | |
-|---|---|
-| `npm run typecheck` | `tsc -b` for the app and the server |
-| `npm run build` | Typecheck, then build the app into `dist/` |
-| `npm start` | Serve `dist/` and proxy Hermes, the same way production does |
-| `node scripts/shot.mjs <url> <out.png> [w] [h] [dark\|light]` | Take a screenshot with Playwright |
+## License
 
-### Server environment
+[MIT](LICENSE). Murmur includes Hermes Agent's typed client, which is also MIT.
 
-| Variable | Default | |
-|---|---|---|
-| `PORT` | `3000` | |
-| `DATA_DIR` | `./data` (`/data` in Docker) | Where `murmur.json` lives |
-| `HERMES_URL` | unset, then the address chosen in the app, then `http://hermes-agent_web_1:18789` | Pins the Hermes dashboard address |
-| `HERMES_NAME` | "This Umbrel", "This computer" or the host | What the app calls the `HERMES_URL` Hermes |
-| `HERMES_TOKEN` | *(read from the dashboard page)* | A fixed Hermes session token, if Hermes has one set |
-| `HERMES_USERNAME`, `HERMES_PASSWORD` | unset | Sign-in for a password-protected Hermes |
-| `MURMUR_PASSWORD` | unset | Puts Murmur behind its own password |
-| `MURMUR_SECRET` | generated, kept in `DATA_DIR` | Signs Murmur's sign-in cookie |
-| `MURMUR_ALLOWED_HOSTS` | unset | Extra host names Murmur answers to, beyond IPs, `localhost`, `*.local`, `*.ts.net` and single-label names |
-| `MURMUR_ALLOWED_ORIGINS` | unset | Extra browser origins allowed to use Murmur (their hosts are allowed too) |
-| `STATIC_DIR` | `dist` | |
-| `MURMUR_LOCAL_MODEL_URLS` | `Ollama=http://ollama_ollama_1:11434,LocalAI=http://localai_api_1:8080` | Local model servers to offer during setup |
-
-[`docs/STANDALONE.md`](docs/STANDALONE.md) explains each one, and the server's own API.
-
-## Architecture
-
-- **`server/`** is a small, dependency-free Node server (`index.ts` is the entry). It serves the built app with an SPA fallback. It also proxies `/hermes/api/*` (REST and the `/api/ws` WebSocket) to Hermes and attaches the dashboard session token on the server side. Nothing else of Hermes is proxied, because its pages carry that token, so the browser never sees it, and everything stays same-origin behind Umbrel's login. When Hermes restarts it rotates the token, and the server picks up the new one on the first 401 or 403.
-- **`/murmur/local`** looks for model servers such as Ollama on the Umbrel network, because the browser can't reach other containers.
-- **`src/hermes/`** talks to Hermes over the same JSON-RPC socket that Hermes Desktop uses:
-  - `gateway.ts` owns the single connection and redials it, and exposes `rpc()`.
-  - `rest.ts` wraps the dashboard REST API.
-  - `vendor/` holds Hermes's own typed client and the generated wire contract.
-- **`src/state/`** has these stores:
-  - `chats.ts` is a zustand store that folds streamed events into chat items.
-  - `agents.ts` and `readiness.ts` are React Query hooks. Agents are Hermes profiles, and readiness reports whether a model is set up.
-  - `sync.ts` keeps chat lists fresh when they change anywhere.
-- **`src/features/`** holds the pieces each screen is built from: `chat/` (thread, composer, tool and approval cards), `group/`, `agents/` (the agent editor and new-group sheets), `agent-page/` with its `routines/`, `memory/` and `telegram/` sections, `voice/`, `media/`, `settings/`, `connection/` and `onboarding/`. **`src/screens/`** assembles them into routes (wouter, with screen transitions in `src/lib/transitions.ts`), and **`src/ui/`** has the primitives (Button, Sheet, ListRow, Buddy and others).
-- **Dev-only pages** (`playground.html`, `onboarding.html`, `connection.html`, `routines.html`, `ui.html`, `buddy.html`) work under `npm run dev:web` and are never part of `vite build`.
-- The design rules are in [`docs/DESIGN.md`](docs/DESIGN.md). The Hermes integration specs and the live probe scripts that back them are in [`docs/hermes/`](docs/hermes).
-
-## Brand
-
-The mark is two buddies, violet and coral, leaning together into a lowercase **m**; every agent in the app is a buddy from the same family. The lockup sets the mark beside **murmur** in Inter 600, and Umbrel signs off quietly with "Murmur by Umbrel".
-
-- [`docs/BRAND.md`](docs/BRAND.md) has the colours, clear space, minimum sizes, voice and the rules for using the mark.
-- `src/ui/brand.tsx` has the components (`MurmurMark`, `MurmurWordmark`, `ByUmbrel`) and `design/icon/` the exported icons.
-- `/buddy.html` (dev only) shows the whole system live.
-
-## Updating the vendored Hermes client
-
-`src/hermes/vendor/` is an exact copy of `apps/shared/src/` from `NousResearch/hermes-agent`. Its tag must match the Hermes version on the Umbrel store. When the Hermes Agent app is bumped:
-
-1. Find the new tag and image digest in [`hermes-agent/docker-compose.yml`](https://github.com/getumbrel/umbrel-apps/blob/master/hermes-agent/docker-compose.yml) in umbrel-apps.
-2. Copy the files in, with Hermes's MIT license (its notice has to ship with the copy; the Docker image carries it as `licenses/hermes-agent.LICENSE`):
-   ```sh
-   TAG=v2026.9.24
-   for f in gateway-contract.generated.ts gateway-events.ts json-rpc-channel.ts json-rpc-gateway.ts; do
-     curl -fsSL "https://raw.githubusercontent.com/NousResearch/hermes-agent/$TAG/apps/shared/src/$f" -o "src/hermes/vendor/$f"
-   done
-   curl -fsSL "https://raw.githubusercontent.com/NousResearch/hermes-agent/$TAG/LICENSE" -o src/hermes/vendor/LICENSE
-   ```
-3. Update the tag in `src/hermes/vendor/README.md` and the image in `dev/docker-compose.yml`.
-4. Run `npm run typecheck`. Contract drift shows up as type errors.
-5. Re-run the probes in `docs/hermes/scripts/` against the new dev Hermes.
-
-## Desktop
-
-Murmur also runs as a desktop app for macOS, Windows and Linux. It's an Electron window onto the same web app, with Murmur's server running inside the app. See [`docs/DESKTOP.md`](docs/DESKTOP.md) for signing, releases and updates.
-
-```sh
-npm run desktop:dev                          # the app in Electron, with Vite's hot reload
-npm run desktop:dist                         # installers for this computer, in desktop/release/
-npm run desktop:dist -- --mac --x64 --arm64  # or name the platforms and architectures
-```
-
-`.github/workflows/desktop.yml` builds and smoke-tests all three platforms on every pull request that touches the app. On a version tag, it attaches the installers to the release.
-
-## Deploy
-
-- **Image.** The `Dockerfile` builds the app with `node:22-alpine` and ships `server/`, `dist/` and the license notices on plain Alpine with just the `node` binary copied in (no npm, npx, corepack or yarn), which is about 56 MB compressed. Both base images are pinned by digest. The runtime stage only copies files, so cross-building for the other architecture needs no emulation. The image runs as user 1000:1000, keeps `/data` at mode 0700, listens on `:3000`, and has a health check at `/healthz`.
-  ```sh
-  docker build -t murmur .
-  docker run --init -p 3000:3000 -e HERMES_URL=http://<hermes-host>:18789 murmur
-  ```
-- **Release.** Pushing a `v*` tag runs `.github/workflows/release.yml`. It first checks that the tag matches `version` in both `package.json` and `umbrel/murmur/umbrel-app.yml`, then builds `linux/amd64` and `linux/arm64` images and pushes them to `ghcr.io/getumbrel/murmur`. The run summary prints the digest to pin. `.github/workflows/desktop.yml` attaches the desktop apps to the same release.
-- **CI.** `.github/workflows/ci.yml` runs the typecheck, the build and a Docker build on every push to `main` (or `master`) and every pull request, then starts the image and checks `/healthz`, the app, the manifest and the `/data` permissions. There are no unit tests yet. Workflow actions are pinned to commit SHAs, and `.github/dependabot.yml` proposes monthly bumps for them and for the base images.
-- **umbrelOS.** The store app lives in [`umbrel/murmur/`](umbrel/murmur), and its icon and screenshots in [`umbrel/gallery/murmur/`](umbrel/gallery/murmur). `sh umbrel/gallery/tools/retake.sh` retakes the screenshots on a throwaway Hermes with demo data. See [`umbrel/README.md`](umbrel/README.md) for how to submit it, and for the planned move from Hermes's app-proxy auth bypass to a dedicated exported token.
+<p align="center">
+  <br>
+  <img src="docs/readme/icon-light.png" width="40" height="40" alt=""><br>
+  <sub><b>Murmur</b> by <a href="https://umbrel.com">Umbrel</a></sub>
+</p>
