@@ -52,6 +52,9 @@ const NAMES: Record<string, string> = {
 
 export const modelsKey = ['models'] as const
 
+/** Hermes's own model runtime (local-runtime.ts), in /api/model/options. */
+export const LOCAL_SLUG = 'llamacpp'
+
 export function useModels() {
   const qc = useQueryClient()
   return useQuery({
@@ -78,7 +81,7 @@ export function useModels() {
           if (endpoint) return { ...base, name: endpoint.name, detail: hostOf(endpoint.base_url), remove: { kind: 'endpoint', id: endpoint.id } }
           if (key) return { ...base, detail: keyHint(key[1].redacted_value), remove: { kind: 'key', env: key[0] } }
           // Hermes runs it itself (local-runtime.ts).
-          if (p.slug === 'llamacpp') return { ...base, detail: 'Runs privately' }
+          if (p.slug === LOCAL_SLUG) return { ...base, detail: 'Runs privately' }
           return { ...base, detail: 'Connected' }
         })
         // The one in use first.
@@ -113,8 +116,9 @@ export type Confirm = (message: string) => Promise<boolean>
 
 type SetResult = { ok: boolean; confirm_required?: boolean; confirm_message?: string }
 
-export async function setMainModel(provider: string, model: string, confirm?: Confirm) {
-  const body = { scope: 'main', provider, model }
+/** Sets the main agent's model, or another agent's when `profile` says which. */
+export async function setMainModel(provider: string, model: string, confirm?: Confirm, profile?: string) {
+  const body = { scope: 'main', provider, model, ...(profile && { profile }) }
   let res = await api.post<SetResult>('/api/model/set', body)
   if (!res.ok && res.confirm_required) {
     if (!(await (confirm?.(res.confirm_message || 'This model costs more to use.') ?? true))) return false
@@ -143,6 +147,35 @@ async function adoptAnother(except: string) {
   if (next) await adopt(next.slug)
 }
 
+/**
+ * Moves an agent off models that are about to be deleted (local-runtime.ts):
+ * to another model on the same machine when there is one, so private stays
+ * private; else to another connected service; else to none, so Murmur asks for
+ * a model again instead of pointing at a file that's gone. `profile` is
+ * omitted for the main agent.
+ */
+export async function moveOff(gone: ReadonlySet<string>, profile?: string) {
+  const query = profile ? `?profile=${encodeURIComponent(profile)}` : ''
+  const options = await api.get<Options>(`/api/model/options${query}`)
+  const rows = options.providers
+    .filter((p) => p.authenticated && p.slug !== 'moa')
+    .map((p) => (p.slug === LOCAL_SLUG ? { ...p, models: p.models.filter((m) => !gone.has(m)) } : p))
+    .filter((p) => p.models.length)
+  const next = rows.find((p) => p.slug === LOCAL_SLUG) ?? rows[0]
+  if (!next) {
+    // What Hermes does itself when the endpoint in use is deleted: no provider, so it isn't ready.
+    await api.put(`/api/config${query}`, { config: { model: { provider: '', base_url: '' } } })
+    return
+  }
+  let model = next.slug === LOCAL_SLUG ? next.models[0] : ''
+  if (!model) {
+    const params = `provider=${encodeURIComponent(next.slug)}${profile ? `&profile=${encodeURIComponent(profile)}` : ''}`
+    const rec = await api.get<{ model: string }>(`/api/model/recommended-default?${params}`).catch(() => ({ model: '' }))
+    model = rec.model || next.models[0]
+  }
+  await setMainModel(next.slug, model, undefined, profile)
+}
+
 export async function disconnect(service: Service) {
   const r = service.remove
   if (!r) return
@@ -161,6 +194,8 @@ export function useRefreshModels() {
         qc.invalidateQueries({ queryKey: modelsKey }),
         qc.invalidateQueries({ queryKey: ['readiness'] }),
         qc.invalidateQueries({ queryKey: ['agents'] }),
+        // Each agent's own picker.
+        qc.invalidateQueries({ queryKey: ['model-options'] }),
       ]),
     [qc],
   )

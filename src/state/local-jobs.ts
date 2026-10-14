@@ -8,6 +8,8 @@ export type Status = {
   runtime_installed: boolean
   active_model_id: string | null
   models: { id: string; size_bytes: number }[]
+  /** What's in memory now ("loaded", "loading"…), by id. */
+  loaded_models?: Record<string, string>
 }
 
 export type HardwareRow = {

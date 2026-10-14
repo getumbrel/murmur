@@ -10,6 +10,7 @@ import { cn } from '@/lib/cn'
 import { useAgent } from '@/state/agents'
 import {
   disconnect,
+  LOCAL_SLUG,
   modelName,
   planUsageLine,
   setMainModel,
@@ -21,6 +22,7 @@ import {
 } from '@/state/models'
 import { ask } from './ask'
 import { ConnectFlow } from './connect-flow'
+import { LocalService } from './local-service'
 import { Tile } from './page'
 import { PicturesRow } from './pictures-row'
 import { Swap } from './swap'
@@ -88,7 +90,8 @@ export function ModelsSection() {
         footer={`New chats with ${main?.name ?? 'your main agent'} start with this model. You can switch in any chat.`}
       >
         <ListRow
-          title={data.model ? modelName(data.model) : 'None yet'}
+          // Only a model a connected service still offers (one removed leaves its name behind).
+          title={current && data.model ? modelName(data.model) : 'None yet'}
           subtitle={current?.name}
           chevron={data.services.length > 0}
           onClick={data.services.length ? () => setPicking(true) : undefined}
@@ -107,9 +110,13 @@ export function ModelsSection() {
             <PicturesRow />
           </>
         )}
-        {others.map((s) => (
-          <ListRow key={s.slug} icon={<ServiceTile service={s} />} title={s.name} subtitle={s.detail} trailing={trailingFor(s)} />
-        ))}
+        {others.map((s) =>
+          s.slug === LOCAL_SLUG ? (
+            <LocalService key={s.slug} service={s} services={data.services} />
+          ) : (
+            <ListRow key={s.slug} icon={<ServiceTile service={s} />} title={s.name} subtitle={s.detail} trailing={trailingFor(s)} />
+          ),
+        )}
         <ListRow
           icon={<Plus size={20} strokeWidth={2} className="text-accent" />}
           title={<span className="text-accent">Add a service</span>}

@@ -9,6 +9,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, HermesError } from '@/hermes/rest'
+import { listProfiles } from '@/hermes/compat'
 import {
   deviceModels,
   hardwareOf,
@@ -25,6 +26,7 @@ import {
 } from './local-jobs'
 import { PICKS, stagedId, type ModelPick } from './local-tiers'
 import { hfModel, lookupError, parseModelRef, pickFile, type FileGroup, type HFModel } from './local-hf'
+import { moveOff } from './models'
 
 export type { DeviceModel, DeviceModels, DeviceSetup, SetupStage } from './local-jobs'
 
@@ -331,4 +333,49 @@ export function useFindModel() {
     }
   }, [])
   return { ...state, find }
+}
+
+// ── Removing downloaded models ──────────────────────────────────────────────
+
+export type Downloaded = { id: string; bytes: number }
+
+/** The models on Hermes's machine, with their size on disk. */
+export function useDownloaded(enabled = true) {
+  return useQuery({
+    queryKey: [...localRuntimeKey, 'downloaded'],
+    enabled,
+    staleTime: 30_000,
+    queryFn: async (): Promise<Downloaded[]> =>
+      (await api.get<Status>(`${M}/status`)).models.map((m) => ({ id: m.id, bytes: m.size_bytes })),
+  })
+}
+
+/** How Hermes spells its own runtime in a profile's provider. */
+export const LOCAL_PROVIDER = /^llama[.-]?cpp$/i
+
+/**
+ * Deletes downloaded models. Every agent thinking with one moves off it first
+ * (models.ts `moveOff`), then each is let go from memory and its files are
+ * deleted. Returns the bytes freed.
+ */
+export async function removeDownloaded(ids: string[]) {
+  const gone = new Set(ids)
+  const [status, profiles] = await Promise.all([api.get<Status>(`${M}/status`), listProfiles()])
+  const using = profiles.filter(
+    (p) => LOCAL_PROVIDER.test(String(p.provider ?? '')) && gone.has(String(p.model ?? '')),
+  )
+  for (const p of using) await moveOff(gone, p.is_default ? undefined : p.name)
+  let freed = 0
+  for (const id of ids) {
+    // Not in memory, or the server's off: nothing to let go of.
+    if (status.loaded_models?.[id]) await api.post(`${M}/eject`, { model_id: id }).catch(() => {})
+    try {
+      await api.delete(`${M}/models/${encodeURIComponent(id)}`)
+    } catch (e) {
+      // Gone already is what was wanted.
+      if (!(e instanceof HermesError && e.status === 404)) throw e
+    }
+    freed += status.models.find((m) => m.id === id)?.size_bytes ?? 0
+  }
+  return freed
 }

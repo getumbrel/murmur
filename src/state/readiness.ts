@@ -7,6 +7,9 @@ import { rpc, useConnection } from '@/hermes/gateway'
 
 export type RuntimeCheck = { ok: boolean; provider?: string; model?: string; source?: string; error?: string }
 
+/** Hermes's "readiness check still in progress; retrying next tick". */
+const STILL_CHECKING = 5097
+
 export const readinessKey = (profile?: string) => ['readiness', profile ?? 'default'] as const
 
 export function useRuntimeCheck(profile?: string) {
@@ -14,13 +17,19 @@ export function useRuntimeCheck(profile?: string) {
     queryKey: readinessKey(profile),
     queryFn: async () => {
       const params = profile ? { profile } : {}
-      try {
-        return await rpc<RuntimeCheck>('setup.runtime_check', params, 20_000)
-      } catch {
-        // Older or busy backends: the boot record is the next best answer.
-        const s = await rpc<{ provider_configured?: boolean }>('setup.status', params, 10_000)
-        return { ok: !!s.provider_configured }
+      for (let tries = 0; ; tries++) {
+        try {
+          return await rpc<RuntimeCheck>('setup.runtime_check', params, 20_000)
+        } catch (e) {
+          // Still working it out: ask again. The boot record below only ever turns to "yes",
+          // so it misses a model that's just been removed.
+          if ((e as { code?: number } | null)?.code !== STILL_CHECKING || tries >= 3) break
+          await new Promise((done) => setTimeout(done, 1000))
+        }
       }
+      // Older or busy backends: the boot record is the next best answer.
+      const s = await rpc<{ provider_configured?: boolean }>('setup.status', params, 10_000)
+      return { ok: !!s.provider_configured }
     },
     staleTime: 60_000,
   })
