@@ -70,10 +70,10 @@ Murmur comes with Hermes built in, so you can start fresh with nothing else to i
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/readme/onboarding-wide-dark.png">
-  <img src="docs/readme/onboarding-wide-light.png" alt="Connect a model: continue with ChatGPT, use a model on your network, or use an API key" width="100%">
+  <img src="docs/readme/onboarding-wide-light.png" alt="Connect a model: continue with ChatGPT, run a model on the Umbrel itself, use a model server, or an API key" width="100%">
 </picture>
 
-Sign in with your ChatGPT plan, use a model running on your network such as Ollama, or paste an API key from OpenRouter, OpenAI, Anthropic and others. You can switch any time.
+Sign in with your ChatGPT plan, or run a model right on your Umbrel: Murmur picks one that fits its memory and sets it up in one tap. Or use Ollama or another model server, or an API key from OpenRouter, OpenAI, Anthropic and others. You can switch any time.
 
 ### Every chat comes with you
 
@@ -179,7 +179,7 @@ docker compose up -d
 Or run Murmur alone and point it at your Hermes. [`docs/STANDALONE.md`](docs/STANDALONE.md) has every option.
 
 ```sh
-docker run -d -p 3000:3000 -v murmur:/data ghcr.io/getumbrel/murmur:0.3
+docker run -d -p 3000:3000 -v murmur:/data ghcr.io/getumbrel/murmur:0.4
 ```
 
 Murmur comes with **Hermes 0.22.0**, and works with any **Hermes Agent 0.21.4 or newer**. If yours is older, Murmur shows you how to update it.
