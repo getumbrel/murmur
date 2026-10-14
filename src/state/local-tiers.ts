@@ -213,9 +213,11 @@ export const usable = (hw: Hardware) => (hw.uma ? hw.vramUsable : hw.vramUsable 
 //
 // - The window it starts at. Hermes climbs its ladder (64K, 96K, 144K, 216K,
 //   the model's own 256K) as far as its estimate fits 80% of the RAM the
-//   machine *has*, not what's free (hardware.probe_budget(planning=True);
-//   launch_budget() never narrows unified memory). So a 16 GB Umbrel starts
-//   the 2B and 4B at their full 256K, however little is free.
+//   machine has (hardware.probe_budget(planning=True)). Upstream stops there,
+//   so a 16 GB machine starts the 2B and 4B at 256K however little is free.
+//   Umbrel's image (hermes-agent-umbrel v0.22.0-3, which Murmur ships) also
+//   narrows unified memory to 80% of what's free, never below 64K, and grows
+//   the window again when memory frees up.
 // - What that window really costs. llama.cpp zeroes the whole KV cache when it
 //   loads, so all of it is held from the first token. Hermes's estimate adds
 //   1.5 GiB for graphics-card contexts and a 2 GB logits buffer that a CPU
@@ -224,9 +226,9 @@ export const usable = (hw: Hardware) => (hw.uma ? hw.vramUsable : hw.vramUsable 
 //   Hermes's flags, at 64K and 256K).
 //
 // Murmur prices a pick at that window as it's really held, against what's
-// free now, so a pick that fits starts and stays up. If Hermes ever sizes the
-// window to free memory (as it does for graphics cards), only `startWindow`
-// changes: smaller windows, more that fits.
+// free now, so a pick that fits starts and stays up. A Hermes without that
+// narrowing (the Hermes Agent app before it moves to the same image) starts
+// bigger than this assumes, so a tight pick there may not start.
 
 /** The ladder Hermes climbs (context_policy.ladder): 64K, then half as much again, up to the model's own. */
 const NATIVE = 256 * 1024
@@ -238,9 +240,11 @@ const RUNTIME = 0.8 * GB
 
 /** The window Hermes starts a pick at on this machine (context_policy.initial_window, with the capacity budget). */
 export function startWindow(pick: Shape, hw: Hardware) {
-  const budget = hw.uma ? hw.ramTotal * 0.8 : hw.vramUsable
   const estimate = (window: number) => pick.weights + windowBytes(pick, window) + OVERHEAD + LOGITS
-  return LADDER.filter((w) => estimate(w) <= budget).at(-1) ?? FLOOR
+  const within = (budget: number) => LADDER.filter((w) => estimate(w) <= budget).at(-1) ?? FLOOR
+  if (!hw.uma) return within(hw.vramUsable)
+  // Planned from the RAM it has, then narrowed to what's free (never below 64K).
+  return Math.min(within(hw.ramTotal * 0.8), within(hw.ramAvailable * 0.8))
 }
 
 /** The memory a pick really holds once started on a CPU or integrated graphics. */

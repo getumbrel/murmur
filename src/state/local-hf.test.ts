@@ -186,9 +186,9 @@ describe('the default, by what’s free', () => {
 
   it('a smaller quant when the 4-bit one doesn’t fit', () => {
     const nine = [one('M-Q6_K.gguf', 7.4 * GB), one('M-Q4_K_M.gguf', 5.7 * GB), one('M-Q3_K_M.gguf', 4.4 * GB)]
-    // 10 GB free, 8 usable: the Q4_K_M would hold about 9.4 (weights, half again for its 64K window, runtime), the Q3_K_M 8.5.
-    expect(pick(nine, cpu(10))).toEqual(['Q3_K_M', 'tight'])
-    expect(pick(nine, cpu(11))).toEqual(['Q3_K_M', 'fits'])
+    // Hermes starts each at 64K here: 9 GB free only squeezes the Q3_K_M in, 10 fits it, 13 fits the Q4_K_M.
+    expect(pick(nine, cpu(9))).toEqual(['Q3_K_M', 'tight'])
+    expect(pick(nine, cpu(10))).toEqual(['Q3_K_M', 'fits'])
     expect(pick(nine, cpu(13))).toEqual(['Q4_K_M', 'fits'])
   })
 
@@ -212,22 +212,20 @@ describe('the default, by what’s free', () => {
 
 describe('fit', () => {
   it('prices a repo one of the picks comes from exactly', () => {
-    // On 32 GB Hermes starts a 9B at 256K. The Qwen3.5 9B's window is small (8 of 32 layers attend):
-    // it holds about 11.1 GB. A stranger's the same size is guessed at a dense model's, about 17.9.
+    // The Qwen3.5 9B's window is small (8 of 32 layers attend); a stranger the same size is guessed at a
+    // dense model's, so with less free it's judged too big where the known one still fits.
     expect(fitOf(5_680_522_464, 'unsloth/Qwen3.5-9B-GGUF', cpu(15, 32))).toBe('fits')
-    expect(fitOf(5_680_522_464, 'someone/Other-9B-GGUF', cpu(15, 32))).toBe('too-big')
+    expect(fitOf(5_680_522_464, 'someone/Other-9B-GGUF', cpu(9, 32))).toBe('too-big')
     expect(fitOf(29 * GB, 'someone/Other-27B-GGUF', cpu(10))).toBe('too-big')
   })
 
   it('in RAM, prices what it really holds at the window Hermes starts it at, not Hermes’s 64K estimate', () => {
-    // The 2B on a 16 GB Umbrel starts at 256K and holds about 3.9 GB, more than Hermes's estimate of 3.4:
-    // with 4 GB free, 3.2 usable, it only squeezes in; with 3 GB free it can't.
+    // With little free, Hermes starts the 2B at 64K, where it holds about 2.6 GB: 4 GB free fits it,
+    // 3 GB only squeezes it in, 2 GB can't.
     const twoB = 1_280_835_840
-    expect(fitOf(twoB, 'unsloth/Qwen3.5-2B-GGUF', cpu(5))).toBe('fits')
-    expect(fitOf(twoB, 'unsloth/Qwen3.5-2B-GGUF', cpu(4))).toBe('tight')
-    expect(fitOf(twoB, 'unsloth/Qwen3.5-2B-GGUF', cpu(3))).toBe('too-big')
-    // On an 8 GB one it starts at 144K and holds less: 3.1 GB, so 4 GB free is room enough.
-    expect(fitOf(twoB, 'unsloth/Qwen3.5-2B-GGUF', cpu(4, 8))).toBe('fits')
+    expect(fitOf(twoB, 'unsloth/Qwen3.5-2B-GGUF', cpu(4))).toBe('fits')
+    expect(fitOf(twoB, 'unsloth/Qwen3.5-2B-GGUF', cpu(3))).toBe('tight')
+    expect(fitOf(twoB, 'unsloth/Qwen3.5-2B-GGUF', cpu(2))).toBe('too-big')
   })
 
   it('agrees with the picks Murmur offers', () => {
@@ -252,12 +250,12 @@ describe('fit', () => {
   })
 
   it('says what it really needs when it’s too big', () => {
-    const c = pickFile([one('Qwen3.5-2B-Q4_K_M.gguf', 1_280_835_840)], { repo: 'unsloth/Qwen3.5-2B-GGUF' }, cpu(3))
-    const model = hfModel('unsloth/Qwen3.5-2B-GGUF', c as Extract<typeof c, { group: unknown }>, cpu(3), new Set())
+    const c = pickFile([one('Qwen3.5-2B-Q4_K_M.gguf', 1_280_835_840)], { repo: 'unsloth/Qwen3.5-2B-GGUF' }, cpu(2))
+    const model = hfModel('unsloth/Qwen3.5-2B-GGUF', c as Extract<typeof c, { group: unknown }>, cpu(2), new Set())
     expect(model.hf.fit).toBe('too-big')
     expect(model.fits).toBe(false)
     // Sizes keep their unit on the same line (a no-break space).
-    expect(fitLine(model.hf).replace(/\s/g, ' ')).toBe('Needs about 3.9 GB of memory; 3.0 GB is free.')
+    expect(fitLine(model.hf).replace(/\s/g, ' ')).toBe('Needs about 2.6 GB of memory; 2.0 GB is free.')
   })
 
   it('with a graphics card, as Hermes reckons it', () => {
