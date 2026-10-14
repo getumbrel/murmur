@@ -73,7 +73,7 @@ Murmur comes with Hermes built in, so you can start fresh with nothing else to i
   <img src="docs/readme/onboarding-wide-light.png" alt="Connect a model: continue with ChatGPT, run a model on the Umbrel itself, use a model server, or an API key" width="100%">
 </picture>
 
-Sign in with your ChatGPT plan, or run a model right on your Umbrel: Murmur picks one that fits its memory and sets it up in one tap. Or use Ollama or another model server, or an API key from OpenRouter, OpenAI, Anthropic and others. You can switch any time.
+Sign in with your ChatGPT plan, or run a model right on your Umbrel: Murmur picks one that fits its memory and sets it up in one tap, using its graphics when it has them. Or use Ollama or another model server, or an API key from OpenRouter, OpenAI, Anthropic and others. You can switch any time.
 
 ### Every chat comes with you
 
