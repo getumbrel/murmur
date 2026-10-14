@@ -22,6 +22,7 @@ import { EFFORT, prettyModel, thinkingOf, type Thinking } from '@/features/model
 import { useThinkingDefault, type ModelPick } from '@/features/model/use-models'
 import { commandList, isCurated, type CommandName } from '@/features/commands/commands'
 import { useCatalog } from '@/features/commands/use-catalog'
+import { useUmbrelKey } from '@/features/chat/umbrel-key'
 import { stopSpeaking, useSpeech } from '@/features/voice/speech'
 import { useConnection } from '@/hermes/gateway'
 import { useIsWide } from '@/lib/use-media'
@@ -167,6 +168,8 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
     composer.current?.setText(text)
     composer.current?.focus()
   }
+  // A pasted umbrelOS key: connect every agent here instead of sending it (umbrel-key.tsx).
+  const umbrelKey = useUmbrelKey({ agent, agents: agents.data ?? [], onConnected: fill })
 
   // Edit and resend: your last message goes back in the composer.
   const editable = useChats((s) => (id ? editableMessage(s.chats[id]) : undefined))
@@ -475,6 +478,8 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
               onCancelEdit={cancelRewrite}
               onTypingChange={setTyping}
               voice={agentId}
+              above={umbrelKey.above}
+              onBeforeSend={umbrelKey.beforeSend}
               accessory={
                 agent && (
                   <ModelChip

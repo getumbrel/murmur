@@ -12,6 +12,7 @@ import { markWelcomed, useReadiness } from '@/state/readiness'
 import { useAgents, useFreshAgents } from '@/state/agents'
 import { usePicturesSync } from '@/state/pictures'
 import { useUmbrelContextSync } from '@/state/umbrel-context'
+import { useUmbrelMcpSync } from '@/state/umbrel-mcp'
 import { ensureTimezone } from '@/state/timezone'
 import { useGroupSummaries } from '@/state/groups'
 import { useChats } from '@/state/chats'
@@ -254,6 +255,7 @@ function Background() {
   usePicturesSync(agents?.map((a) => a.id))
   // On an Umbrel, every agent knows it runs there, not just the main one.
   useUmbrelContextSync(agents?.map((a) => a.id))
+  useUmbrelMcpSync(agents?.map((a) => a.id))
   useEffect(() => setMainAgent(agents?.find((a) => a.isDefault)?.id), [agents])
   useSeenTracking()
   useDocumentTitle()

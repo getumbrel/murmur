@@ -64,6 +64,10 @@ type Props = {
   onTypingChange?: (typing: boolean) => void
   /** Offers dictation (on secure pages), transcribed with this agent's speech settings. */
   voice?: string
+  /** Shown above the field, from what's typed (e.g. an offer to handle a pasted key safely). */
+  above?: (text: string) => ReactNode
+  /** Sees the text before it's sent; return true when it handled it, and nothing is sent. */
+  onBeforeSend?: (text: string) => boolean
 }
 
 type Attachment = { id: string; file: File; url?: string }
@@ -102,6 +106,8 @@ export function Composer({
   onCancelEdit,
   onTypingChange,
   voice,
+  above,
+  onBeforeSend,
 }: Props) {
   const [text, setText, clearDraft] = useDraft(draftKey)
 
@@ -198,6 +204,7 @@ export function Composer({
 
   const send = () => {
     if (disabled || !hasContent) return
+    if (onBeforeSend?.(text)) return
     const command = onCommand && !images.length ? parseCommand(text) : null
     if (command) {
       if (onCommand?.(command.name, command.arg) === false) return
@@ -320,6 +327,7 @@ export function Composer({
       <div className={cn('px-3 pb-[max(env(safe-area-inset-bottom),12px)] sm:px-6 sm:pb-6', className)}>
         <div className="relative">
           {commands && <CommandPalette state={palette} id={paletteId} />}
+          {above?.(text)}
           <div
             className="composer glass relative rounded-[26px] shadow-float"
             data-busy={busy || undefined}

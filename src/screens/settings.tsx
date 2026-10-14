@@ -4,7 +4,7 @@ import { ArrowUpRight, ChevronRight, LogOut, Server, Sparkles, Users } from 'luc
 import { ListGroup, ListRow } from '@/ui/list'
 import { Segmented } from '@/ui/segmented'
 import { Orb } from '@/ui/orb'
-import { ByUmbrel, MurmurMark } from '@/ui/brand'
+import { ByUmbrel, MurmurMark, UmbrelMark } from '@/ui/brand'
 import { useIsWide } from '@/lib/use-media'
 import { api } from '@/hermes/rest'
 import { useConnection } from '@/hermes/gateway'
@@ -16,6 +16,8 @@ import { Stack } from '@/features/settings/stack'
 import { useAgentActions } from '@/features/home/actions'
 import { usePicturesSync } from '@/state/pictures'
 import { ModelsSection } from '@/features/settings/models-section'
+import { UmbrelSection } from '@/features/settings/umbrel-section'
+import { useHermesOnUmbrel, useUmbrelMcp } from '@/state/umbrel-mcp'
 import { AskHost } from '@/features/settings/ask'
 import { isBuiltinHermes, isUmbrelHermes, useOnUmbrel } from '@/features/connection/hermes-connection-form'
 import { HermesSection } from '@/features/settings/hermes-section'
@@ -39,6 +41,7 @@ const SECTIONS = {
   agents: { title: 'Agents', body: AgentsSection },
   // Where Hermes runs. Not "Hermes": that's also the main agent's name, right above it.
   hermes: { title: 'Server', body: HermesSection },
+  umbrel: { title: 'Umbrel', body: UmbrelSection },
   about: { title: 'About', body: AboutSection },
 } as const
 
@@ -82,6 +85,9 @@ function Root() {
   const main = agents?.find((a) => a.isDefault)
   const connection = useHermesConnection().connection
   const session = useMurmurSession()
+  // Only where Hermes runs on an Umbrel: that's where umbrelOS's MCP server is.
+  const onUmbrel = useHermesOnUmbrel().data === true
+  const umbrel = useUmbrelMcp(agents?.map((a) => a.id), onUmbrel)
 
   return (
     <>
@@ -147,6 +153,19 @@ function Root() {
           chevron
           onClick={() => navigate('/settings/hermes')}
         />
+        {onUmbrel && (
+          <ListRow
+            icon={
+              <span className="flex size-7 flex-none items-center justify-center rounded-sm bg-[#0e0e10] text-white" aria-hidden>
+                <UmbrelMark size={17} />
+              </span>
+            }
+            title="Umbrel"
+            detail={umbrel.data ? (umbrel.data.connected.length ? 'Connected' : 'Not connected') : undefined}
+            chevron
+            onClick={() => navigate('/settings/umbrel')}
+          />
+        )}
         <ListRow icon={<AppIcon size={29} />} title="About" chevron onClick={() => navigate('/settings/about')} />
       </ListGroup>
 

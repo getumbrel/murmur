@@ -13,6 +13,7 @@ import { gateway, rpc } from '@/hermes/gateway'
 import { ensureAgentTimezone } from '@/state/timezone'
 import { hideDesktopToolsets } from '@/state/toolsets'
 import { ensureUmbrelContext } from '@/state/umbrel-context'
+import { ensureUmbrelMcp } from '@/state/umbrel-mcp'
 import { hexHue, hueFor } from '@/lib/hues'
 import { personalityPrompt, type Personality } from '@/features/agents/agent-editor'
 import { parseUserMessage } from '@/features/media/parse'
@@ -368,6 +369,7 @@ export async function createAgent(input: AgentInput) {
   void hideDesktopToolsets(id).catch(() => {})
   // On an Umbrel, what the main agent knows about running there (Umbrel's Hermes only gives it to the main agent).
   void ensureUmbrelContext(id).catch(() => {})
+  void ensureUmbrelMcp(id).catch(() => {})
   await rpc('profiles.configure', { name: id, ui_meta: meta }).then(
     () => setPendingLook(id),
     () => {}, // Left pending: the next read retries it.
