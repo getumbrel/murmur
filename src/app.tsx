@@ -11,6 +11,7 @@ import { wireSessionLists } from '@/state/sync'
 import { useReadiness } from '@/state/readiness'
 import { useAgents, useFreshAgents } from '@/state/agents'
 import { usePicturesSync } from '@/state/pictures'
+import { useUmbrelContextSync } from '@/state/umbrel-context'
 import { ensureTimezone } from '@/state/timezone'
 import { useGroupSummaries } from '@/state/groups'
 import { useChats } from '@/state/chats'
@@ -235,6 +236,8 @@ function Background() {
   useFreshAgents()
   // New agents (here or from other apps) get "Let agents make pictures" too.
   usePicturesSync(agents?.map((a) => a.id))
+  // On an Umbrel, every agent knows it runs there, not just the main one.
+  useUmbrelContextSync(agents?.map((a) => a.id))
   useEffect(() => setMainAgent(agents?.find((a) => a.isDefault)?.id), [agents])
   useSeenTracking()
   useDocumentTitle()
