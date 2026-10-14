@@ -6,7 +6,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { ChevronRight, MoreHorizontal, Pencil, PencilLine, Trash2 } from 'lucide-react'
 import { Orb, OrbStack } from '@/ui/orb'
 import { Button } from '@/ui/button'
-import { fetchAgentChats, useAgents, type Agent } from '@/state/agents'
+import { fetchAgentChats, useAgentChats, useAgents, type Agent } from '@/state/agents'
 import { useAgentStatus, useBusyAgents, useChatUnread, useNeedsYou } from '@/state/status'
 import { prefetchGroup, useGroupSummaries } from '@/state/groups'
 import { cn } from '@/lib/cn'
@@ -222,7 +222,14 @@ function AgentRow({
   const warm = () => void qc.prefetchQuery({ queryKey: ['chats', agent.id], queryFn: () => fetchAgentChats(agent.id), staleTime: 10_000 })
   // With the open chat listed beneath, the highlight belongs to it rather than the agent.
   const showsChat = useShowsChat(agent.id, expanded, openChatId)
-  const href = status.state === 'waiting' && status.chatId ? `/chat/${agent.id}/${status.chatId}` : `/chat/${agent.id}`
+  // On a phone's Home, an agent with several chats opens on its page to pick one; with one it opens straight into it.
+  const many = (useAgentChats(roomy ? agent.id : undefined).data?.length ?? 0) > 1
+  const href =
+    status.state === 'waiting' && status.chatId
+      ? `/chat/${agent.id}/${status.chatId}`
+      : many
+        ? `/agent/${agent.id}`
+        : `/chat/${agent.id}`
   const active = Boolean(status.activity && status.state !== 'idle' && status.state !== 'done')
   const unread = useChatUnread(agent.lastChat?.id, agent.lastChat?.at) && !active
 
