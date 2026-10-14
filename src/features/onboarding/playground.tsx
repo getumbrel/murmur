@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { MotionConfig } from 'motion/react'
 import { Button } from '@/ui/button'
 import { AgentEditorSheet } from '@/features/agents/agent-editor'
 import { NewGroupSheet } from '@/features/agents/new-group'
+import type { DeviceModel, DeviceSetup } from '@/state/local-jobs'
 import { ConnectModel, type ChatGPTFlow, type ConnectOption, type ConnectState } from './connect'
 import { Done } from './done'
 import { FirstAgent } from './first-agent'
@@ -14,6 +15,9 @@ import { SetupPlayground } from './setup-playground'
 // land on any state: ?screen=connect&flow=waiting&open=chatgpt&chrome=0,
 // ?screen=done&name=Juniper&hue=28. Where your agents live, Getting ready and
 // "Your agents are here": ?screen=where|ready|here (see setup-playground.tsx).
+// A model on this Umbrel: ?screen=connect&open=device&device=idle|tight|one|
+// preparing|downloading|paused|starting|ready|error|none (&umbrel=0 for "this
+// computer"); an Ollama with no models yet: &local=empty&open=local.
 
 const params = new URLSearchParams(location.search)
 const param = (k: string) => params.get(k) ?? undefined
@@ -52,6 +56,82 @@ const SERVERS = [
   },
 ]
 
+const EMPTY_OLLAMA = [{ name: 'Ollama', baseUrl: 'http://ollama_ollama_1:11434/v1', models: [] }]
+
+// What Hermes's hardware answer turns into on a 16 GB Umbrel with about 8 GB free (local-tiers.ts).
+const DEVICE_MODELS: DeviceModel[] = [
+  { id: 'qwen3.5-4b', name: 'Qwen3.5 4B', bytes: 2_740_937_888, speed: 'Fast', smarts: 'Good', hue: 278, recommended: true, fits: true, downloaded: false },
+  { id: 'qwen3.5-2b', name: 'Qwen3.5 2B', bytes: 1_280_835_840, speed: 'Fastest', smarts: 'Basic', hue: 192, recommended: false, fits: true, downloaded: false },
+]
+
+type DeviceKey = 'idle' | 'tight' | 'one' | 'none' | 'loading' | DeviceSetup['stage']
+const DEVICE_KEYS: DeviceKey[] = ['idle', 'tight', 'one', 'preparing', 'downloading', 'paused', 'starting', 'ready', 'error', 'loading', 'none']
+
+const setupFor = (k: DeviceKey): DeviceSetup | null => {
+  const base = { id: 'qwen3.5-4b', done: 1_160_000_000, total: 2_740_937_888, eta: 142, canPause: true }
+  switch (k) {
+    case 'preparing':
+      return { ...base, stage: k, done: 0, eta: null, canPause: false }
+    case 'downloading':
+    case 'paused':
+      return { ...base, stage: k }
+    case 'starting':
+    case 'ready':
+      return { ...base, stage: k, done: base.total, eta: null, canPause: false }
+    case 'error':
+      return { ...base, stage: k, eta: null, canPause: false, error: 'Couldn’t reach the download. Check the internet connection.' }
+    default:
+      return null
+  }
+}
+
+/** A pretend setup: getting ready, a quick download, starting up, ready. */
+function useFakeSetup(key: DeviceKey, onReady: () => void) {
+  const [setup, setSetup] = useState(() => setupFor(key))
+  const timer = useRef<ReturnType<typeof setInterval>>(undefined)
+  const stop = () => clearInterval(timer.current)
+  // Picking another state in the chrome starts it over.
+  const [shown, setShown] = useState(key)
+  if (shown !== key) {
+    setShown(key)
+    setSetup(setupFor(key))
+  }
+  useEffect(() => stop, [key])
+  const tick = (from: DeviceSetup) => {
+    stop()
+    let s = from
+    timer.current = setInterval(() => {
+      if (s.stage === 'preparing') s = { ...s, stage: 'downloading', canPause: true }
+      else if (s.stage === 'downloading') {
+        const done = Math.min(s.total!, s.done + s.total! / 14)
+        s = done >= s.total! ? { ...s, done, stage: 'starting', eta: null, canPause: false } : { ...s, done, eta: Math.round(((s.total! - done) / s.total!) * 300) }
+      } else if (s.stage === 'starting') s = { ...s, stage: 'ready' }
+      else if (s.stage === 'ready') {
+        stop()
+        return onReady()
+      }
+      setSetup(s)
+    }, 600)
+  }
+  return {
+    setup,
+    start: (id: string) => {
+      const s: DeviceSetup = { id, stage: 'preparing', done: 0, total: DEVICE_MODELS.find((m) => m.id === id)?.bytes ?? 0, eta: null, canPause: false }
+      setSetup(s)
+      tick(s)
+    },
+    pause: () => {
+      stop()
+      setSetup((s) => s && { ...s, stage: 'paused', eta: null })
+    },
+    resume: () => setup && tick({ ...setup, stage: 'downloading' }),
+    cancel: () => {
+      stop()
+      setSetup(null)
+    },
+  }
+}
+
 const AGENTS = [
   { id: 'a1', name: 'Juniper', hue: 278 },
   { id: 'a2', name: 'Atlas', hue: 222 },
@@ -67,6 +147,8 @@ export function Playground() {
   const [welcomeKey, setWelcomeKey] = useState(0)
   const [flow, setFlow] = useState<FlowKey>((param('flow') as FlowKey) ?? 'idle')
   const local = param('local') ?? 'found'
+  const [deviceKey, setDeviceKey] = useState<DeviceKey>((param('device') as DeviceKey) ?? 'idle')
+  const umbrel = param('umbrel') !== '0'
   const [keyState, setKeyState] = useState<ConnectState['apiKey']>({
     validating: param('key') === 'validating',
     error: param('key') === 'error' ? 'That key didn’t work. Check it and try again.' : null,
@@ -74,10 +156,23 @@ export function Playground() {
   const [sheet, setSheet] = useState<string | undefined>(param('sheet'))
   const [busy, setBusy] = useState(false)
 
+  const fake = useFakeSetup(deviceKey, () => setScreen('first-agent'))
   const state: ConnectState = {
     chatgpt: flowFor(flow),
-    local: { loading: local === 'loading', servers: local === 'found' ? SERVERS : [], connecting: null },
+    local: {
+      loading: local === 'loading',
+      servers: local === 'found' ? SERVERS : local === 'empty' ? EMPTY_OLLAMA : [],
+      connecting: null,
+    },
     apiKey: keyState,
+    device: {
+      supported: deviceKey !== 'none',
+      loading: deviceKey === 'loading',
+      place: umbrel ? 'this Umbrel' : 'this computer',
+      models: deviceKey === 'one' || deviceKey === 'tight' ? DEVICE_MODELS.slice(deviceKey === 'tight' ? 1 : 0).slice(0, 1).map((m) => ({ ...m, recommended: true, fits: deviceKey !== 'tight' })) : DEVICE_MODELS,
+      tight: deviceKey === 'tight' ? { free: 3_100_000_000 } : null,
+      setup: fake.setup,
+    },
   }
 
   const fakeSubmit = () => {
@@ -94,7 +189,14 @@ export function Playground() {
       {(screen === 'where' || screen === 'ready' || screen === 'here') && <SetupPlayground key={screen} screen={screen} />}
       {screen === 'connect' && (
         <ConnectModel
+          key={deviceKey}
           state={state}
+          umbrel={umbrel}
+          onAddServer={() => {}}
+          onRunDevice={fake.start}
+          onPauseDevice={fake.pause}
+          onResumeDevice={fake.resume}
+          onCancelDevice={fake.cancel}
           defaultOpen={param('open') as ConnectOption | undefined}
           onChooseChatGPT={() => {
             setFlow('starting')
@@ -149,6 +251,13 @@ export function Playground() {
             <select className="h-7 rounded-lg bg-fill-2 px-2" value={flow} onChange={(e) => setFlow(e.target.value as FlowKey)} aria-label="ChatGPT state">
               {FLOWS.map((f) => (
                 <option key={f}>{f}</option>
+              ))}
+            </select>
+          )}
+          {screen === 'connect' && (
+            <select className="h-7 rounded-lg bg-fill-2 px-2" value={deviceKey} onChange={(e) => setDeviceKey(e.target.value as DeviceKey)} aria-label="Model on this Umbrel">
+              {DEVICE_KEYS.map((k) => (
+                <option key={k}>{k}</option>
               ))}
             </select>
           )}

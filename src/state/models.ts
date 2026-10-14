@@ -73,6 +73,8 @@ export function useModels() {
             return { ...base, detail: p.slug === 'openai-codex' ? 'Your ChatGPT plan' : 'Signed in', remove: { kind: 'oauth', id: p.slug } }
           if (endpoint) return { ...base, name: endpoint.name, detail: hostOf(endpoint.base_url), remove: { kind: 'endpoint', id: endpoint.id } }
           if (key) return { ...base, detail: keyHint(key[1].redacted_value), remove: { kind: 'key', env: key[0] } }
+          // Hermes runs it itself (local-runtime.ts).
+          if (p.slug === 'llamacpp') return { ...base, detail: 'Runs privately' }
           return { ...base, detail: 'Connected' }
         })
         // The one in use first.

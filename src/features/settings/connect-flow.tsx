@@ -10,7 +10,9 @@ import {
   useRefreshModels,
   type Confirm,
 } from '@/state/models'
-import { useOnUmbrel } from '@/features/connection/hermes-connection-form'
+import { useDeviceModels, useDeviceSetup } from '@/state/local-runtime'
+import { useHermesConnection, type HermesConnection } from '@/state/connection'
+import { isBuiltinHermes, useOnUmbrel } from '@/features/connection/hermes-connection-form'
 import { ask } from './ask'
 
 // "Connect a model", wired to Hermes. Used full screen in onboarding and
@@ -19,6 +21,23 @@ import { ask } from './ask'
 const confirmExpensive: Confirm = (message) => ask({ title: 'Use this model?', body: message, action: 'Use it' })
 
 const errorText = (e: unknown) => (e instanceof Error && e.message) || 'Something went wrong. Try again.'
+
+/** A beat on "Ready" (the buddy waking up) before moving on. */
+const READY_BEAT_MS = 1400
+
+/** Where Hermes runs, for "Run a model on …". */
+function placeOf(c: HermesConnection | undefined, umbrel: boolean) {
+  if (umbrel) return 'this Umbrel'
+  if (!c) return 'this computer'
+  let host = ''
+  try {
+    host = new URL(c.url).hostname
+  } catch {
+    // Unreadable: said as "this computer" below only when built in.
+  }
+  if (isBuiltinHermes(c) || /^(localhost|127\.\d+\.\d+\.\d+|\[::1\])$/.test(host)) return 'this computer'
+  return c.name || host || 'its computer'
+}
 
 type Props = {
   onConnected: () => void
@@ -30,6 +49,7 @@ type Props = {
 export function ConnectFlow({ onConnected, onSkip, embedded, options }: Props) {
   const refresh = useRefreshModels()
   const umbrel = useOnUmbrel()
+  const connection = useHermesConnection().connection
   const chatgpt = useChatGPTSignIn(async () => {
     await adoptChatGPT(confirmExpensive)
     await refresh()
@@ -41,6 +61,11 @@ export function ConnectFlow({ onConnected, onSkip, embedded, options }: Props) {
   const [connecting, setConnecting] = useState<string | null>(null)
   const [validating, setValidating] = useState(false)
   const [keyError, setKeyError] = useState<string | null>(null)
+  const deviceModels = useDeviceModels()
+  const device = useDeviceSetup(async () => {
+    await Promise.all([refresh(), new Promise((done) => setTimeout(done, READY_BEAT_MS))])
+    onConnected()
+  })
 
   const state: ConnectState = {
     options,
@@ -53,6 +78,14 @@ export function ConnectFlow({ onConnected, onSkip, embedded, options }: Props) {
       addError,
     },
     apiKey: { validating, error: keyError },
+    device: {
+      supported: Boolean(deviceModels.data?.supported),
+      loading: deviceModels.isPending,
+      place: placeOf(connection, umbrel),
+      models: deviceModels.data?.models ?? [],
+      tight: deviceModels.data?.tight,
+      setup: device.setup,
+    },
   }
 
   return (
@@ -63,6 +96,10 @@ export function ConnectFlow({ onConnected, onSkip, embedded, options }: Props) {
       onSkip={onSkip}
       onDone={onConnected}
       onChooseChatGPT={() => void chatgpt.start()}
+      onRunDevice={device.start}
+      onPauseDevice={() => void device.pause()}
+      onResumeDevice={device.resume}
+      onCancelDevice={() => void device.cancel()}
       onChooseLocal={async (server, model) => {
         setConnecting(model.id)
         try {

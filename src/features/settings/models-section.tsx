@@ -122,7 +122,7 @@ export function ModelsSection() {
       <Sheet open={adding} onOpenChange={setAdding} title="Add a service" description="Another way for your agents to think." width={480}>
         <ConnectFlow
           embedded
-          options={chatgpt ? ['local', 'api-key'] : ['chatgpt', 'local', 'api-key']}
+          options={chatgpt ? ['device', 'local', 'api-key'] : ['chatgpt', 'device', 'local', 'api-key']}
           onConnected={() => {
             setAdding(false)
             toast.success('Connected')

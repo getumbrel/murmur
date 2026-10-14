@@ -403,6 +403,17 @@
   }
 }
 
+/* A progress bar that's busy without a number to show (getting ready, starting up): the same sweep, in the accent. */
+.progress-sweep::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 25%, var(--accent) 50%, transparent 75%);
+  opacity: 0.5;
+  transform: translateX(-100%);
+  animation: skeleton-sweep 1.6s var(--ease-sheet) infinite;
+}
+
 /* Reduced motion is designed, not deleted: movement becomes a short fade,
    loops stop on a legible frame, and progress spinners keep turning (they
    carry meaning and don't travel). */
@@ -429,7 +440,8 @@
     color: var(--ink-2);
     background: none;
   }
-  .skeleton::after {
+  .skeleton::after,
+  .progress-sweep::after {
     display: none;
   }
   /* Page pushes and the buddy morph become a plain crossfade. */

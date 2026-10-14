@@ -14,11 +14,15 @@ const WORDS: Record<string, string> = {
   ai: 'AI',
 }
 
-/** "gpt-6.1-sol" → "GPT‑6.1 Sol", "anthropic/claude-opus-5" → "Claude Opus 5", "llama3.2:3b" → "Llama3.2 3B". */
+/** A downloaded model file's packing ("-Q4_K_M", "-UD-Q3_K_XL", "-BF16"): how it was squeezed, not what it is. */
+const PACKING = /[-_.](?:UD[-_])?(?:I?Q\d(?:_[A-Z0-9]+)*|BF16|F16|F32)$/i
+
+/** "gpt-6.1-sol" → "GPT‑6.1 Sol", "anthropic/claude-opus-5" → "Claude Opus 5", "llama3.2:3b" → "Llama3.2 3B", "Qwen3.5-4B-Q4_K_M" → "Qwen3.5 4B". */
 export function prettyModel(id?: string) {
   if (!id) return 'Model'
   const parts = (id.split('/').pop() ?? id)
     .replace(/:latest$/i, '')
+    .replace(PACKING, '')
     .split(/[-_:\s]+/)
     .filter(Boolean)
   const out: string[] = []

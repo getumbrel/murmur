@@ -5,6 +5,7 @@ import {
   ChevronDown,
   ChevronRight,
   Copy,
+  Cpu,
   Eye,
   EyeOff,
   HardDrive,
@@ -17,14 +18,19 @@ import { TextField } from '@/ui/field'
 import { Orb } from '@/ui/orb'
 import { Spinner } from '@/ui/spinner'
 import { cn } from '@/lib/cn'
+import type { DeviceModel, DeviceSetup } from '@/state/local-jobs'
+import { overall } from '@/state/local-jobs'
+import { formatSize } from '@/state/local-tiers'
 import { Bloom } from './bloom'
+import { emptyLine } from './connect-copy'
 import { STEP_COLUMN, StepHeader } from './step'
 
 // "Connect a model": the one decision Murmur needs before it can think.
-// Three cards, one open at a time. The lead owns every async step and feeds
+// A few cards, one open at a time. The lead owns every async step and feeds
 // progress back through `state`; this screen only renders it.
 
-export type ConnectOption = 'chatgpt' | 'local' | 'api-key'
+/** `device`: a model Hermes runs itself, on its own machine. `local`: a model server such as Ollama. */
+export type ConnectOption = 'chatgpt' | 'device' | 'local' | 'api-key'
 
 export type DeviceCode = { userCode: string; verificationUrl: string; /** epoch ms */ expiresAt: number }
 
@@ -61,6 +67,18 @@ export type ConnectState = {
     /** Shown under the key field, e.g. "That key didn’t work. Check it and try again." */
     error?: string | null
   }
+  /** Running a model on Hermes's own machine. Absent or unsupported: no card. */
+  device?: {
+    supported: boolean
+    loading?: boolean
+    /** Where Hermes is: "this Umbrel", "this computer", "VPS". */
+    place: string
+    /** Up to two, the suggestion first. */
+    models: DeviceModel[]
+    /** Even the suggestion is a squeeze: what's free right now. */
+    tight?: { free: number } | null
+    setup?: DeviceSetup | null
+  }
 }
 
 export const API_KEY_SERVICES: { id: ApiKeyService; label: string; placeholder: string; keysUrl: string }[] = [
@@ -94,6 +112,11 @@ type Props = {
   embedded?: boolean
   /** Running on umbrelOS: local models live "on this Umbrel". */
   umbrel?: boolean
+  /** Download a model (by its id in local-tiers.ts) and switch to it. */
+  onRunDevice?: (id: string) => void
+  onPauseDevice?: () => void
+  onResumeDevice?: () => void
+  onCancelDevice?: () => void
 }
 
 export function ConnectModel({
@@ -107,19 +130,31 @@ export function ConnectModel({
   defaultOpen,
   embedded,
   umbrel,
+  onRunDevice,
+  onPauseDevice,
+  onResumeDevice,
+  onCancelDevice,
 }: Props) {
-  const options = state.options ?? ['chatgpt', 'local', 'api-key']
+  const device = state.device?.supported && onRunDevice ? state.device : null
+  const options = (state.options ?? ['chatgpt', 'device', 'local', 'api-key']).filter((o) => o !== 'device' || device)
+  const setup = device?.setup ?? null
   const [open, setOpen] = useState<ConnectOption | null>(
-    defaultOpen ?? (state.chatgpt.status !== 'idle' ? 'chatgpt' : null),
+    defaultOpen ?? (state.chatgpt.status !== 'idle' ? 'chatgpt' : setup ? 'device' : null),
   )
-  // A sign-in that starts elsewhere (or resumes) opens its card.
+  // A sign-in that starts elsewhere (or resumes) opens its card; so does a download found under way.
   const [lastStatus, setLastStatus] = useState(state.chatgpt.status)
   if (state.chatgpt.status !== lastStatus) {
     setLastStatus(state.chatgpt.status)
     if (lastStatus === 'idle') setOpen('chatgpt')
   }
+  const [hadSetup, setHadSetup] = useState(Boolean(setup))
+  if (Boolean(setup) !== hadSetup) {
+    setHadSetup(Boolean(setup))
+    if (setup && open === null) setOpen('device')
+  }
   const { servers, loading } = state.local
   const modelCount = servers.reduce((n, s) => n + s.models.length, 0)
+  const emptyServers = servers.filter((s) => !s.models.length)
 
   // Opening a card only explains it; signing in is its own, deliberate tap.
   const toggle = (option: ConnectOption) => setOpen(open === option ? null : option)
@@ -147,7 +182,8 @@ export function ConnectModel({
       <OptionCard
         key="local"
         glyph={<HardDrive size={20} strokeWidth={1.75} />}
-        title={umbrel ? 'Use a model on this Umbrel' : 'Use a model on your network'}
+        // Beside "Run a model on this Umbrel", this one is about servers.
+        title={device ? 'Use a model server' : umbrel ? 'Use a model on this Umbrel' : 'Use a model on your network'}
         subtitle={
           loading ? (
             <span className="inline-flex items-center gap-1.5">
@@ -158,16 +194,18 @@ export function ConnectModel({
               .filter((s) => s.models.length)
               .map((s) => `${s.name} · ${plural(s.models.length, 'model')}`)
               .join(', ')
+          ) : emptyServers.length ? (
+            `${emptyServers[0].name} · no models yet`
           ) : onAddServer ? (
-            'Ollama, LocalAI and others'
-          ) : umbrel ? (
+            device ? 'Ollama, LM Studio and others' : 'Ollama, LocalAI and others'
+          ) : umbrel && !device ? (
             'Install Ollama from the Umbrel App Store to run models privately'
           ) : (
             'No model servers found'
           )
         }
         open={open === 'local'}
-        disabled={!modelCount && !onAddServer}
+        disabled={!modelCount && !emptyServers.length && !onAddServer}
         onToggle={() => toggle('local')}
       >
         <LocalPanel
@@ -178,6 +216,41 @@ export function ConnectModel({
           adding={state.local.adding}
           addError={state.local.addError}
           umbrel={umbrel}
+          device={Boolean(device)}
+        />
+      </OptionCard>
+    ),
+    device: device && (
+      <OptionCard
+        key="device"
+        glyph={setup ? <ProgressGlyph setup={setup} /> : <Cpu size={20} strokeWidth={1.75} />}
+        // While a model sets up, the tile wears its colour.
+        hue={setup ? device.models.find((m) => m.id === setup.id)?.hue : undefined}
+        title={`Run a model on ${device.place}`}
+        subtitle={
+          device.loading ? (
+            <span className="inline-flex items-center gap-1.5">
+              <Spinner size={12} /> Checking what fits…
+            </span>
+          ) : setup ? (
+            <span className="tabular-nums">{setupLine(setup)}</span>
+          ) : (
+            'Private and free, just slower'
+          )
+        }
+        open={open === 'device'}
+        disabled={device.loading}
+        onToggle={() => toggle('device')}
+      >
+        <DevicePanel
+          place={device.place}
+          models={device.models}
+          tight={device.tight}
+          setup={setup}
+          onRun={onRunDevice!}
+          onPause={onPauseDevice}
+          onResume={onResumeDevice}
+          onCancel={onCancelDevice}
         />
       </OptionCard>
     ),
@@ -231,6 +304,7 @@ function OptionCard({
   subtitle,
   open,
   disabled,
+  hue,
   onToggle,
   children,
 }: {
@@ -239,6 +313,8 @@ function OptionCard({
   subtitle: ReactNode
   open: boolean
   disabled?: boolean
+  /** The tile's accent, when it isn't the app's. */
+  hue?: number
   onToggle: () => void
   children: ReactNode
 }) {
@@ -260,8 +336,10 @@ function OptionCard({
           className={cn(
             // Settings' row tile, at card size: soft accent at rest, solid once chosen.
             'grid size-11 flex-none place-items-center rounded-md transition-colors duration-300',
+            hue !== undefined && 'hue-scope',
             open ? 'bg-accent text-accent-ink' : disabled ? 'bg-fill-2 text-ink-3' : 'bg-accent-soft text-accent',
           )}
+          style={hue !== undefined ? ({ '--hue': hue } as React.CSSProperties) : undefined}
         >
           {glyph}
         </span>
@@ -514,6 +592,7 @@ function LocalPanel({
   adding,
   addError,
   umbrel,
+  device,
 }: {
   servers: LocalServer[]
   connecting?: string | null
@@ -522,15 +601,23 @@ function LocalPanel({
   adding?: boolean
   addError?: string | null
   umbrel?: boolean
+  /** Hermes can run a model itself (the card above), so there's no need to send anyone off to install one. */
+  device?: boolean
 }) {
   const shown = servers.filter((s) => s.models.length)
+  // A server that answered but has nothing to offer (Ollama, freshly installed) is there, just empty.
+  const empty = servers.find((s) => !s.models.length)
   return (
     <div className="space-y-4">
       {!shown.length && (
         <p className="text-subhead text-pretty text-ink-2">
-          {umbrel
-            ? 'Nothing found on this Umbrel yet. Install Ollama from the Umbrel App Store, or enter the address of a model server.'
-            : 'Nothing found nearby yet. Enter the address of a computer running Ollama, LM Studio or LocalAI.'}
+          {empty
+            ? emptyLine(empty, umbrel)
+            : umbrel
+              ? device
+                ? 'No model servers on this Umbrel.'
+                : 'Nothing found on this Umbrel yet. Install Ollama from the Umbrel App Store, or enter the address of a model server.'
+              : 'Nothing found nearby yet. Enter the address of a computer running Ollama, LM Studio or LocalAI.'}
         </p>
       )}
       {shown.map((server) => (
@@ -635,6 +722,360 @@ function AddServer({
       </p>
     </form>
   )
+}
+
+// ── A model on Hermes's own machine ─────────────────────────────────────────
+
+const ease = [0.16, 1, 0.3, 1] as const
+
+function DevicePanel({
+  place,
+  models,
+  tight,
+  setup,
+  onRun,
+  onPause,
+  onResume,
+  onCancel,
+}: {
+  place: string
+  models: DeviceModel[]
+  tight?: { free: number } | null
+  setup: DeviceSetup | null
+  onRun: (id: string) => void
+  onPause?: () => void
+  onResume?: () => void
+  onCancel?: () => void
+}) {
+  const [chosen, setChosen] = useState<string | null>(null)
+  const selected = models.find((m) => m.id === (setup?.id ?? chosen)) ?? models[0]
+  // A setup for a model no longer offered (the machine changed) still shows.
+  const running = setup ? (models.find((m) => m.id === setup.id) ?? null) : null
+  const where = place.replace(/^this /, 'your ')
+  if (!selected) return <p className="text-subhead text-pretty text-ink-2">Nothing fits {place} right now.</p>
+  const list = running ? [running] : models
+  return (
+    <div>
+      <div role={running ? undefined : 'radiogroup'} aria-label="Model" className="space-y-2">
+        <AnimatePresence initial={false} mode="popLayout">
+          {list.map((m) => (
+            <motion.div
+              key={m.id}
+              layout="position"
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.97, transition: { duration: 0.18 } }}
+              transition={{ duration: 0.3, ease }}
+            >
+              <ModelCard
+                model={m}
+                where={where}
+                choice={list.length > 1}
+                selected={m.id === selected.id}
+                setup={setup?.id === m.id ? setup : null}
+                onSelect={() => setChosen(m.id)}
+              />
+            </motion.div>
+          ))}
+        </AnimatePresence>
+      </div>
+      <AnimatePresence initial={false} mode="popLayout">
+        {setup ? (
+          // Starting up and ready are moments to watch, not to manage.
+          setup.stage !== 'starting' &&
+          setup.stage !== 'ready' && (
+            <motion.div
+              key="actions"
+              className="mt-2 flex min-h-11 items-center justify-end gap-1"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0, transition: { duration: 0.12 } }}
+            >
+              {setup.stage === 'error' ? (
+                <>
+                  <QuietButton onClick={onCancel}>Cancel</QuietButton>
+                  <QuietButton strong onClick={() => onRun(setup.id)}>
+                    Try again
+                  </QuietButton>
+                </>
+              ) : setup.stage === 'paused' ? (
+                <>
+                  <QuietButton onClick={onCancel}>Cancel</QuietButton>
+                  <QuietButton strong onClick={onResume}>
+                    Resume
+                  </QuietButton>
+                </>
+              ) : (
+                <>
+                  {setup.canPause && onPause && <QuietButton onClick={onPause}>Pause</QuietButton>}
+                  <QuietButton onClick={onCancel}>Cancel</QuietButton>
+                </>
+              )}
+            </motion.div>
+          )
+        ) : (
+          <motion.div
+            key="go"
+            className="hue-scope mt-4"
+            style={{ '--hue': selected.hue } as React.CSSProperties}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0, transition: { duration: 0.12 } }}
+          >
+            {tight && (
+              <p className="mb-3 px-1 text-footnote text-pretty text-ink-2" aria-live="polite">
+                <span className="mr-1.5 inline-block size-1.5 -translate-y-px rounded-full bg-warning align-middle" />
+                About {formatSize(tight.free)} free right now. Closing an app or two helps.
+              </p>
+            )}
+            <Button size="lg" variant="accent" onClick={() => onRun(selected.id)}>
+              {selected.downloaded ? `Use ${selected.name}` : `Download ${selected.name}`}
+            </Button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
+function ModelCard({
+  model,
+  where,
+  choice,
+  selected,
+  setup,
+  onSelect,
+}: {
+  model: DeviceModel
+  where: string
+  /** One of two: a radio. */
+  choice: boolean
+  selected: boolean
+  setup: DeviceSetup | null
+  onSelect: () => void
+}) {
+  const busy = Boolean(setup)
+  const state = !setup
+    ? 'idle'
+    : setup.stage === 'ready'
+      ? 'done'
+      : setup.stage === 'error'
+        ? 'error'
+        : setup.stage === 'paused'
+          ? 'waiting'
+          : 'working'
+  const body = (
+    <>
+      <span className="relative flex-none">
+        {setup?.stage === 'ready' && <Bloom />}
+        <Orb hue={model.hue} size={44} state={state} seed={model.id} />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="flex items-baseline gap-2">
+          <span className="truncate text-body font-semibold tracking-[-0.01em]">{model.name}</span>
+        </span>
+        <span className="mt-1.5 flex flex-wrap items-center gap-1.5">
+          {/* While it downloads, the bar says the size. */}
+          {!busy && <Chip>{model.downloaded ? 'Downloaded' : formatSize(model.bytes)}</Chip>}
+          <Chip>{model.speed}</Chip>
+          <Chip>{model.smarts}</Chip>
+          {model.recommended && model.fits && !busy && (
+            <span className="inline-flex h-6 items-center gap-1 pl-0.5 text-caption font-medium text-success">
+              <Check size={13} strokeWidth={2.5} />
+              Fits {where}
+            </span>
+          )}
+        </span>
+      </span>
+      {!busy && choice && (
+        <span
+          aria-hidden
+          className={cn(
+            'grid size-5.5 flex-none place-items-center rounded-full ring-1 ring-inset transition-colors duration-200',
+            selected ? 'bg-accent ring-accent text-accent-ink' : 'ring-line-strong',
+          )}
+        >
+          {selected && <Check size={13} strokeWidth={3} className="animate-pop" />}
+        </span>
+      )}
+    </>
+  )
+  const frame = cn(
+    'hue-scope flex w-full items-center gap-3 rounded-xl p-3 text-left ring-1 ring-inset transition-[background-color,box-shadow] duration-200',
+    selected ? 'bg-accent-soft ring-accent/40' : 'bg-fill-1 ring-transparent',
+  )
+  const hue = { '--hue': model.hue } as React.CSSProperties
+  if (!setup && !choice)
+    return (
+      <div className={frame} style={hue}>
+        {body}
+      </div>
+    )
+  if (!setup)
+    return (
+      <button
+        type="button"
+        role="radio"
+        aria-checked={selected}
+        onClick={onSelect}
+        className={cn(frame, 'pressable select-none focus-visible:-outline-offset-2 enabled:hover:bg-fill-2')}
+        style={hue}
+      >
+        {body}
+      </button>
+    )
+  return (
+    <div className={cn(frame, 'flex-wrap')} style={hue}>
+      {body}
+      <SetupProgress setup={setup} />
+    </div>
+  )
+}
+
+function Chip({ children }: { children: ReactNode }) {
+  return (
+    <span className="inline-flex h-6 items-center rounded-full bg-fill-2 px-2 text-caption font-medium text-ink-2 tabular-nums">
+      {children}
+    </span>
+  )
+}
+
+function QuietButton({ strong, onClick, children }: { strong?: boolean; onClick?: () => void; children: ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        'pressable h-11 rounded-md px-3 text-subhead font-medium select-none',
+        strong ? 'text-accent' : 'text-ink-3 hover:text-ink-2',
+      )}
+    >
+      {children}
+    </button>
+  )
+}
+
+/** One bar for the whole setup, and one line under it. */
+function SetupProgress({ setup }: { setup: DeviceSetup }) {
+  const value = overall(setup)
+  const waiting = setup.stage === 'preparing' || setup.stage === 'starting'
+  const right =
+    setup.stage === 'downloading' && setup.eta != null
+      ? formatEta(setup.eta)
+      : setup.stage === 'downloading' || setup.stage === 'paused'
+        ? `${Math.round(value * 100)}%`
+        : null
+  return (
+    <div className="w-full pt-1" aria-live="polite">
+      <div
+        role="progressbar"
+        aria-label="Setting up the model"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(value * 100)}
+        className="relative h-1.5 overflow-hidden rounded-full bg-fill-2"
+      >
+        <div
+          className={cn(
+            'absolute inset-y-0 left-0 rounded-full transition-[width,background-color] duration-700 ease-[var(--ease-out)] motion-reduce:transition-none',
+            setup.stage === 'error'
+              ? 'bg-danger'
+              : setup.stage === 'paused'
+                ? 'bg-ink-3'
+                : setup.stage === 'ready'
+                  ? 'bg-success'
+                  : 'bg-accent',
+          )}
+          style={{ width: `${value * 100}%` }}
+        />
+        {waiting && <div className="progress-sweep absolute inset-0" />}
+      </div>
+      <div className="mt-2 flex items-center gap-2 text-footnote">
+        <span
+          className={cn('min-w-0 flex-1', setup.stage === 'error' ? 'text-pretty text-danger' : 'truncate text-ink-2')}
+        >
+          {setup.stage === 'ready' ? (
+            <span className="inline-flex animate-fade items-center gap-1 font-medium text-success">
+              <Check size={14} strokeWidth={2.5} /> Ready
+            </span>
+          ) : (
+            stageLine(setup)
+          )}
+        </span>
+        {right && <span className="flex-none text-ink-3 tabular-nums">{right}</span>}
+      </div>
+    </div>
+  )
+}
+
+/** The card's tile while a setup runs: a ring filling up. */
+function ProgressGlyph({ setup }: { setup: DeviceSetup }) {
+  const value = overall(setup)
+  if (setup.stage === 'ready') return <Check size={20} strokeWidth={2.25} className="animate-pop" />
+  const r = 8.5
+  const c = 2 * Math.PI * r
+  return (
+    <svg width={22} height={22} viewBox="0 0 22 22" aria-hidden className="-rotate-90">
+      <circle cx={11} cy={11} r={r} fill="none" stroke="currentColor" strokeOpacity={0.22} strokeWidth={2.25} />
+      <circle
+        cx={11}
+        cy={11}
+        r={r}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={2.25}
+        strokeLinecap="round"
+        strokeDasharray={c}
+        strokeDashoffset={c * (1 - Math.max(0.04, value))}
+        className="transition-[stroke-dashoffset] duration-700 ease-[var(--ease-out)] motion-reduce:transition-none"
+      />
+    </svg>
+  )
+}
+
+function stageLine(setup: DeviceSetup) {
+  switch (setup.stage) {
+    case 'preparing':
+      return 'Getting ready…'
+    case 'starting':
+      return 'Starting up…'
+    case 'error':
+      return setup.error ?? 'Something went wrong.'
+    case 'paused':
+    case 'downloading':
+      return setup.total
+        ? `${formatSize(setup.done)} of ${formatSize(setup.total)}${setup.stage === 'paused' ? ' · Paused' : ''}`
+        : setup.stage === 'paused'
+          ? 'Paused'
+          : 'Downloading…'
+    default:
+      return ''
+  }
+}
+
+/** The collapsed card's one line: "Downloading · 45%". */
+function setupLine(setup: DeviceSetup) {
+  const pct = `${Math.round(overall(setup) * 100)}%`
+  switch (setup.stage) {
+    case 'preparing':
+      return 'Getting ready…'
+    case 'downloading':
+      return `Downloading · ${pct}`
+    case 'paused':
+      return `Paused · ${pct}`
+    case 'starting':
+      return 'Starting up…'
+    case 'ready':
+      return 'Ready'
+    case 'error':
+      return 'Didn’t finish'
+  }
+}
+
+function formatEta(seconds: number) {
+  if (seconds < 60) return 'Under a minute'
+  const min = Math.round(seconds / 60)
+  return min < 90 ? `${min} min left` : `${Math.round(min / 60)} hr left`
 }
 
 // ── API key ─────────────────────────────────────────────────────────────────
