@@ -13,6 +13,12 @@ updates:
     directory: /
     schedule:
       interval: monthly
+    # Node majors are a deliberate move (the runtime image copies only the
+    # libraries node needs, and each major can need more), so stay on the
+    # current LTS line and take its patch and digest updates.
+    ignore:
+      - dependency-name: node
+        update-types: ['version-update:semver-major']
     groups:
       base-images:
         patterns: ['*']
