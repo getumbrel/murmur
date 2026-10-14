@@ -15,3 +15,5 @@ README.md
 *.log
 .DS_Store
 data
+desktop/app
+desktop/release

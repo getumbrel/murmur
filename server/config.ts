@@ -16,10 +16,30 @@ import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'n
 import { join, resolve } from 'node:path'
 import { randomBytes } from 'node:crypto'
 
-export const DATA_DIR = resolve(process.env.DATA_DIR ?? 'data')
 export const DEFAULT_HERMES_URL = 'http://hermes-agent_web_1:18789'
 export const UMBREL_HOST = 'hermes-agent_web_1'
-const FILE = join(DATA_DIR, 'murmur.json')
+
+// ── Settings ──────────────────────────────────────────────────────────────
+// Read from the environment, or from what an app embedding the server passes
+// (server/app.ts), so nothing here may read them at import time.
+
+export type Env = Record<string, string | undefined>
+
+let env: Env = process.env
+
+/** Use these settings instead of process.env. Values computed with `memo` are worked out again. */
+export const useEnv = (next: Env) => void (env = next)
+
+export const setting = (name: string) => env[name]
+
+/** A value worked out from the settings once, and again only if they're replaced. */
+export function memo<T>(compute: () => T): () => T {
+  let cache: { env: Env; value: T } | null = null
+  return () => (cache?.env === env ? cache.value : (cache = { env, value: compute() }).value)
+}
+
+export const dataDir = memo(() => resolve(env.DATA_DIR ?? 'data'))
+const dataFile = () => join(dataDir(), 'murmur.json')
 
 /** The managed entry's id, and the id a pre-list saved connection is given. */
 export const ENV_ID = 'env'
@@ -90,7 +110,7 @@ export function cleanName(raw: unknown): string | undefined {
 
 function read(): Stored {
   try {
-    return JSON.parse(readFileSync(FILE, 'utf8')) as Stored
+    return JSON.parse(readFileSync(dataFile(), 'utf8')) as Stored
   } catch {
     return {}
   }
@@ -98,22 +118,23 @@ function read(): Stored {
 
 /** Atomic, owner-only write: the file can hold Hermes passwords. */
 function write(data: Stored) {
-  mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 })
-  const tmp = `${FILE}.${process.pid}.tmp`
+  const file = dataFile()
+  mkdirSync(dataDir(), { recursive: true, mode: 0o700 })
+  const tmp = `${file}.${process.pid}.tmp`
   writeFileSync(tmp, JSON.stringify(data, null, 2) + '\n', { mode: 0o600 })
   chmodSync(tmp, 0o600)
-  renameSync(tmp, FILE)
+  renameSync(tmp, file)
 }
 
-const pinned = Boolean(process.env.HERMES_URL)
+const pinned = () => Boolean(env.HERMES_URL)
 
 function managed(stored: Stored): Target | null {
-  if (!process.env.HERMES_URL) return null
-  const { HERMES_TOKEN: token, HERMES_USERNAME: username, HERMES_PASSWORD: password } = process.env
-  const url = normalizeUrl(process.env.HERMES_URL)
+  if (!env.HERMES_URL) return null
+  const { HERMES_TOKEN: token, HERMES_USERNAME: username, HERMES_PASSWORD: password } = env
+  const url = normalizeUrl(env.HERMES_URL)
   return {
     id: ENV_ID,
-    name: stored.managedName ?? cleanName(process.env.HERMES_NAME) ?? nameFor(url),
+    name: stored.managedName ?? cleanName(env.HERMES_NAME) ?? nameFor(url),
     url,
     source: 'env',
     token: token || undefined,
@@ -138,12 +159,12 @@ const newId = () => randomBytes(6).toString('base64url').replace(/[-_]/g, 'x')
  * both exist: pinned later, `main` gets an id of its own.
  */
 function migrated(stored: Stored): Stored {
-  if (pinned && stored.connections?.some((c) => c.id === MAIN_ID)) {
+  if (pinned() && stored.connections?.some((c) => c.id === MAIN_ID)) {
     const next = { ...stored, connections: stored.connections.map((c) => (c.id === MAIN_ID ? { ...c, id: newId() } : c)) }
     tryWrite(next)
     return next
   }
-  if (stored.connections || !stored.hermes?.url || pinned) return stored
+  if (stored.connections || !stored.hermes?.url || pinned()) return stored
   let url: string
   try {
     url = normalizeUrl(stored.hermes.url)
@@ -160,7 +181,7 @@ function tryWrite(data: Stored) {
   try {
     write(data)
   } catch (error) {
-    console.warn(`Murmur: couldn’t update ${FILE} (${(error as Error).message}).`)
+    console.warn(`Murmur: couldn’t update ${dataFile()} (${(error as Error).message}).`)
   }
 }
 
@@ -186,7 +207,7 @@ export function addTarget(input: { name?: string; url: string; credentials?: Cre
   const names = listTargets().map((t) => t.name)
   const entry: SavedConnection = {
     // The first one, set up from the app, carries on the browser's original storage.
-    id: !pinned && !list.length ? MAIN_ID : newId(),
+    id: !pinned() && !list.length ? MAIN_ID : newId(),
     name: input.name ?? nameFor(input.url, names),
     url: input.url,
     ...input.credentials,
@@ -198,7 +219,7 @@ export function addTarget(input: { name?: string; url: string; credentials?: Cre
 /** Rename, or change the address and sign-in. The managed entry can only be renamed. */
 export function updateTarget(id: string, patch: { name?: string; url?: string; credentials?: Credentials | null }) {
   const stored = migrated(read())
-  if (id === ENV_ID && pinned) {
+  if (id === ENV_ID && pinned()) {
     if (patch.name) write({ ...stored, managedName: patch.name })
     return
   }
@@ -218,14 +239,14 @@ export function removeTarget(id: string) {
 
 /** The key that signs Murmur's own sign-in cookie: env, else generated once and kept. */
 export function sessionSecret(): string {
-  if (process.env.MURMUR_SECRET) return process.env.MURMUR_SECRET
+  if (env.MURMUR_SECRET) return env.MURMUR_SECRET
   const stored = read()
   if (stored.secret) return stored.secret
   const secret = randomBytes(32).toString('base64url')
   try {
     write({ ...stored, secret })
   } catch (error) {
-    console.warn(`Murmur: couldn’t save a sign-in secret in ${DATA_DIR} (${(error as Error).message}). Sign-ins won’t survive a restart.`)
+    console.warn(`Murmur: couldn’t save a sign-in secret in ${dataDir()} (${(error as Error).message}). Sign-ins won’t survive a restart.`)
   }
   return secret
 }

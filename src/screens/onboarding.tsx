@@ -14,6 +14,7 @@ import { markWelcomed, useReadiness, useWelcomed } from '@/state/readiness'
 import { composeSoul, updateAgent, useAgentChats, useAgents, useInvalidateAgents, type Agent } from '@/state/agents'
 import { useCheckReady } from '@/state/models'
 import { usePrefersReducedMotion } from '@/lib/use-media'
+import { WindowControlsGap } from '@/ui/titlebar'
 
 // First run: welcome → connect a model → shape the first agent → done.
 // People who already use Hermes see the welcome once and go straight in.
@@ -124,7 +125,8 @@ function useIsFresh() {
 function Switcher({ delay }: { delay: number }) {
   return (
     <div className="pointer-events-none absolute inset-x-0 top-0 z-20">
-      <div className={`flex h-11 items-center mt-[max(8px,env(safe-area-inset-top))] ${STEP_COLUMN}`}>
+      <div className={`flex h-11 items-center mt-[max(8px,env(safe-area-inset-top))] desktop:mt-0 desktop:h-(--titlebar-h) ${STEP_COLUMN}`}>
+        <WindowControlsGap side="start" column={480} />
         <motion.div
           className="pointer-events-auto min-w-0"
           initial={{ opacity: 0, y: -4 }}

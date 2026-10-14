@@ -39,6 +39,8 @@ function apply(pref: ThemePref) {
   document.head.append(still)
   if (pref === 'system') delete root.dataset.theme
   else root.dataset.theme = pref
+  // The desktop window's own chrome (background, caption buttons) follows too.
+  window.murmurDesktop?.setTheme?.(pref)
   void getComputedStyle(root).color
   requestAnimationFrame(() => requestAnimationFrame(() => still.remove()))
   // Each theme-color meta answers for its own scheme unless one is forced.

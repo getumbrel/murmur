@@ -11,7 +11,11 @@
     "build": "tsc -b && vite build",
     "start": "node server/index.ts",
     "typecheck": "tsc -b",
-    "test": "vitest run"
+    "test": "vitest run",
+    "desktop:dev": "node desktop/scripts/dev.ts",
+    "desktop:build": "npm run build && node desktop/scripts/build.ts",
+    "desktop:dist": "npm run desktop:build && node desktop/scripts/dist.ts",
+    "desktop:icons": "node desktop/scripts/icons.ts"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.3.0",
@@ -41,9 +45,90 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
+    "electron": "44.7.2",
+    "electron-builder": "26.15.3",
+    "electron-updater": "6.8.9",
+    "esbuild": "0.28.2",
     "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",
     "vite": "^8.3.4",
     "vitest": "^5.0.4"
+  },
+  "build": {
+    "appId": "com.umbrel.murmur",
+    "productName": "Murmur",
+    "copyright": "Copyright © 2026 Umbrel, Inc.",
+    "directories": {
+      "app": "desktop/app",
+      "output": "desktop/release",
+      "buildResources": "desktop/resources"
+    },
+    "beforeBuild": "desktop/scripts/before-build.cjs",
+    "artifactName": "Murmur-${version}-${arch}.${ext}",
+    "electronLanguages": [
+      "en",
+      "en-US",
+      "en-GB"
+    ],
+    "electronFuses": {
+      "runAsNode": false,
+      "enableCookieEncryption": true,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false,
+      "enableEmbeddedAsarIntegrityValidation": true,
+      "onlyLoadAppFromAsar": true,
+      "grantFileProtocolExtraPrivileges": false
+    },
+    "mac": {
+      "category": "public.app-category.productivity",
+      "icon": "icon.icns",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "desktop/resources/entitlements.mac.plist",
+      "entitlementsInherit": "desktop/resources/entitlements.mac.plist",
+      "darkModeSupport": true,
+      "minimumSystemVersion": "12.0",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Murmur uses the microphone when you dictate a message."
+      }
+    },
+    "dmg": {
+      "title": "Murmur ${version}",
+      "writeUpdateInfo": false
+    },
+    "win": {
+      "icon": "icon.ico",
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "shortcutName": "Murmur",
+      "uninstallDisplayName": "Murmur",
+      "deleteAppDataOnUninstall": false
+    },
+    "linux": {
+      "icon": "icons",
+      "executableName": "murmur",
+      "category": "Network;InstantMessaging;Chat",
+      "synopsis": "A beautiful way to use Hermes",
+      "maintainer": "Umbrel, Inc. <hello@umbrel.com>",
+      "vendor": "Umbrel, Inc.",
+      "target": [
+        "AppImage",
+        "deb"
+      ]
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "getumbrel",
+      "repo": "murmur"
+    }
   }
 }

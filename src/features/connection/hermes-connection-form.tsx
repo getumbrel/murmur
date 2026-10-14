@@ -12,6 +12,7 @@ import { ask } from '@/features/settings/ask'
 import { useHermesConnection, type ConnectionRequest, type HermesConnection } from '@/state/connection'
 import { BrandHeader } from './brand-header'
 import { Field, Note, PasswordField, StatusDot } from './fields'
+import { NearbyList, useNearbyHermes, type NearbyHermes } from './nearby'
 
 // "Connect to Hermes": where a standalone Murmur learns which Hermes to use.
 // Type an address, Murmur checks it as you leave the field (and opens the
@@ -34,6 +35,10 @@ export type HermesConnectionFormProps = {
   onConnected?: (connection: HermesConnection) => void
   /** Inside Settings: no hero, and the button sits in the flow instead of pinned to the bottom. */
   embedded?: boolean
+  /** Look for Hermes on this computer and the network, and offer what answers above the address. */
+  suggest?: boolean
+  /** Addresses not to offer: the Hermes already added. */
+  added?: string[]
   /** Playground only: start from a given result. */
   initial?: { url?: string; username?: string; password?: string; showAuth?: boolean; result?: HermesConnection; phase?: Phase }
 }
@@ -53,6 +58,8 @@ export function HermesConnectionForm(props: Pick<HermesConnectionFormProps, 'onC
     <HermesConnectionFormView
       {...props}
       current={connection}
+      // Never set up: offer the Hermes that are likely already there.
+      suggest={connection.source === 'default'}
       onTest={test.mutateAsync}
       onSave={save.mutateAsync}
       onReset={
@@ -71,7 +78,7 @@ export function HermesConnectionForm(props: Pick<HermesConnectionFormProps, 'onC
   )
 }
 
-export function HermesConnectionFormView({ current, onTest, onSave, onReset, onConnected, embedded, initial }: HermesConnectionFormProps) {
+export function HermesConnectionFormView({ current, onTest, onSave, onReset, onConnected, embedded, suggest, added, initial }: HermesConnectionFormProps) {
   const known = current && current.source !== 'default' ? current : undefined
   const [url, setUrl] = useState(initial?.url ?? known?.url ?? '')
   const [username, setUsername] = useState(initial?.username ?? known?.username ?? '')
@@ -84,6 +91,9 @@ export function HermesConnectionFormView({ current, onTest, onSave, onReset, onC
   const probed = useRef<string | undefined>(initial?.result?.url)
   const usernameRef = useRef<HTMLInputElement>(null)
   const passwordRef = useRef<HTMLInputElement>(null)
+  const nearby = useNearbyHermes(!!suggest, added)
+  // The one picked from that list, while it connects.
+  const [picked, setPicked] = useState<string>()
 
   // Has the person changed anything since the last answer?
   const unchanged = !!known && known.status === 'connected' && sameUrl(url, known.url) && username === (known.username ?? '') && !password
@@ -116,12 +126,31 @@ export function HermesConnectionFormView({ current, onTest, onSave, onReset, onC
     }
   }
 
-  const submit = async (e: FormEvent) => {
+  const submit = (e: FormEvent) => {
     e.preventDefault()
     if (!url.trim() || phase !== 'idle') return
+    setPicked(undefined)
+    void connect({ url: url.trim(), ...(showAuth && username.trim() ? { username: username.trim(), password } : {}) })
+  }
+
+  /** Something found nearby: straight in, or to the sign-in fields when it has a password. */
+  const pick = (n: NearbyHermes) => {
+    if (n.outdated || phase !== 'idle') return
+    setUrl(n.url)
+    probed.current = n.url
+    if (n.connection.status === 'connected') {
+      setPicked(n.url)
+      void connect({ url: n.url })
+      return
+    }
+    setPicked(undefined)
+    setResult(n.connection)
+    reveal('username')
+  }
+
+  const connect = async (req: ConnectionRequest) => {
     setPhase('connecting')
-    probed.current = url.trim()
-    const req: ConnectionRequest = { url: url.trim(), ...(showAuth && username.trim() ? { username: username.trim(), password } : {}) }
+    probed.current = req.url
     let answer: HermesConnection
     try {
       answer = await onSave(req)
@@ -138,6 +167,7 @@ export function HermesConnectionFormView({ current, onTest, onSave, onReset, onC
       return
     }
     setPhase('idle')
+    setPicked(undefined)
     if (answer.status === 'needs-login') reveal(username.trim() ? 'password' : 'username')
     if (answer.status === 'bad-login') passwordRef.current?.select()
   }
@@ -197,6 +227,7 @@ export function HermesConnectionFormView({ current, onTest, onSave, onReset, onC
 
   const fields = (
     <>
+      {suggest && <NearbyList found={nearby} picked={picked} phase={phase} onPick={pick} />}
       <div>
         <Label hint={hint}>Address</Label>
         <Field
