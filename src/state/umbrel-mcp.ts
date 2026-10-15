@@ -109,6 +109,31 @@ async function add(profile: string, key: string, name = UMBREL_SERVER) {
     await remove(profile, name)
     await api.post(`/api/mcp/servers?${q(profile)}`, body)
   }
+  await askFirst(profile, name)
+}
+
+/**
+ * Has Hermes ask before any of the server's tools changes something. umbrelOS
+ * marks its read-only tools as such and doesn't ask for itself, and Hermes
+ * only asks on a server marked untrusted: a server with no trust set runs
+ * everything, deleting files included, without a word. Reads still just run.
+ */
+async function askFirst(profile: string, name = UMBREL_SERVER) {
+  // Deep-merged into the agent's config: the server keeps its address and key.
+  await api.put(`/api/config?${q(profile)}`, { config: { mcp_servers: { [name]: { trust: 'untrusted' } } } })
+}
+
+type ServersConfig = { mcp_servers?: Record<string, { trust?: unknown } | undefined> }
+
+/** An Umbrel server connected without asking first (by Murmur 0.5.0, or by an agent itself) gets it. */
+async function makeAskFirst(profile: string) {
+  const config = await api.get<ServersConfig>(`/api/config?${q(profile)}&include_defaults=false`)
+  const server = config.mcp_servers?.[UMBREL_SERVER]
+  if (server && server.trust !== 'untrusted') {
+    await askFirst(profile)
+    return true
+  }
+  return false
 }
 
 /** Takes the server away, and its key with it: Hermes leaves the key in .env otherwise. */
@@ -155,6 +180,7 @@ export async function connectUmbrel(key: string, ids: readonly string[], onAgent
 export async function disconnectUmbrel(ids: readonly string[]) {
   for (const id of ids) await remove(id)
   synced.clear()
+  guarded.clear()
   await reload()
 }
 
@@ -170,8 +196,21 @@ async function mainKey(): Promise<string | null> {
 
 // Agents known to have it (or known not to need it), across reloads for a day.
 const synced = rememberedSet(scoped('murmur:umbrel-mcp'))
+// Agents whose Umbrel server is known to ask first.
+const guarded = rememberedSet(scoped('murmur:umbrel-ask-first'))
+
+async function guardAll(ids: string[]) {
+  let changed = false
+  for (const id of ids) {
+    if (guarded.has(id)) continue
+    changed = (await makeAskFirst(id).catch(() => false)) || changed
+    guarded.add(id)
+  }
+  if (changed) await reload()
+}
 
 async function catchUp(ids: string[]) {
+  await guardAll(ids)
   const missing = ids.filter((id) => id !== MAIN && !synced.has(id))
   if (!missing.length) return
   if (!(await hasUmbrel(MAIN))) {
@@ -207,7 +246,7 @@ export function useUmbrelMcpSync(agentIds: readonly string[] | undefined) {
   const key = agentIds?.join('\n') ?? ''
   useEffect(() => {
     const ids = key ? key.split('\n') : []
-    if (!onUmbrel || !ids.some((id) => id !== MAIN && !synced.has(id))) return
+    if (!onUmbrel || !ids.some((id) => (id !== MAIN && !synced.has(id)) || !guarded.has(id))) return
     void upkeep(() => catchUp(ids))
       .then(() => qc.invalidateQueries({ queryKey: ['umbrel-mcp'] }))
       .catch(() => {})
