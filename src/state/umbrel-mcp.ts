@@ -45,11 +45,15 @@ if (typeof location !== 'undefined' && /(^#|&)token=/.test(location.hash)) {
   history.replaceState(history.state, '', location.pathname + location.search)
 }
 
-/** The key umbrelOS handed over, once. */
-export function takeHandoffKey() {
-  const key = handoff
+/**
+ * The key umbrelOS handed over, if it hasn't been used. Reading leaves it in
+ * place: React can render (and throw away) a screen more than once before it
+ * shows, so the screen that does show clears it, with `clearHandoffKey`.
+ */
+export const handoffKey = () => handoff
+
+export function clearHandoffKey() {
   handoff = null
-  return key
 }
 
 /** "umbrelmcp_9831…cd96a": enough to recognise, not enough to use. */

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { motion } from 'motion/react'
@@ -16,7 +16,8 @@ import {
   disconnectUmbrel,
   findUmbrelKey,
   maskKey,
-  takeHandoffKey,
+  clearHandoffKey,
+  handoffKey,
   UmbrelKeyError,
   umbrelSettingsUrl,
   useUmbrelMcp,
@@ -37,7 +38,9 @@ export function UmbrelSection() {
   const status = useUmbrelMcp(ids)
   const connected = status.data?.connected ?? []
   // A key umbrelOS handed over ("Connect in Murmur"): offered, never applied without a tap.
-  const [handed] = useState(takeHandoffKey)
+  const [handed] = useState(handoffKey)
+  // Offered once: the screen that shows it uses it up.
+  useEffect(() => clearHandoffKey(), [])
   const [replacing, setReplacing] = useState(!!handed)
   // Agents done so far while connecting, or null when not.
   const [progress, setProgress] = useState<string[] | null>(null)
