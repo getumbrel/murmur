@@ -34,7 +34,7 @@ const VERSION = __MURMUR_VERSION__
 /** Where Murmur lives. Help goes to its issues; the rest follow from here. */
 const SOURCE_URL = 'https://github.com/getumbrel/murmur'
 const HELP_URL = `${SOURCE_URL}/issues`
-const LICENSE_URL = `${SOURCE_URL}/blob/main/LICENSE`
+const LICENSE_URL = `${SOURCE_URL}/blob/master/LICENSE`
 
 const SECTIONS = {
   models: { title: 'Models', body: ModelsSection },
