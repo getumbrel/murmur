@@ -5,26 +5,45 @@ import type { Agent } from '@/state/agents'
 import { useRoutines } from '@/state/routines'
 import { useMemories } from '@/state/memory'
 import { usePairing, useTelegram } from '@/state/telegram'
+import { useLinks, useWhatsApp } from '@/state/whatsapp'
+import { useAccess } from '@/state/access'
 import { Skeleton } from '@/ui/skeleton'
 import { cn } from '@/lib/cn'
 import { TelegramGlyph } from '@/features/telegram'
+import { WhatsAppGlyph } from '@/features/whatsapp'
+import { AppsGlyph } from '@/features/apps'
+import { useAgentApps, useConnections } from '@/state/apps'
 
-// The four things you do with an agent besides talking to it, as a row of
-// tiles that each say where things stand: "2 on", "7 saved", "On".
+// The six things you do with an agent besides talking to it, as tiles that
+// each say where things stand: "2 on", "7 saved", "On", or
+// "1 waiting" when someone's asking to message it there.
 
 type Props = {
   agent: Agent
   onRoutines: () => void
   onMemory: () => void
+  onApps: () => void
   onTelegram: () => void
+  onWhatsApp: () => void
   onEdit: () => void
 }
 
-export function QuickActions({ agent, onRoutines, onMemory, onTelegram, onEdit }: Props) {
+export function QuickActions({ agent, onRoutines, onMemory, onApps, onTelegram, onWhatsApp, onEdit }: Props) {
   const routines = useRoutines(agent.id).data
   const memories = useMemories(agent.id)
   const telegram = useTelegram(agent.id)
   const pairing = usePairing(agent.id)?.phase
+  const whatsapp = useWhatsApp(agent.id)
+  const apps = useAgentApps(agent.id).data
+  const appsBusy = useConnections((all) =>
+    Object.entries(all).some(([key, c]) => key.startsWith(`${agent.id}\n`) && c.phase !== 'done' && c.phase !== 'failed'),
+  )
+  const linking = useLinks((s) => s.byAgent[agent.id]?.phase)
+  const asking = useAccess(agent.id).data?.pending
+  const waiting = (platform: string) => {
+    const n = asking?.filter((r) => r.platform === platform).length
+    return n ? `${n} waiting` : undefined
+  }
 
   const on = routines?.filter((r) => r.enabled).length ?? 0
   const routineNote = !routines ? undefined : on ? `${on} on` : routines.length ? 'Paused' : 'None yet'
@@ -35,6 +54,8 @@ export function QuickActions({ agent, onRoutines, onMemory, onTelegram, onEdit }
       : memories.data?.length
         ? `${memories.data.length} saved`
         : 'Empty'
+  const appsOn = apps?.filter((a) => a.enabled && !a.name.startsWith('umbrel-')) ?? []
+  const appsNote = appsBusy ? 'Connecting' : !apps ? undefined : appsOn.length ? `${appsOn.length} on` : apps.length ? 'Off' : 'None yet'
   const live = telegram.data?.state === 'connected'
   const telegramNote =
     pairing === 'waiting' || pairing === 'starting'
@@ -46,13 +67,26 @@ export function QuickActions({ agent, onRoutines, onMemory, onTelegram, onEdit }
           : telegram.isPending
             ? undefined
             : live
-              ? 'On'
+              ? (waiting('telegram') ?? 'On')
               : 'Off'
+  const whatsappLive = whatsapp.data?.state === 'connected'
+  const whatsappNote =
+    linking === 'starting' || linking === 'installing' || linking === 'waiting'
+      ? 'Linking'
+      : linking === 'saving' || (!whatsappLive && whatsapp.data?.state === 'starting')
+        ? 'Connecting'
+        : whatsapp.isPending
+          ? undefined
+          : whatsappLive
+            ? (waiting('whatsapp') ?? 'On')
+            : 'Off'
 
+  // Two rows of three on a phone (what it can do, then where you reach it); one row when there's room.
   return (
-    <div className="grid grid-cols-4 gap-2">
+    <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
       <Tile label="Routines" note={routineNote} onClick={onRoutines} icon={<Glyph><Repeat size={17} strokeWidth={2} /></Glyph>} />
       <Tile label="Memory" note={memoryNote} onClick={onMemory} icon={<Glyph><Brain size={17} strokeWidth={2} /></Glyph>} />
+      <Tile label="Apps" note={appsNote} onClick={onApps} icon={<AppsGlyph names={appsOn.map((a) => a.name)} />} />
       <Tile
         label="Telegram"
         note={telegramNote}
@@ -65,6 +99,21 @@ export function QuickActions({ agent, onRoutines, onMemory, onTelegram, onEdit }
             className={cn(
               '[&_*]:transition-[fill] [&_*]:duration-300',
               !live && '[&_circle]:fill-fill-3 [&_path]:fill-ink-3',
+            )}
+          />
+        }
+      />
+      <Tile
+        label="WhatsApp"
+        note={whatsappNote}
+        live={whatsappLive}
+        onClick={onWhatsApp}
+        icon={
+          <WhatsAppGlyph
+            size={32}
+            className={cn(
+              '[&_*]:transition-[fill] [&_*]:duration-300',
+              !whatsappLive && '[&_circle]:fill-fill-3 [&_path]:fill-ink-3',
             )}
           />
         }

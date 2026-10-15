@@ -10,6 +10,7 @@ import { rpc } from '@/hermes/gateway'
 import type { ApiKeyService, ChatGPTFlow, LocalModel, LocalServer } from '@/features/onboarding/connect'
 import { readinessKey, type RuntimeCheck } from './readiness'
 import { freshenModels } from '@/features/model/use-models'
+import { planFromAccountLines, planUsage, reportsPlanAsText, type PlanUsage } from './limits'
 
 // ── What's connected ────────────────────────────────────────────────────────
 
@@ -23,6 +24,10 @@ type OptionsRow = {
   source?: string
   api_url?: string
   aliases?: string[]
+  /** Subscription windows, from Hermes's cache (limits.ts). */
+  usage?: unknown
+  /** Set while it's rate limited (limits.ts). */
+  limit?: unknown
 }
 type Options = { model: string; provider: string; providers: OptionsRow[] }
 type OAuthRow = { id: string; status: { logged_in?: boolean } }
@@ -36,6 +41,10 @@ export type Service = {
   detail: string
   models: string[]
   current: boolean
+  /** How much of its plan is left, when Hermes knows. */
+  plan?: PlanUsage | null
+  /** Hermes's word on it being rate limited; see restingUntil. */
+  limit?: unknown
   /** How to disconnect it; absent when Murmur can't (set up outside Murmur). */
   remove?: { kind: 'oauth'; id: string } | { kind: 'key'; env: string } | { kind: 'endpoint'; id: string }
 }
@@ -75,7 +84,14 @@ export function useModels() {
           const signedIn = p.slug === 'openai-codex' || oauth.providers.some((o) => o.id === p.slug && o.status.logged_in)
           const endpoint = custom.endpoints.find((e) => e.id === p.slug || p.aliases?.includes(e.id))
           const key = Object.entries(env).find(([, v]) => v.is_set && v.category === 'provider' && v.provider === p.slug)
-          const base = { slug: p.slug, name: NAMES[p.slug] ?? p.name, models: p.models, current: !!p.is_current }
+          const base = {
+            slug: p.slug,
+            name: NAMES[p.slug] ?? p.name,
+            models: p.models,
+            current: !!p.is_current,
+            plan: planUsage(p.usage),
+            limit: p.limit,
+          }
           if (signedIn)
             return { ...base, detail: p.slug === 'openai-codex' ? 'Your ChatGPT plan' : 'Signed in', remove: { kind: 'oauth', id: p.slug } }
           if (endpoint) return { ...base, name: endpoint.name, detail: hostOf(endpoint.base_url), remove: { kind: 'endpoint', id: endpoint.id } }
@@ -89,6 +105,9 @@ export function useModels() {
       return { model: options.model, provider: options.provider, services }
     },
     staleTime: 30_000,
+    // A read asks Hermes to check the plan in the background: a ChatGPT plan with nothing to say yet gets a few more looks.
+    refetchInterval: (q) =>
+      q.state.data?.services.some((s) => s.slug === 'openai-codex' && !s.plan) && q.state.dataUpdateCount < 4 ? 5000 : false,
   })
 }
 
@@ -366,86 +385,34 @@ export const adoptChatGPT = (confirm?: Confirm) => adopt('openai-codex', confirm
 
 // ── How much of the ChatGPT plan is left ────────────────────────────────────
 
-export type PlanWindow = {
-  /** Hermes' label, e.g. "Weekly" or "5h". */
-  label: string
-  /** Percent remaining, 0–100. */
-  left: number
-  resetsAt?: Date
-}
-export type PlanUsage = { plan?: string; windows: PlanWindow[] }
-
-// "Weekly: 96% remaining (4% used) • resets in 6d 15h (2026-10-20 05:01 UTC)"
-const WINDOW = /^(.+?): (\d+)% remaining.*?resets in (.+?) \(/
-
-/** Parses session.usage's account_lines; null when nothing in them reads as a quota. */
-export function parsePlanUsage(lines: unknown, now = Date.now()): PlanUsage | null {
-  if (!Array.isArray(lines)) return null
-  const windows: PlanWindow[] = []
-  let plan: string | undefined
-  for (const line of lines) {
-    if (typeof line !== 'string') continue
-    const provider = line.match(/^Provider: (\S+)(?: \((.+)\))?$/)
-    // Only the ChatGPT plan (the main agent may be thinking with something else).
-    if (provider && provider[1] !== 'openai-codex') return null
-    plan ??= provider?.[2]
-    const m = line.match(WINDOW)
-    if (!m) continue
-    // The relative part is timezone-proof; the stamp is in the container's zone.
-    const span = m[3]
-    const n = (u: string) => Number(span.match(new RegExp(`(\\d+)${u}`))?.[1] ?? 0)
-    const ms = ((n('d') * 24 + n('h')) * 60 + n('m')) * 60_000
-    windows.push({ label: m[1].trim(), left: Math.max(0, Math.min(100, Number(m[2]))), resetsAt: ms ? new Date(now + ms) : undefined })
-  }
-  return windows.length ? { plan, windows } : null
-}
+// Hermes reports it with the services themselves now (limits.ts).
+export { planUsageLine, type PlanUsage, type PlanWindow } from './limits'
 
 /**
- * The ChatGPT plan's remaining quota. Hermes reports it per chat, but a fresh,
- * never-used chat answers too (and is never saved), so this opens one, asks,
- * and closes it. Hidden (null) whenever anything doesn't line up.
+ * The ChatGPT plan on a Hermes older than 0.22, which only says it per chat:
+ * a fresh, never-used chat answers too (and is never saved), so this opens
+ * one, asks, and closes it. Null whenever anything doesn't line up.
  */
-export function usePlanUsage(enabled: boolean) {
+export function useOlderPlanUsage(enabled: boolean) {
+  const version = useQuery({
+    queryKey: ['hermes-status'],
+    queryFn: () => api.get<{ version?: string }>('/api/status'),
+    staleTime: 5 * 60_000,
+    enabled,
+  }).data?.version
   return useQuery({
     queryKey: ['plan-usage'],
-    enabled,
+    enabled: enabled && reportsPlanAsText(version),
     queryFn: async () => {
       const { session_id } = await rpc<{ session_id: string }>('session.create', {}, 15_000)
       try {
         const usage = await rpc<{ account_lines?: unknown }>('session.usage', { session_id }, 15_000)
-        return parsePlanUsage(usage.account_lines)
+        return planFromAccountLines(usage.account_lines)
       } finally {
         void rpc('session.close', { session_id }).catch(() => {})
       }
     },
     staleTime: 5 * 60_000,
     retry: false,
-  })
-}
-
-/**
- * "Plenty left this week · resets Tue", "Running low · 12% left · resets 5 PM".
- * Also in parts, so a narrow row can drop the scope ("this week").
- */
-export function planUsageLine(usage: PlanUsage, now = new Date()) {
-  // The tightest window is the one that matters.
-  const w = usage.windows.reduce((a, b) => (b.left < a.left ? b : a))
-  const scope = /week/i.test(w.label) ? 'this week' : /month/i.test(w.label) ? 'this month' : /day/i.test(w.label) ? 'today' : ''
-  const low = w.left < 20
-  const lead = low ? `Running low · ${w.left}% left` : w.left >= 50 ? 'Plenty left' : `${w.left}% left`
-  const reset = w.resetsAt ? resetText(w.resetsAt, now) : ''
-  const parts = { lead, scope: low ? '' : scope, reset }
-  const text = [[parts.lead, parts.scope].filter(Boolean).join(' '), reset].filter(Boolean).join(' · ')
-  return { text, low, parts }
-}
-
-function resetText(at: Date, now: Date) {
-  const ms = at.getTime() - now.getTime()
-  if (ms < 60 * 60_000) return `resets in ${Math.max(1, Math.round(ms / 60_000))} min`
-  const day = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
-  const days = Math.round((day(at) - day(now)) / 86_400_000)
-  if (days === 0) return `resets at ${at.toLocaleTimeString(undefined, { hour: 'numeric', minute: at.getMinutes() ? '2-digit' : undefined })}`
-  if (days === 1) return 'resets tomorrow'
-  if (days <= 7) return `resets ${at.toLocaleDateString(undefined, { weekday: 'short' })}`
-  return `resets ${at.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
+  }).data
 }

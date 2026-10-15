@@ -139,10 +139,13 @@ Put a few agents in one room and let them work it out together. Mention one with
 
 - **Answer from anywhere.** Approvals, questions and replies follow you to your phone.
 - **Pictures, files and live widgets.** Send photos and files, and get images, downloads and little interactive tools back right in the chat.
-- **Routines, memory and Telegram.** Ask for a briefing every morning at 8. See what an agent remembers, and change or forget any of it. Text your agent on Telegram after scanning a QR code.
+- **Routines, memory, Telegram and WhatsApp.** Ask for a briefing every morning at 8. See what an agent remembers, and change or forget any of it. Text your agent on Telegram or WhatsApp after scanning a QR code, and let someone new in with one tap.
 
 ### And the details
-- **Choose the model and how hard it thinks** for each agent or chat.
+- **Connect your apps.** Give an agent Notion, Linear, Todoist and dozens more from a wall of icons, with one sign-in each.
+- **Watch the plan come together.** Agents tick off a live checklist, send helpers off side by side, and react to your messages.
+- **Choose the model and how hard it thinks** for each agent or chat, and see how much of your plan is left, how full a chat is and what each agent did this week.
+- **Move agents.** Export an agent to a file and bring it in on another Hermes.
 - **Give it a goal** with `/goal`, and the agent keeps working until it's done. Ask a quick side question with `/btw` without interrupting it.
 - **Search every chat**, with a command palette and keyboard shortcuts on desktop.
 - **Light and dark**, desktop notifications and a Dock badge, and fluid at every screen size.
@@ -201,6 +204,7 @@ Murmur comes with **Hermes 0.22.0**, and works with any **Hermes Agent 0.21.4 or
 - Everything runs on hardware you control. Murmur talks only to your Hermes.
 - On umbrelOS, Murmur sits behind your Umbrel login. On its own, you can give it a password (`MURMUR_PASSWORD`).
 - Hermes's access key stays on Murmur's server, and Murmur refuses requests from other websites.
+- An exported agent leaves its keys and sign-ins behind.
 
 ## Develop
 

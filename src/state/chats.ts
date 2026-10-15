@@ -13,10 +13,22 @@ import { isMissingMethod } from '@/hermes/compat'
 import { toolLabel } from '@/features/chat/tool-labels'
 import { approvalText, detailOf, isCallTo, toolAsked, type ToolCall } from '@/features/chat/approval-text'
 import { explainError } from '@/features/chat/errors'
-import type { ApprovalChoice, ChatItem, ChatStatus, ClarifyQuestion, Speaker } from '@/features/chat/types'
+import type { ApprovalChoice, ChatItem, ChatStatus, ClarifyQuestion, Reaction, Speaker } from '@/features/chat/types'
 import { parseUserMessage, rememberUpload, type UserAttachment } from '@/features/media/parse'
 import { toolMedia } from '@/features/media/tool-media'
 import { scoped } from '@/hermes/instance'
+import {
+  isTodoTool,
+  planFromResult,
+  reactionsOf,
+  settleHelpers,
+  todosOf,
+  toggled,
+  withHelper,
+  withPlan,
+  withPreview,
+  withReactions,
+} from '@/features/chat/live'
 
 export type Chat = {
   id: string
@@ -36,6 +48,8 @@ export type Chat = {
   turns?: number
   /** What the agent is working toward (/goal), while one is set. */
   goal?: Goal
+  /** Counts the times you've been sweet to the agent (thanks, <3), so its face can show it. */
+  vibes?: number
 }
 
 export type Goal = { title: string; status: string }
@@ -114,10 +128,13 @@ type Row = {
   tool_name?: string | null
   reasoning?: string | null
   display_kind?: string | null
+  display_metadata?: { reactions?: unknown } | null
   timestamp?: number
 }
 
 const SKIPPED = new Set(['hidden', 'process_complete', 'model_switch'])
+/** The agent's tapbacks land on the message itself; a step saying so would narrate it. */
+const QUIET_TOOLS = new Set(['react_to_message'])
 const INTERRUPTED = /^\s*Operation interrupted\b/
 const STEER = /^\s*\[OUT-OF-BAND USER MESSAGE[^\]]*\]\s*([\s\S]*?)\s*\[\/OUT-OF-BAND USER MESSAGE\]\s*$/
 
@@ -138,6 +155,7 @@ function viaToolCall(name = 'tool', args?: unknown): { name: string; args?: unkn
 function rowsToItems(rows: Row[], speaker?: Speaker): ChatItem[] {
   const items: ChatItem[] = []
   const tools = new Map<string, Extract<ChatItem, { kind: 'tool' }>[]>()
+  const plans = new Set<string>()
   for (const row of rows) {
     const at = (row.timestamp ?? 0) * 1000
     const key = `h${row.id ?? items.length}`
@@ -157,6 +175,7 @@ function rowsToItems(rows: Row[], speaker?: Speaker): ChatItem[] {
           at,
           attachments: attachments.length ? attachments : undefined,
           rowId: row.id,
+          reactions: reactionsOf(row.display_metadata?.reactions),
         })
       }
     } else if (row.role === 'assistant') {
@@ -182,11 +201,20 @@ function rowsToItems(rows: Row[], speaker?: Speaker): ChatItem[] {
       }
       // The model writes before it calls tools: its words go first.
       const text = row.content?.trim()
-      if (text) items.push({ kind: 'assistant', id: key, text, streaming: false, at, speaker })
+      if (text) {
+        const reactions = reactionsOf(row.display_metadata?.reactions)
+        items.push({ kind: 'assistant', id: key, text, streaming: false, at, speaker, rowId: row.id, reactions })
+      }
       for (const call of row.tool_calls ?? []) {
         const callId = call.id ?? call.call_id
         // Tools reached through Hermes's tool search are stored as one "tool_call" wrapping the real calls.
-        const steps = viaToolCall(call.function?.name, call.function?.arguments).map(({ name, args }, n) => {
+        const calls = viaToolCall(call.function?.name, call.function?.arguments)
+        // The checklist (and the agent's tapbacks) show as themselves, not as steps.
+        if (calls.every((c) => isTodoTool(c.name) || QUIET_TOOLS.has(c.name))) {
+          if (calls.some((c) => isTodoTool(c.name))) for (const id of [call.id, call.call_id]) if (id) plans.add(id)
+          continue
+        }
+        const steps = calls.map(({ name, args }, n) => {
           const label = toolLabel(name, args)
           const tool: Extract<ChatItem, { kind: 'tool' }> = {
             kind: 'tool',
@@ -206,6 +234,9 @@ function rowsToItems(rows: Row[], speaker?: Speaker): ChatItem[] {
         if (call.id) tools.set(call.id, steps)
         if (call.call_id) tools.set(call.call_id, steps)
       }
+    } else if (row.role === 'tool' && row.tool_call_id && plans.has(row.tool_call_id)) {
+      const plan = planFromResult(row.content)
+      if (plan) items.splice(0, items.length, ...withPlan(items, plan.todos, plan.revision, `${key}-plan`))
     } else if (row.role === 'tool' && row.tool_call_id) {
       for (const tool of tools.get(row.tool_call_id) ?? []) {
         tool.status = /"exit_code":\s*-1|BLOCKED:|"error":\s*"/.test(row.content ?? '') ? 'error' : 'done'
@@ -237,6 +268,7 @@ type ResumeResult = {
   status?: string
   inflight?: { assistant?: string; streaming?: boolean }
   info?: { model?: string; provider?: string; reasoning_effort?: string; title?: string }
+  todo_state?: { todos?: unknown; revision?: number } | null
 }
 
 const opening = new Map<string, Promise<void>>()
@@ -326,6 +358,9 @@ async function resume(id: string, first: boolean) {
         { kind: 'assistant', id: uid('a'), text: partial, streaming: true, at: Date.now(), speaker: c.speaker },
       ]
     }
+    // Mid-reply: its checklist as it stands now.
+    const todos = busy ? todosOf(res.todo_state?.todos) : null
+    if (todos) items = withPlan(items, todos, Number(res.todo_state?.revision) || 0, uid('plan'))
     return {
       items,
       status: hasPending(items) ? 'waiting' : busy ? 'working' : fresher && isBusy(c) ? c.status : 'idle',
@@ -827,6 +862,50 @@ export async function stop(id: string) {
   await onChat(id, 'session.interrupt').catch(() => {})
 }
 
+/** Call back a helper the agent sent off; the rest of the reply carries on. */
+export async function stopHelper(id: string, subagentId: string) {
+  const line = (text?: string) =>
+    patch(id, (c) => ({
+      items: c.items.map((i) => (i.kind === 'helper' && i.subagentId === subagentId && i.status === 'running' ? { ...i, line: text } : i)),
+    }))
+  line('Stopping')
+  try {
+    await onChat(id, 'subagent.interrupt', { subagent_id: subagentId })
+  } catch (e) {
+    line(undefined)
+    throw e
+  }
+}
+
+/**
+ * Tapback on a message, or take yours back (the same emoji again). It shows at
+ * once; Hermes keeps it with the message, so it's there after a reload.
+ */
+export async function react(id: string, itemId: string, emoji: string) {
+  const chat = getChat(id)
+  const item = chat?.items.find((i) => i.id === itemId)
+  if (!chat || (item?.kind !== 'user' && item?.kind !== 'assistant')) return
+  // Not saved yet: Hermes can still find it as the newest of its kind.
+  const newest = chat.items.findLast((i) => i.kind === item.kind) === item
+  if (item.rowId == null && !newest) throw new Error('That message can’t take a reaction yet.')
+  const set = (next: { rowId?: number; reactions?: Reaction[] }) =>
+    patch(id, (c) => ({
+      items: c.items.map((i): ChatItem => (i.id === itemId && (i.kind === 'user' || i.kind === 'assistant') ? { ...i, ...next } : i)),
+    }))
+  const before = item.reactions
+  set({ reactions: toggled(before, emoji, 'user') })
+  try {
+    const res = await onChat<{ row_id: number; reactions?: unknown }>(id, 'message.react', {
+      ...(item.rowId != null ? { row_id: item.rowId } : { newest_role: item.kind }),
+      emoji,
+    })
+    set({ rowId: res.row_id, reactions: reactionsOf(res.reactions) })
+  } catch (e) {
+    set({ reactions: before })
+    throw e
+  }
+}
+
 export async function retry(id: string) {
   const chat = getChat(id)
   const lastUser = chat?.items.findLast((i) => i.kind === 'user')
@@ -1106,6 +1185,10 @@ function onEvent(ev: GatewayEvent) {
 
     case 'tool.start': {
       const name = String(payload.name ?? 'tool')
+      // The checklist and tapbacks show themselves (todo.updated, message.reaction).
+      const calls = viaToolCall(name, payload.args)
+      if (calls.every((c) => isTodoTool(c.name) || QUIET_TOOLS.has(c.name)))
+        return patch(id, (c) => ({ status: c.status === 'waiting' ? 'waiting' : 'working' }))
       const label = toolLabel(name, payload.args, typeof payload.context === 'string' ? payload.context : undefined)
       const toolId = payload.tool_id == null ? '' : String(payload.tool_id)
       const context = typeof payload.context === 'string' ? payload.context : undefined
@@ -1171,7 +1254,7 @@ function onEvent(ev: GatewayEvent) {
                 ...i,
                 status: failed ? 'error' : 'done',
                 endedAt: Date.now(),
-                media: media.length ? media : undefined,
+                media: media.length ? media : i.media,
               },
             ]
           // Answered somewhere else (another window, Telegram): the step says how it went, so the card goes.
@@ -1188,7 +1271,7 @@ function onEvent(ev: GatewayEvent) {
     case 'message.complete': {
       const status = String(payload.status ?? 'complete')
       runningCalls.delete(id)
-      const persisted = payload.persisted_turn as { user_row_id?: number } | undefined
+      const persisted = payload.persisted_turn as { user_row_id?: number; final_assistant_row_id?: number } | undefined
       const reasoning = pendingReasoning.get(id)
       pendingReasoning.delete(id)
       return patch(id, (c) => {
@@ -1230,6 +1313,13 @@ function onEvent(ev: GatewayEvent) {
         } else if (status === 'interrupted') {
           items = [...items, { kind: 'notice', id: uid('n'), text: 'Stopped' }]
         }
+        items = settleHelpers(items, status === 'interrupted', Date.now())
+        // The reply is saved now too: it can take a reaction.
+        const final = persisted?.final_assistant_row_id
+        const said = items.findLastIndex((i) => i.kind === 'assistant')
+        const reply = items[said]
+        if (final != null && reply?.kind === 'assistant' && reply.rowId == null && said > items.findLastIndex((i) => i.kind === 'user'))
+          items = replaceAt(items, said, { ...reply, rowId: final })
         // The message that started this reply is saved now: it can be edited.
         const rowId = persisted?.user_row_id
         const at = items.findLastIndex((i) => i.kind === 'user')
@@ -1240,6 +1330,37 @@ function onEvent(ev: GatewayEvent) {
         return { items, status: status === 'error' ? 'error' : 'idle', turns: (c.turns ?? 0) + 1 }
       })
     }
+
+    case 'todo.updated': {
+      const todos = todosOf(payload.todos)
+      if (!todos) return
+      const revision = Number(payload.revision) || 0
+      return patch(id, (c) => ({ items: withPlan(closeThinking(sealAssistant(c.items)), todos, revision, uid('plan')) }))
+    }
+
+    case 'subagent.spawn_requested':
+    case 'subagent.start':
+    case 'subagent.progress':
+    case 'subagent.tool':
+    case 'subagent.thinking':
+    case 'subagent.complete':
+      return patch(id, (c) => ({ items: withHelper(c.items, ev.type, payload, Date.now()) }))
+
+    case 'message.reaction':
+      return patch(id, (c) => ({
+        items: withReactions(c.items, {
+          rowId: typeof payload.row_id === 'number' ? payload.row_id : undefined,
+          role: typeof payload.role === 'string' ? payload.role : undefined,
+          reactions: reactionsOf(payload.reactions),
+        }),
+      }))
+
+    case 'reaction':
+      if (payload.kind === 'vibe') patch(id, (c) => ({ vibes: (c.vibes ?? 0) + 1 }))
+      return
+
+    case 'preview.open':
+      return patch(id, (c) => ({ items: withPreview(c.items, String(payload.url ?? '')) }))
 
     case 'btw.complete': {
       const taskId = String(payload.task_id ?? '')

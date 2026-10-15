@@ -8,6 +8,7 @@ import { Skeleton } from '@/ui/skeleton'
 import { cn } from '@/lib/cn'
 import { EFFORT, THINKING_OPTIONS, prettyModel, thinkingOf, type Thinking } from './names'
 import { useModelOptions, useSetAgentDefault, useThinkingDefault, type ModelPick } from './use-models'
+import { Resting, ServiceHeading } from './plan'
 
 const HINTS: Record<Thinking, (name: string) => string> = {
   auto: (name) => `${name}’s usual amount of thought.`,
@@ -136,7 +137,7 @@ export function ModelSheet({ open, onOpenChange, agent, pick, effort, onPick, on
         ) : (
           shown.map((group) => (
             <section key={group.provider}>
-              <h3 className="mb-2 px-4 text-footnote font-medium text-ink-2">{group.name}</h3>
+              <ServiceHeading name={group.name} plan={group.plan} resting={group.resting} />
               <div role="radiogroup" aria-label={group.name} className="list-group overflow-hidden rounded-xl bg-fill-1">
                 {group.models.map((m) => {
                   const selected = current?.model === m.id && current.provider === group.provider
@@ -150,8 +151,15 @@ export function ModelSheet({ open, onOpenChange, agent, pick, effort, onPick, on
                       onClick={() => !selected && onPick({ model: m.id, provider: group.provider })}
                       className="flex min-h-12 w-full items-center gap-3 px-4 text-left transition-colors select-none hover:bg-fill-1 focus-visible:-outline-offset-2 active:bg-fill-2"
                     >
-                      <span className={cn('min-w-0 flex-1 truncate text-body', selected && 'font-medium')}>{prettyModel(m.id)}</span>
-                      {usual && <span className="flex-none text-footnote text-ink-3">Default</span>}
+                      <span className={cn('min-w-0 flex-1 truncate text-body', selected && 'font-medium', m.resting && !selected && 'text-ink-2')}>
+                        {prettyModel(m.id)}
+                      </span>
+                      {/* (A whole service resting says so once, above.) */}
+                      {m.resting && !group.resting ? (
+                        <Resting until={m.resting} className="flex-none text-footnote text-ink-3" />
+                      ) : (
+                        usual && <span className="flex-none text-footnote text-ink-3">Default</span>
+                      )}
                       <Check
                         size={18}
                         strokeWidth={2.5}

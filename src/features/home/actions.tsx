@@ -4,6 +4,7 @@ import { useLocation } from 'wouter'
 import { toast } from 'sonner'
 import { AgentEditorSheet, type AgentDraft } from '@/features/agents/agent-editor'
 import { NewGroupSheet } from '@/features/agents/new-group'
+import { exportWithToast, useImportAgent } from '@/features/agents/import-agent'
 import { NewAgentSheet } from '@/features/templates/new-agent-sheet'
 import { Button } from '@/ui/button'
 import { TextField } from '@/ui/field'
@@ -49,6 +50,8 @@ export function useAgentActions() {
   // Just made: the preview orb gets its moment before the sheet lets go.
   const [born, setBorn] = useState(false)
   const canGroup = useCanMakeGroups()
+  // An agent from a file: once it's in, its page.
+  const importer = useImportAgent((id) => navigate(`/agent/${id}`))
 
   const refresh = () => qc.invalidateQueries({ queryKey: agentsKey })
   const fail = (e: unknown) => toast.error(e instanceof Error ? e.message : 'Something went wrong. Try again.')
@@ -205,7 +208,12 @@ export function useAgentActions() {
         onSubmit={create}
         submitting={busy}
         born={born}
+        onImport={() => {
+          setCreating(false)
+          importer.pick()
+        }}
       />
+      {importer.input}
       <AgentEditorSheet
         open={editOpen}
         onOpenChange={setEditOpen}
@@ -214,6 +222,7 @@ export function useAgentActions() {
         names={agents.map((a) => a.name)}
         onSubmit={save}
         submitting={busy}
+        onExport={editing ? () => exportWithToast(editing.agent) : undefined}
         onDelete={
           editing && !editing.agent.isDefault
             ? () => {

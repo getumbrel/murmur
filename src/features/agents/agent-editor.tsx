@@ -10,6 +10,7 @@ import {
   type CSSProperties,
   type FormEvent,
 } from 'react'
+import { Download } from 'lucide-react'
 import { Button } from '@/ui/button'
 import { Label, TextArea, TextField } from '@/ui/field'
 import { Orb, type OrbState } from '@/ui/orb'
@@ -124,6 +125,8 @@ type EditorProps = Taken & {
   seed?: string
   onSubmit: (draft: AgentDraft) => void
   onDelete?: () => void
+  /** Editing: download it as a file, to keep or to bring into another Hermes. */
+  onExport?: () => Promise<void>
   submitting?: boolean
   submitLabel?: string
   className?: string
@@ -177,6 +180,7 @@ export function AgentEditorSheet({
   initial,
   onSubmit,
   onDelete,
+  onExport,
   submitting,
   seed,
   names,
@@ -213,6 +217,7 @@ export function AgentEditorSheet({
           onChange={setDraft}
           onSubmit={onSubmit}
           onDelete={onDelete}
+          onExport={onExport}
           busy={submitting}
           seed={seed}
           names={names}
@@ -232,6 +237,7 @@ export type AgentFieldsProps = Taken & {
   onChange: (draft: AgentDraft) => void
   onSubmit: (draft: AgentDraft) => void
   onDelete?: () => void
+  onExport?: () => Promise<void>
   /** Arriving from somewhere (a template card): fields rise in, the orb says hello. */
   entering?: boolean
   /** Just created: the orb is delighted. */
@@ -247,6 +253,7 @@ export function AgentFields({
   onChange,
   onSubmit,
   onDelete,
+  onExport,
   entering,
   celebrate,
   busy,
@@ -495,13 +502,38 @@ export function AgentFields({
           </div>
         </div>
 
-        {onDelete && (
-          <Button type="button" variant="danger" size="lg" onClick={onDelete}>
-            Delete agent
-          </Button>
+        {(onExport || onDelete) && (
+          <div className="space-y-2">
+            {onExport && <ExportButton name={draft.name.trim()} onExport={onExport} />}
+            {onDelete && (
+              <Button type="button" variant="danger" size="lg" onClick={onDelete}>
+                Delete agent
+              </Button>
+            )}
+          </div>
         )}
       </fieldset>
     </form>
+  )
+}
+
+/** "Export Scout": a file of it, to keep or to bring into another Hermes. */
+function ExportButton({ name, onExport }: { name: string; onExport: () => Promise<void> }) {
+  const [busy, setBusy] = useState(false)
+  return (
+    <Button
+      type="button"
+      variant="secondary"
+      size="lg"
+      loading={busy}
+      onClick={async () => {
+        setBusy(true)
+        await onExport().finally(() => setBusy(false))
+      }}
+    >
+      <Download size={18} strokeWidth={2} aria-hidden />
+      <span className="truncate">{name && name.length <= 18 ? `Export ${name}` : 'Export agent'}</span>
+    </Button>
   )
 }
 

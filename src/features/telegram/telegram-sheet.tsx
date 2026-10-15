@@ -26,6 +26,7 @@ import {
   type PairingPhase,
   type TelegramStatus,
 } from '@/state/telegram'
+import { People } from '@/features/access/people'
 import { QrCode } from './qr-code'
 import { TelegramGlyph } from './telegram-glyph'
 
@@ -555,6 +556,8 @@ function Connected({ agent, status }: { agent: Agent; status: TelegramStatus }) 
           Only you can message {agent.name} there. Your Telegram chats show up here too.
         </p>
       </div>
+
+      <People agent={agent} platform="telegram" className="mt-8" />
 
       <ConfirmCard
         className="mt-8 w-full"

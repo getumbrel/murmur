@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react'
 import { useLocation } from 'wouter'
 import { MotionConfig } from 'motion/react'
+import { Gauge } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { Thread } from '@/features/chat/thread'
@@ -14,8 +15,10 @@ import { NotFound } from '@/features/chat-screen/not-found'
 import { ThreadSkeleton } from '@/features/chat-screen/thread-skeleton'
 import { useOrbState } from '@/features/chat-screen/use-orb-state'
 import { GoalChip } from '@/features/chat-screen/goal-chip'
+import { useLoved } from '@/features/chat-screen/hearts'
 import { BackBadge, backHint, useElsewhere } from '@/features/chat-screen/elsewhere'
 import { ChatMenu, ChatMenuButton, useChatMenu } from '@/features/chat-screen/chat-menu'
+import { ChatInfoSheet, ContextRing } from '@/features/chat-screen/chat-info'
 import { transcript } from '@/features/chat-screen/transcript'
 import { ModelChip } from '@/features/model/model-chip'
 import { EFFORT, prettyModel, thinkingOf, type Thinking } from '@/features/model/names'
@@ -25,6 +28,7 @@ import { useCatalog } from '@/features/commands/use-catalog'
 import { useUmbrelKey } from '@/features/chat/umbrel-key'
 import { stopSpeaking, useSpeech } from '@/features/voice/speech'
 import { useConnection } from '@/hermes/gateway'
+import { useChatUsage } from '@/state/insights'
 import { useIsWide } from '@/lib/use-media'
 import { useUpFrom } from '@/lib/transitions'
 import {
@@ -39,6 +43,7 @@ import {
   editableMessage,
   leaveChat,
   openChat,
+  react,
   regenerate,
   renameChat,
   resend,
@@ -49,6 +54,7 @@ import {
   setChatModel,
   setChatReasoning,
   stop,
+  stopHelper,
   undo,
   useChats,
 } from '@/state/chats'
@@ -111,7 +117,10 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
   const online = useConnection((s) => s.state === 'open' || !s.everOpened)
   const [typing, setTyping] = useState(false)
   const speaking = useSpeech((s) => s.profile === agentId && s.phase === 'playing')
-  const orb = useOrbState(online ? status : 'offline', { typing, speaking })
+  const mood = useOrbState(online ? status : 'offline', { typing, speaking })
+  // You said something sweet: a happy hop under the hearts.
+  const loved = useLoved(chat?.vibes)
+  const orb = loved && online ? 'done' : mood
   const pick =
     chat?.model && chat.provider ? { model: chat.model, provider: chat.provider } : (draftPick ?? agentPick(agent))
   const effort = chat ? chat.reasoning : draftEffort
@@ -211,6 +220,9 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
     [id],
   )
   const [modelSheet, setModelSheet] = useState(false)
+  // How full this chat is and what it's cost: a ring once it's past half, a sheet from it or the menu.
+  const usage = useChatUsage(chat).data
+  const [info, setInfo] = useState(false)
   const thinkingDefault = useThinkingDefault(agentId).data
   const thinking = thinkingOf(effort, thinkingDefault)
   const qc = useQueryClient()
@@ -366,7 +378,7 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
     const all = id ? (getChat(id)?.items ?? items) : items
     const title = chat?.title?.trim() || `Chat with ${agent.name}`
     return { title, text: transcript(all, { title, agent: agent.name }) }
-  })
+  }, id ? [{ label: 'Chat info', icon: Gauge, onSelect: () => setInfo(true) }] : [])
 
   if (agents.isSuccess && !agent)
     return (
@@ -407,6 +419,7 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
           scrolled={scrolled}
           onNewChat={newChat}
           onOpenAgent={openAgent}
+          vibes={chat?.vibes}
           below={<GoalChip goal={goal} onAction={onGoal} />}
           backBadge={<BackBadge unread={elsewhere.unread} waiting={elsewhere.waiting} />}
           backHint={backHint(elsewhere.unread, elsewhere.waiting)}
@@ -459,6 +472,8 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
           editingId={rewrite ?? undefined}
           onEdit={onEditMessage}
           onDismiss={id ? (itemId) => dismissItem(id, itemId) : undefined}
+          onReact={id ? (itemId, emoji) => void react(id, itemId, emoji).catch(() => toast.error('Couldn’t react to that. Try again.')) : undefined}
+          onStopHelper={id ? (helper) => void stopHelper(id, helper).catch(() => toast.error('Couldn’t stop that helper. Try again.')) : undefined}
           footer={
             <Composer
               handle={composer}
@@ -482,15 +497,18 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
               onBeforeSend={umbrelKey.beforeSend}
               accessory={
                 agent && (
-                  <ModelChip
-                    agent={agent}
-                    pick={pick}
-                    effort={effort}
-                    onPick={onPick}
-                    onThinking={onThinking}
-                    open={modelSheet}
-                    onOpenChange={setModelSheet}
-                  />
+                  <>
+                    <ModelChip
+                      agent={agent}
+                      pick={pick}
+                      effort={effort}
+                      onPick={onPick}
+                      onThinking={onThinking}
+                      open={modelSheet}
+                      onOpenChange={setModelSheet}
+                    />
+                    <ContextRing usage={usage} onClick={() => setInfo(true)} />
+                  </>
                 )
               }
             />
@@ -498,6 +516,7 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
         />
 
         <ChatMenu menu={menu} />
+        {agent && <ChatInfoSheet open={info} onOpenChange={setInfo} agent={agent} usage={usage} runtimeId={chat?.runtimeId} />}
 
         <DropZone
           disabled={!agent || !!starting}

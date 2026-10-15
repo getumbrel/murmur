@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { useLocation } from 'wouter'
-import { ArrowUpRight, ChevronRight, LogOut, Server, Sparkles, Users } from 'lucide-react'
+import { ArrowUpRight, ChevronRight, Import, LogOut, Server, Sparkles, Users } from 'lucide-react'
 import { ListGroup, ListRow } from '@/ui/list'
 import { Segmented } from '@/ui/segmented'
 import { Orb } from '@/ui/orb'
@@ -14,6 +14,8 @@ import { Page, Tile } from '@/features/settings/page'
 import { Bone } from '@/features/home/bone'
 import { Stack } from '@/features/settings/stack'
 import { useAgentActions } from '@/features/home/actions'
+import { useImportAgent } from '@/features/agents/import-agent'
+import { Spinner } from '@/ui/spinner'
 import { usePicturesSync } from '@/state/pictures'
 import { ModelsSection } from '@/features/settings/models-section'
 import { UmbrelSection } from '@/features/settings/umbrel-section'
@@ -224,6 +226,7 @@ const hostOf = (url: string) => {
 function AgentsSection() {
   const { data, isPending } = useAgents()
   const actions = useAgentActions()
+  const importer = useImportAgent()
   if (isPending) return <Loading />
   return (
     <>
@@ -239,6 +242,19 @@ function AgentsSection() {
           />
         ))}
       </ListGroup>
+      <ListGroup>
+        <ListRow
+          icon={
+            <Tile>
+              <Import size={16} strokeWidth={2} />
+            </Tile>
+          }
+          title={<span className="text-accent">Import an agent</span>}
+          trailing={importer.busy ? <Spinner className="text-ink-2" /> : undefined}
+          onClick={importer.busy ? undefined : importer.pick}
+        />
+      </ListGroup>
+      {importer.input}
       {actions.sheets}
     </>
   )

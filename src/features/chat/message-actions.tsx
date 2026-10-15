@@ -1,4 +1,4 @@
-import { Check, Copy, RotateCcw, Square, Volume2 } from 'lucide-react'
+import { Check, Copy, RotateCcw, SmilePlus, Square, Volume2 } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
 import { cn } from '@/lib/cn'
 import { Spinner } from '@/ui/spinner'
@@ -27,11 +27,14 @@ const swap = {
 export function MessageActions({
   text,
   onRetry,
+  onReact,
   speak,
   className,
 }: {
   text: string
   onRetry?: () => void
+  /** Opens the tapbacks, springing out of this button. */
+  onReact?: (anchor: HTMLElement) => void
   /** Read aloud in this agent's voice; `key` tells this reply apart. */
   speak?: { key: string; profile?: string }
   className?: string
@@ -61,6 +64,18 @@ export function MessageActions({
           <Copy size={16} strokeWidth={1.75} />
         )}
       </button>
+      {onReact && (
+        <button
+          type="button"
+          className={action}
+          onClick={(e) => onReact(e.currentTarget)}
+          aria-label="React"
+          title="React"
+          aria-haspopup="menu"
+        >
+          <SmilePlus size={17} strokeWidth={1.75} />
+        </button>
+      )}
       {speak && profile && (
         <button
           type="button"

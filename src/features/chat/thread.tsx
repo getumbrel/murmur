@@ -31,6 +31,9 @@ import { MessageMenu, useLongPress, type MenuAction } from './message-menu'
 import { useCopy } from './use-copy'
 import { AsideCard, CommandCard } from './side-cards'
 import { ERROR_ACTION_LABEL, errorActionOf, type ErrorAction } from './errors'
+import { Plan } from './plan'
+import { Helpers } from './helpers'
+import { ReactionBadge, ReactionPills, Tapback, useHoldToReact } from './reactions'
 
 type Of<K extends ChatItem['kind']> = Extract<ChatItem, { kind: K }>
 
@@ -40,6 +43,8 @@ type Block =
   | { kind: 'approval'; id: string; item: Of<'approval'> }
   | { kind: 'clarify'; id: string; item: Of<'clarify'> }
   | { kind: 'error'; id: string; item: Of<'error'> }
+  | { kind: 'plan'; id: string; item: Of<'plan'> }
+  | { kind: 'helpers'; id: string; items: Of<'helper'>[] }
 
 type Section = { id: string; speaker?: Speaker; blocks: Block[] }
 
@@ -105,6 +110,10 @@ function toRows(items: ChatItem[], busy: boolean, live: Set<string>): Row[] {
     ) {
       if (last?.kind === 'work') last.items.push(item)
       else section.blocks.push({ kind: 'work', id: item.id, items: [item] })
+    } else if (item.kind === 'helper') {
+      // Helpers sent off together stack together.
+      if (last?.kind === 'helpers') last.items.push(item)
+      else section.blocks.push({ kind: 'helpers', id: item.id, items: [item] })
     } else {
       section.blocks.push({ kind: item.kind === 'assistant' ? 'text' : item.kind, id: item.id, item } as Block)
     }
@@ -121,6 +130,10 @@ type Handlers = {
   onRetry?: () => void
   /** The way out an error offers: Models, or a fresh chat. */
   onErrorAction?: (action: ErrorAction) => void
+  /** Tapback on a message, or take yours back (the same emoji again). */
+  onReact?: (itemId: string, emoji: string) => void
+  /** Call back a helper the agent sent off. */
+  onStopHelper?: (subagentId: string) => void
 }
 
 type Extras = {
@@ -185,6 +198,8 @@ export function Thread({
       onAnswer: (id, answers) => latest.current.onAnswer(id, answers),
       onRetry: () => latest.current.onRetry?.(),
       onErrorAction: (action) => latest.current.onErrorAction?.(action),
+      onReact: (itemId, emoji) => latest.current.onReact?.(itemId, emoji),
+      onStopHelper: (subagentId) => latest.current.onStopHelper?.(subagentId),
     }),
     [],
   )
@@ -311,6 +326,8 @@ export function Thread({
                               onAnswer={stable.onAnswer}
                               onRetry={last && handlers.onRetry ? stable.onRetry : undefined}
                               onErrorAction={last && handlers.onErrorAction ? stable.onErrorAction : undefined}
+                              onReact={handlers.onReact ? stable.onReact : undefined}
+                              onStopHelper={handlers.onStopHelper ? stable.onStopHelper : undefined}
                             />
                           )
                         }
@@ -424,6 +441,7 @@ const UserMessage = memo(function UserMessage({
       {item.text && (
         <>
           <div className="relative max-w-[80%]">
+            <ReactionBadge reactions={item.reactions} />
             <div
               {...press}
               className={cn(
@@ -501,8 +519,10 @@ const sameTurn = (a: TurnProps, b: TurnProps) =>
       sa.blocks.length === sb.blocks.length &&
       sa.blocks.every((x, j) => {
         const y = sb.blocks[j]
-        if (x.kind === 'work')
-          return y.kind === 'work' && x.items.length === y.items.length && x.items.every((it, k) => it === y.items[k])
+        if (x.kind === 'work' || x.kind === 'helpers')
+          return (
+            y.kind === x.kind && x.items.length === y.items.length && x.items.every((it, k) => it === y.items[k])
+          )
         return x.kind === y.kind && 'item' in y && x.item === y.item
       })
     )
@@ -521,6 +541,8 @@ const Turn = memo(function Turn({
   onAnswer,
   onRetry,
   onErrorAction,
+  onReact,
+  onStopHelper,
 }: TurnProps) {
   const texts = sections
     .flatMap((s) => s.blocks)
@@ -533,9 +555,21 @@ const Turn = memo(function Turn({
   const needsLine =
     live &&
     !(tail?.kind === 'work') &&
+    !(tail?.kind === 'helpers' && tail.items.some((h) => h.status === 'running')) &&
     !(tail?.kind === 'text' && tail.item.streaming) &&
     !((tail?.kind === 'approval' || tail?.kind === 'clarify') && tail.item.status === 'pending')
   const fallback = sections.at(-1)?.speaker ?? agent
+
+  // What a tapback lands on: the reply's last words, once it's finished (and,
+  // until Hermes has saved it, only while it's the newest).
+  const reply = live
+    ? undefined
+    : sections.flatMap((s) => s.blocks).findLast((b): b is Extract<Block, { kind: 'text' }> => b.kind === 'text')?.item
+  const reactTo = onReact && reply?.text && (reply.rowId != null || last) ? reply : undefined
+  const [tapAt, setTapAt] = useState<HTMLElement | null>(null)
+  const closeTap = useCallback(() => setTapAt(null), [])
+  const hold = useHoldToReact(setTapAt)
+  const mine = reactTo?.reactions?.find((r) => r.author === 'user')?.emoji
 
   return (
     <article
@@ -573,9 +607,19 @@ const Turn = memo(function Turn({
                   )
                 }
                 case 'text':
-                  return block.item.text ? (
+                  if (!block.item.text) return null
+                  return block.item === reactTo ? (
+                    // Touch: hold the reply to react, as you would a message in Messages.
+                    <div key={block.id} {...hold} className="[@media(pointer:coarse)]:[-webkit-touch-callout:none]">
+                      <RichText text={block.item.text} streaming={block.item.streaming} />
+                    </div>
+                  ) : (
                     <RichText key={block.id} text={block.item.text} streaming={block.item.streaming} />
-                  ) : null
+                  )
+                case 'plan':
+                  return <Plan key={block.id} item={block.item} live={live} />
+                case 'helpers':
+                  return <Helpers key={block.id} items={block.items} hue={hue} live={live} onStop={onStopHelper} />
                 case 'approval':
                   return <ApprovalCard key={block.id} item={block.item} hue={hue} seed={seed} onApprove={onApprove} />
                 case 'clarify':
@@ -601,10 +645,20 @@ const Turn = memo(function Turn({
         </div>
       )}
 
+      {reply?.reactions && (
+        <div className="mt-2">
+          <ReactionPills reactions={reply.reactions} onToggle={reactTo && ((emoji) => onReact?.(reactTo.id, emoji))} />
+        </div>
+      )}
+      {reactTo && (
+        <Tapback anchor={tapAt} current={mine} onPick={(emoji) => onReact?.(reactTo.id, emoji)} onClose={closeTap} />
+      )}
+
       {!live && text && (
         <MessageActions
           text={text}
           onRetry={onRetry}
+          onReact={reactTo ? setTapAt : undefined}
           speak={{ key: speakKey, profile: sections.at(-1)?.speaker?.id ?? voice }}
           // Touch: always there, under the reply. Pointer: they appear on hover in
           // the space below it, so they never push the conversation apart.

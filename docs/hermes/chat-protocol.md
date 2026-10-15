@@ -494,6 +494,20 @@ cycle per model call.
 | `-32601` | unknown method |
 | `5035` | backend retiring, reconnect [source] |
 
+### 3.4 Live extras Murmur draws  [Hermes 0.22, source + live; reducers in `src/features/chat/live.ts`]
+
+| event / call | Murmur | notes |
+|---|---|---|
+| `todo.updated` `{todos[], revision}` | **Plan** card in the turn (`chat/plan.tsx`): ring, "1 of 4", folds to "Plan · All 4 done" when the turn ends. | One card per turn, ticked off in place; an older `revision` never undoes a newer one, an empty list removes it. After a reload it comes back from the stored `todo_list` result, and `session.resume`'s `todo_state` while a turn is running. `todo` is the pre‑0.21 tool name. |
+| `subagent.start` / `progress` / `tool` / `thinking` / `complete` | **Helper** cards (`chat/helpers.tsx`) with a live status line; stop calls `subagent.interrupt {subagent_id}`. | Keyed by `subagent_id`, or `delegation_id`+`task_index` on older Hermes. A finished helper ignores stragglers; any still running when the turn ends are settled. **Not stored**: a reloaded chat shows the plain "Asked a helper" step. |
+| `message.react {row_id \| newest_role, emoji, author}` → `{row_id, reactions}` | **Tapbacks** (`chat/reactions.tsx`): ❤️ 👍 👎 😂 ‼️ ❓, one per author, the same again takes it back. | A message not saved yet is named by `newest_role`, so it's only offered on the newest one. Saved reactions come back in each history row's `display_metadata.reactions`. |
+| `message.reaction {row_id, role, reactions}` | The agent's reaction, on the corner of your bubble. | Needs the agent's `display.message_reactions: true`. |
+| `reaction {kind}` | Hearts float from the header buddy, which hops (`chat-screen/hearts.tsx`). | Hermes's affection detector ("thanks", "<3", "good bot"). |
+| `notification.show` / `notification.clear` | A sonner toast at Hermes's level (`chat/notices.ts`). | Every chat in the tab hears it, so each key shows once a minute; a changed text under the same key replaces it; `kind: sticky` stays until cleared. |
+| `preview.open {url}` | The page (as a link card) or file (as itself) under the step that opened it. | Hermes Desktop's preview pane; Murmur has none. |
+
+Murmur's chats are desktop‑surface sessions, so Hermes gives them its `desktop_ui` tools. `src/state/toolsets.ts` sets every agent's `display.in_app_tips` and `display.in_app_tours` to `false` (and `message_reactions` to `true` unless the agent was set not to react), so those tools aren't offered. Theme, terminal, window and tour requests are answered "not supported" at once. **Gap:** `focus_pane` and closing a terminal tab can't be switched off, and report success when nothing happened. Group chats don't draw any of the above yet.
+
 ---
 
 ## 4. Interrupt, steer, queueing, and per‑session model or effort

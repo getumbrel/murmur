@@ -92,7 +92,7 @@ Anyone who can open Murmur can talk to your agents, and through them, to whateve
 -e MURMUR_PASSWORD='something long'
 ```
 
-With it set, Murmur shows a sign-in screen. Hermes, the live connection and Murmur's settings API all need a signed, HttpOnly, SameSite=Lax cookie, which lasts 30 days. Changing the password signs everyone out. Sign-in attempts are limited to 10 every 10 minutes per address. The web app's static files stay public: they hold no secrets and are needed to draw the sign-in screen.
+With it set, Murmur shows a sign-in screen. Hermes, the live connection and Murmur's settings API all need a signed, HttpOnly, SameSite=Lax cookie, which lasts 30 days. Changing the password signs everyone out. Sign-in attempts are limited to 10 every 10 minutes per address. The web app's static files stay public: they hold no secrets and are needed to draw the sign-in screen. So does one Hermes address, `GET /hermes/api/mcp/oauth/callback/<app>`, where an app (Notion, Linear…) sends the browser back after someone signs in to it for an agent: that often happens in another browser, without Murmur's cookie. Hermes keeps it public too and accepts only the one-time state it issued, and Murmur passes on nothing but the address.
 
 More protections are always on:
 

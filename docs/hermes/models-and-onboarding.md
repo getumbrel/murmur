@@ -468,6 +468,15 @@ Recommended flow: validate (`OPENAI_BASE_URL`) → user picks from `models` →
 * It can return `503 {"detail":"Restart required: …"}` after a code update.
 * Model search: Desktop uses `apps/shared/src/model-search-text.ts`. A plain substring match on
   id + provider name is fine for us.
+* **Plan limits (0.22, `hermes_cli/inventory.py`).** A signed-in row can carry `usage`: `{windows:[{label,
+  used_percent, resets_at, scope:'account'|'model'}]}`, or `{accounts:[{state, windows}]}` for a pool of
+  several accounts. It comes from Hermes's cache, so the list never waits on it. Labels are Hermes's own
+  ("Session", "Weekly", "Current week", "Subscription"…). A rate-limited row carries `limit`:
+  `{scope:'account', resets_at}` or `{scope:'models', models:{<id>: resets_at}}`. Murmur
+  (`src/state/limits.ts`, `features/model/plan.tsx`) shows the tightest account window as a gauge
+  ("Plenty left this week · resets Tue", amber under 20%) in Settings → Models and both model pickers,
+  answers from the account with the most room in a pool, and shows "Resting until 8:43 PM" for a limited
+  service or model (still pickable). The plan name (Plus/Pro) isn't in this data, so Murmur no longer shows it.
 
 ### 5.2 `GET /api/model/info?profile=` [LIVE]
 

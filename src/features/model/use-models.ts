@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/hermes/rest'
 import { rpc } from '@/hermes/gateway'
 import { serviceName } from './names'
+import { planUsage, restingUntil, type PlanUsage } from '@/state/limits'
 
 export type ModelPick = { model: string; provider: string }
 
@@ -23,7 +24,12 @@ export function freshenModels(path: string, reload: () => void) {
 export type ModelGroup = {
   provider: string
   name: string
-  models: { id: string; reasoning: boolean }[]
+  /** When it's back, while the whole service is resting after hitting its limit. */
+  resting?: Date
+  /** How much of its plan is left, when Hermes knows. */
+  plan?: PlanUsage | null
+  /** `resting`: just this model is waiting out a limit. */
+  models: { id: string; reasoning: boolean; resting?: Date }[]
 }
 
 type Options = {
@@ -35,6 +41,8 @@ type Options = {
     authenticated?: boolean
     models: string[]
     capabilities?: Record<string, { reasoning?: boolean }>
+    usage?: unknown
+    limit?: unknown
   }[]
 }
 
@@ -55,7 +63,13 @@ export function useModelOptions(profile: string | undefined) {
         .map((p) => ({
           provider: p.slug,
           name: serviceName(p.slug, p.name),
-          models: p.models.map((id) => ({ id, reasoning: p.capabilities?.[id]?.reasoning !== false })),
+          resting: restingUntil(p.limit),
+          plan: planUsage(p.usage),
+          models: p.models.map((id) => ({
+            id,
+            reasoning: p.capabilities?.[id]?.reasoning !== false,
+            resting: restingUntil(p.limit, id),
+          })),
         }))
       const current: ModelPick | undefined = res.model && res.provider ? { model: res.model, provider: res.provider } : undefined
       return { groups, current }

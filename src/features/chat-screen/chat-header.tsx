@@ -7,6 +7,7 @@ import { Orb, type OrbState } from '@/ui/orb'
 import { cn } from '@/lib/cn'
 import { upFrom } from '@/lib/transitions'
 import { WindowControlsGap } from '@/ui/titlebar'
+import { Hearts } from './hearts'
 
 type Props = {
   agent?: { id: string; name: string; hue: number }
@@ -30,6 +31,8 @@ type Props = {
   menu?: ReactNode
   /** Extra handlers for the agent's name, e.g. press and hold for that menu. */
   titleProps?: HTMLAttributes<HTMLButtonElement>
+  /** Goes up each time you're sweet to the agent: hearts float out of its face. */
+  vibes?: number
 }
 
 export function ChatHeader({
@@ -46,6 +49,7 @@ export function ChatHeader({
   backHint = '',
   menu,
   titleProps,
+  vibes,
 }: Props) {
   // Back to wherever this chat was opened from: its agent's page, or Home.
   const [location] = useLocation()
@@ -95,8 +99,9 @@ export function ChatHeader({
           title={agent ? `${agent.name}’s chats and settings` : undefined}
         >
           {agent ? (
-            <span className="flex-none">
+            <span className="relative flex-none">
               <Orb hue={agent.hue} size={34} state={orb} seed={agent.id} />
+              <Hearts count={vibes} />
             </span>
           ) : (
             <span className="size-[34px] flex-none rounded-full bg-fill-2" />

@@ -1,6 +1,6 @@
 import { useMemo, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
-import { Check, HardDrive, KeyRound, Plus, Search, Sparkles } from 'lucide-react'
+import { Check, HardDrive, KeyRound, Plus, RotateCw, Search, Sparkles } from 'lucide-react'
 import { ListGroup, ListRow } from '@/ui/list'
 import { Sheet } from '@/ui/sheet'
 import { Skeleton } from '@/ui/skeleton'
@@ -8,18 +8,9 @@ import { Spinner } from '@/ui/spinner'
 import { TextField } from '@/ui/field'
 import { cn } from '@/lib/cn'
 import { useAgent } from '@/state/agents'
-import {
-  disconnect,
-  LOCAL_SLUG,
-  modelName,
-  planUsageLine,
-  setMainModel,
-  useModels,
-  usePlanUsage,
-  useRefreshModels,
-  type PlanUsage,
-  type Service,
-} from '@/state/models'
+import { disconnect, LOCAL_SLUG, modelName, planUsageLine, setMainModel, useModels, useOlderPlanUsage, useRefreshModels, type Service } from '@/state/models'
+import { restingUntil } from '@/state/limits'
+import { PlanGauge, Resting, ServiceHeading } from '@/features/model/plan'
 import { ask } from './ask'
 import { ConnectFlow } from './connect-flow'
 import { LocalService } from './local-service'
@@ -41,7 +32,8 @@ export function ModelsSection() {
   const [busy, setBusy] = useState<string | null>(null)
 
   const chatgpt = data?.services.find((s) => s.slug === 'openai-codex')
-  const usage = usePlanUsage(!!chatgpt)
+  // (A Hermes before 0.22 only says per chat; models.ts.)
+  const olderPlan = useOlderPlanUsage(!!chatgpt && !chatgpt.plan)
 
   if (isPending) return <Loading />
   if (isError || !data) return <p className="px-4 text-subhead text-pretty text-ink-2">Can’t reach Hermes right now. Check that it’s running, then try again.</p>
@@ -103,8 +95,8 @@ export function ModelsSection() {
           <>
             <ListRow
               icon={<ServiceTile service={chatgpt} />}
-              title={<ChatGPTTitle plan={usage.data?.plan} />}
-              subtitle={<PlanLine usage={usage.data ?? null} fallback={chatgpt.detail} />}
+              title="ChatGPT"
+              subtitle={<PlanLine service={{ ...chatgpt, plan: chatgpt.plan ?? olderPlan }} />}
               trailing={trailingFor(chatgpt)}
             />
             <PicturesRow />
@@ -114,7 +106,7 @@ export function ModelsSection() {
           s.slug === LOCAL_SLUG ? (
             <LocalService key={s.slug} service={s} services={data.services} />
           ) : (
-            <ListRow key={s.slug} icon={<ServiceTile service={s} />} title={s.name} subtitle={s.detail} trailing={trailingFor(s)} />
+            <ListRow key={s.slug} icon={<ServiceTile service={s} />} title={s.name} subtitle={<PlanLine service={s} />} trailing={trailingFor(s)} />
           ),
         )}
         <ListRow
@@ -140,31 +132,33 @@ export function ModelsSection() {
   )
 }
 
-function ChatGPTTitle({ plan }: { plan?: string }) {
+/** "Plenty left this week · resets Tue" by a little gauge, rising in once Hermes has asked; or when a resting service is back. */
+function PlanLine({ service }: { service: Service }) {
+  const resting = restingUntil(service.limit)
+  const line = service.plan ? planUsageLine(service.plan) : null
   return (
-    <span className="flex items-center gap-2">
-      ChatGPT
-      {plan && (
-        <span className="animate-fade rounded-full bg-fill-2 px-1.5 py-px text-caption font-medium text-ink-2">{plan}</span>
-      )}
-    </span>
-  )
-}
-
-/** "Plenty left this week · resets Tue", rising in once Hermes has asked ChatGPT. */
-function PlanLine({ usage, fallback }: { usage: PlanUsage | null; fallback: string }) {
-  const line = usage ? planUsageLine(usage) : null
-  return (
-    <Swap id={line ? 'usage' : 'plan'}>
-      {line?.low && <span className="mr-1.5 inline-block size-1.5 -translate-y-px rounded-full bg-warning align-middle" />}
-      {line ? (
-        <>
-          {line.parts.lead}
-          {line.parts.scope && <span className="max-[479px]:hidden"> {line.parts.scope}</span>}
-          {line.parts.reset && ` · ${line.parts.reset}`}
-        </>
+    <Swap id={resting ? 'resting' : line ? 'usage' : 'plan'}>
+      {resting ? (
+        <Resting until={resting} />
+      ) : line ? (
+        <span className="flex min-w-0 items-center gap-1.5">
+          <PlanGauge left={line.left} />
+          <span className="truncate">
+            {line.parts.lead}
+            {line.parts.scope && <span className="max-[479px]:hidden"> {line.parts.scope}</span>}
+            {line.parts.reset && (
+              <>
+                {' · '}
+                {/* Phones say "resets" with a glyph, so the time still fits beside Disconnect. */}
+                <RotateCw size={11} strokeWidth={2.5} aria-hidden className="mr-0.5 inline -translate-y-px min-[480px]:hidden" />
+                <span className="max-[479px]:sr-only">resets </span>
+                {line.parts.reset.replace(/^resets /, '')}
+              </>
+            )}
+          </span>
+        </span>
       ) : (
-        fallback
+        service.detail
       )}
     </Swap>
   )
@@ -225,25 +219,31 @@ function ModelPicker({
       )}
       <div className="space-y-6">
         {shown.map((s) => (
-          <ListGroup key={s.slug} title={s.name}>
-            {s.models.map((m) => {
-              const selected = m === model && (s.current || s.slug === provider)
-              return (
-                <ListRow
-                  key={m}
-                  title={<span className={cn(selected && 'font-medium')}>{modelName(m)}</span>}
-                  onClick={selected || saving ? undefined : () => pick(s, m)}
-                  trailing={
-                    saving === `${s.slug}/${m}` ? (
-                      <Spinner className="text-ink-2" />
-                    ) : selected ? (
-                      <Check size={18} strokeWidth={2.5} className="flex-none text-accent" />
-                    ) : null
-                  }
-                />
-              )
-            })}
-          </ListGroup>
+          <section key={s.slug}>
+            <ServiceHeading name={s.name} plan={s.plan} resting={restingUntil(s.limit)} />
+            <div className="list-group overflow-hidden rounded-xl bg-fill-1">
+              {s.models.map((m) => {
+                const selected = m === model && (s.current || s.slug === provider)
+                const resting = restingUntil(s.limit, m)
+                return (
+                  <ListRow
+                    key={m}
+                    title={<span className={cn(selected && 'font-medium', resting && !selected && 'text-ink-2')}>{modelName(m)}</span>}
+                    onClick={selected || saving ? undefined : () => pick(s, m)}
+                    trailing={
+                      saving === `${s.slug}/${m}` ? (
+                        <Spinner className="text-ink-2" />
+                      ) : selected ? (
+                        <Check size={18} strokeWidth={2.5} className="flex-none text-accent" />
+                      ) : resting && !restingUntil(s.limit) ? (
+                        <Resting until={resting} className="flex-none text-footnote text-ink-3" />
+                      ) : null
+                    }
+                  />
+                )
+              })}
+            </div>
+          </section>
         ))}
         {!shown.length && <p className="py-8 text-center text-subhead text-ink-2">No models match “{query}”.</p>}
       </div>

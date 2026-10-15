@@ -11,8 +11,16 @@ import {
   type PanInfo,
   type Transition,
 } from 'motion/react'
-import { useEffect, useId, useLayoutEffect, useRef, useSyncExternalStore, type ReactNode } from 'react'
-import { X } from 'lucide-react'
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useSyncExternalStore,
+  type CSSProperties,
+  type ReactNode,
+} from 'react'
+import { ChevronLeft, X } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { useIsWide } from '@/lib/use-media'
 
@@ -27,10 +35,14 @@ type Props = {
   title: string
   /** Visually hide the title (it is still announced). */
   hideTitle?: boolean
+  /** A way back to the sheet's first view, in the title's place: the label is where it goes. */
+  back?: { label: string; onBack: () => void }
   description?: string
   children: ReactNode
   footer?: ReactNode
   className?: string
+  /** Styles for the sheet itself, e.g. an agent's --hue under `hue-scope`. */
+  style?: CSSProperties
   /** Wide-screen card width. */
   width?: number
 }
@@ -44,10 +56,12 @@ export function Sheet({
   onOpenChange,
   title,
   hideTitle,
+  back,
   description,
   children,
   footer,
   className,
+  style,
   width = 440,
 }: Props) {
   const wide = useIsWide()
@@ -120,12 +134,12 @@ export function Sheet({
                     'rounded-2xl bg-elevated shadow-float outline-none ring-1 ring-line',
                     className,
                   )}
-                  style={{ width, x: '-50%', y: '-50%' }}
+                  style={{ ...style, width, x: '-50%', y: '-50%' }}
                   initial={reduce ? { opacity: 0 } : { opacity: 0, scale: 0.95 }}
                   animate={{ opacity: 1, scale: covered && !reduce ? 0.96 : 1, transition: reduce ? fade : enter }}
                   exit={reduce ? { opacity: 0, transition: fade } : { opacity: 0, scale: 0.97, transition: leave }}
                 >
-                  <SheetHeader title={title} hideTitle={hideTitle} description={description} />
+                  <SheetHeader title={title} hideTitle={hideTitle} back={back} description={description} />
                   <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-6">{children}</div>
                   {footer && <div className="hairline-t px-6 py-4">{footer}</div>}
                 </motion.div>
@@ -137,6 +151,7 @@ export function Sheet({
                     'origin-bottom rounded-t-2xl bg-elevated shadow-sheet outline-none',
                     className,
                   )}
+                  style={style}
                   initial={reduce ? { opacity: 0 } : { y: '100%' }}
                   animate={{
                     y: 0,
@@ -162,7 +177,7 @@ export function Sheet({
                     <span className="h-[5px] w-9 rounded-full bg-fill-3 transition-[scale,background-color] duration-200 ease-out group-active:scale-x-110 group-active:bg-line-strong" />
                   </div>
                   <div onPointerDown={(e) => drag.start(e)} className="touch-none">
-                    <SheetHeader title={title} hideTitle={hideTitle} description={description} compact />
+                    <SheetHeader title={title} hideTitle={hideTitle} back={back} description={description} compact />
                   </div>
                   <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 pb-5">{children}</div>
                   {footer && (
@@ -182,19 +197,34 @@ export function Sheet({
 function SheetHeader({
   title,
   hideTitle,
+  back,
   description,
   compact,
 }: {
   title: string
   hideTitle?: boolean
+  back?: Props['back']
   description?: string
   compact?: boolean
 }) {
   return (
     <div className={cn('flex flex-none items-start gap-3', compact ? 'px-5 pt-1 pb-3' : 'px-6 pt-5 pb-4')}>
       <div className="min-w-0 flex-1">
+        {back && (
+          <button
+            type="button"
+            onClick={back.onBack}
+            className="pressable -my-px -ml-2 flex h-7 items-center gap-0.5 rounded-full pr-2.5 pl-0.5 text-body text-accent hover:bg-fill-1"
+          >
+            <ChevronLeft size={22} strokeWidth={2.2} aria-hidden />
+            {back.label}
+          </button>
+        )}
         <Dialog.Title
-          className={cn('text-title font-semibold tracking-[-0.02em] text-balance break-words', hideTitle && 'sr-only')}
+          className={cn(
+            'text-title font-semibold tracking-[-0.02em] text-balance break-words',
+            (hideTitle || back) && 'sr-only',
+          )}
         >
           {title}
         </Dialog.Title>

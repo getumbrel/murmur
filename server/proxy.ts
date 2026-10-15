@@ -8,6 +8,7 @@ import net from 'node:net'
 import tls from 'node:tls'
 import type { Hermes } from './hermes.ts'
 import { HERMES_PARAM } from './connection.ts'
+import { sendReturnPage } from './oauth-return.ts'
 
 const HOP_BY_HOP = new Set(['connection', 'keep-alive', 'proxy-connection', 'transfer-encoding', 'upgrade', 'te', 'trailer'])
 // Browser-side identity never reaches Hermes; Murmur speaks for the browser.
@@ -170,6 +171,24 @@ export function createProxy(pick: Pick) {
     client.on('close', dropUpstream)
   }
 
+  /** An app's sign-in coming back (oauth-return.ts): Hermes takes the code, Murmur shows its own page. */
+  async function proxyOAuthReturn(req: http.IncomingMessage, res: http.ServerResponse, url: URL) {
+    const hermes = pick(req, url)
+    if (!hermes) return sendReturnPage(res, false)
+    let ok = false
+    try {
+      const up = await fetch(new URL(upstreamPath(hermes, url), hermes.url), {
+        redirect: 'manual',
+        signal: AbortSignal.timeout(15_000),
+      })
+      await up.body?.cancel()
+      ok = up.ok
+    } catch {
+      // Unreachable: the page says it didn't go through.
+    }
+    sendReturnPage(res, ok)
+  }
+
   /** Drop live sockets so browsers redial: one sign-in's (sign-out), or one Hermes's (it changed or went). */
   function closeWhere(match: (owner: { session: string | null; hermes: Hermes }) => boolean) {
     for (const [socket, owner] of sockets) {
@@ -179,7 +198,7 @@ export function createProxy(pick: Pick) {
     }
   }
 
-  return { proxyHttp, proxyUpgrade, closeWhere }
+  return { proxyHttp, proxyUpgrade, proxyOAuthReturn, closeWhere }
 }
 
 export function refuse(socket: net.Socket, status: number, text: string) {

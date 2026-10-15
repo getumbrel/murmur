@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useId, useRef, useState, type CSSProperties } from 'react'
-import { Check, ChevronLeft } from 'lucide-react'
+import { Check, ChevronLeft, Import } from 'lucide-react'
 import { AgentFields, canSubmit, type AgentDraft } from '@/features/agents/agent-editor'
 import { Button } from '@/ui/button'
 import { Sheet } from '@/ui/sheet'
@@ -30,6 +30,8 @@ type Props = {
   takenNames?: string[]
   /** Ids already in use: a newcomer's Buddy is seeded with the id it will get. */
   takenIds?: string[]
+  /** Bring in one exported from Murmur or Hermes instead. */
+  onImport?: () => void
 }
 
 type Stage = { kind: 'pick' } | { kind: 'edit'; from: string }
@@ -45,6 +47,7 @@ export function NewAgentSheet({
   defaultHue = HUES[0],
   takenNames = [],
   takenIds = [],
+  onImport,
 }: Props) {
   const wide = useIsWide()
   const formId = useId()
@@ -125,6 +128,18 @@ export function NewAgentSheet({
           {stage.kind === 'pick' ? (
             <motion.div key="pick" exit={{ opacity: 0, transition: { duration: 0.16 } }}>
               <TemplateGrid onPick={pick} onScratch={scratch} seedFor={seedFor} columns={wide ? 3 : 2} />
+              {onImport && (
+                <div className="flex animate-fade justify-center pt-5 pb-1 [animation-delay:420ms]">
+                  <button
+                    type="button"
+                    onClick={onImport}
+                    className="pressable touch-target relative inline-flex h-9 items-center gap-1.5 rounded-full px-3.5 text-footnote font-medium text-ink-2 select-none hover:bg-fill-1 hover:text-ink"
+                  >
+                    <Import size={15} strokeWidth={2} aria-hidden />
+                    Import an agent
+                  </button>
+                </div>
+              )}
             </motion.div>
           ) : (
             <motion.div

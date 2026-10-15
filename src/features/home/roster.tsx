@@ -9,6 +9,8 @@ import { Button } from '@/ui/button'
 import { fetchAgentChats, useAgentChats, useAgents, type Agent } from '@/state/agents'
 import { useAgentStatus, useBusyAgents, useChatUnread, useNeedsYou } from '@/state/status'
 import { prefetchGroup, useGroupSummaries } from '@/state/groups'
+import { useAccessRequests } from '@/state/access'
+import { RequestCard } from '@/features/access/request-card'
 import { cn } from '@/lib/cn'
 import { useGroupRows, type GroupRow } from './groups'
 import { shortTime } from './time'
@@ -735,10 +737,15 @@ export function NeedsYou({ density, title }: { density: Density; title?: ReactNo
     const agent = agents?.find((a) => a.id === item.agentId)
     return agent ? [{ ...item, agent }] : []
   })
+  // People asking to message an agent from Telegram or WhatsApp wait here too.
+  const requests = useAccessRequests().flatMap((request) => {
+    const agent = agents?.find((a) => a.id === request.agentId)
+    return agent ? [{ request, agent }] : []
+  })
   const roomy = density === 'roomy'
   return (
     <AnimatePresence initial={false}>
-      {rows.length > 0 && (
+      {rows.length + requests.length > 0 && (
         <motion.section
           key="needs-you"
           // The space opens under the title, then the cards drop into it.
@@ -788,6 +795,20 @@ export function NeedsYou({ density, title }: { density: Density; title?: ReactNo
                       </span>
                       <ChevronRight size={roomy ? 18 : 16} className="flex-none text-accent" />
                     </Link>
+                  </motion.li>
+                ))}
+                {requests.map(({ request, agent }, i) => (
+                  <motion.li
+                    key={request.requestId}
+                    layout="position"
+                    className="hue-scope origin-top"
+                    style={{ '--hue': agent.hue } as CSSProperties}
+                    initial={{ opacity: 0, y: -14, scale: 0.96 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.96, transition: { duration: 0.18 } }}
+                    transition={{ type: 'spring', duration: 0.5, bounce: 0.18, delay: 0.06 + (rows.length + i) * 0.05 }}
+                  >
+                    <RequestCard request={request} agent={agent} density={density} />
                   </motion.li>
                 ))}
               </AnimatePresence>

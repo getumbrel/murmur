@@ -10,6 +10,7 @@ import { cookieValue, handleAccess, isSignedIn, onSignOut } from './access.ts'
 import { memo, setting, useEnv, type Env } from './config.ts'
 import { handleConnection, hermesFor, onDrop, syncHermesCookie } from './connection.ts'
 import { hostAllowed, originAllowed, requestUrl, sendJson } from './http.ts'
+import { isOAuthReturn } from './oauth-return.ts'
 import { createProxy, refuse } from './proxy.ts'
 import { handleSetup, setupSettled, startSetup } from './setup.ts'
 import { handleTelegram, startTelegram, stopTelegram } from './telegram.ts'
@@ -230,7 +231,9 @@ export function startServer(options: ServerOptions = {}): Promise<RunningServer>
     const path = url.pathname
     if (path === '/healthz') return void res.writeHead(200).end('ok')
     if (!hostAllowed(req)) return blockedHost(res, req.headers.host)
-    if (!carriesHeader(req)) return void res.writeHead(403).end()
+    // An app's sign-in coming back may be in the person's own browser, without the header (oauth-return.ts).
+    const oauthReturn = isOAuthReturn(req, path)
+    if (!carriesHeader(req) && !oauthReturn) return void res.writeHead(403).end()
 
     try {
       // An update's first start may still be settling which Hermes this Murmur uses (setup.ts).
@@ -240,6 +243,7 @@ export function startServer(options: ServerOptions = {}): Promise<RunningServer>
       const mutating = req.method !== 'GET' && req.method !== 'HEAD'
       if ((isHermes(path) || mutating) && !originAllowed(req)) return sendJson(res, 403, { error: 'cross_origin' })
       if (isHermes(path) && !isHermesApi(path)) return sendJson(res, 404, { error: 'not_found' })
+      if (oauthReturn) return await proxy.proxyOAuthReturn(req, res, url)
       if (await handleAccess(req, res, path)) return
       if (!isSignedIn(req)) return sendJson(res, 401, { error: 'signed_out' })
       if (isHermes(path)) return await proxy.proxyHttp(req, res, url)

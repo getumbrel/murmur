@@ -36,8 +36,19 @@ export type ChatItem =
       rowId?: number
       /** The message this one rewrote (edit and resend): it takes that one's place. */
       was?: string
+      reactions?: Reaction[]
     }
-  | { kind: 'assistant'; id: string; text: string; streaming: boolean; at: number; speaker?: Speaker }
+  | {
+      kind: 'assistant'
+      id: string
+      text: string
+      streaming: boolean
+      at: number
+      speaker?: Speaker
+      /** Hermes's row id once it's saved: what a reaction is pinned to. */
+      rowId?: number
+      reactions?: Reaction[]
+    }
   | {
       kind: 'thinking'
       id: string
@@ -100,5 +111,33 @@ export type ChatItem =
   | { kind: 'command'; id: string; command: string; output?: string; status: 'running' | 'done' | 'error' }
   /** A side question (/btw): answered off to the side, without interrupting the conversation. */
   | { kind: 'aside'; id: string; taskId?: string; question: string; answer?: string; status: 'pending' | 'done' | 'error' }
+  /** The agent's checklist for this turn (its todo list), ticking itself off as it works. */
+  | { kind: 'plan'; id: string; todos: Todo[]; revision: number }
+  /** A helper the agent sent off with part of the work (delegate_task). */
+  | {
+      kind: 'helper'
+      id: string
+      subagentId: string
+      goal: string
+      status: 'running' | 'done' | 'error' | 'stopped'
+      /** What it's doing right now, in a few words. */
+      line?: string
+      tools: number
+      startedAt: number
+      endedAt?: number
+      /** What it came back with. */
+      summary?: string
+    }
+
+/** A tapback: one per author per message, the way Messages does it. */
+export type Reaction = { emoji: string; author: 'user' | 'agent' }
+
+export type Todo = {
+  id: string
+  content: string
+  status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
+  /** Nests it under another item. */
+  parent?: string
+}
 
 export type ChatStatus = 'idle' | 'thinking' | 'working' | 'waiting' | 'error'

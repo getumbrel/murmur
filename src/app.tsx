@@ -12,6 +12,8 @@ import { markWelcomed, useReadiness } from '@/state/readiness'
 import { useAgents, useFreshAgents } from '@/state/agents'
 import { usePicturesSync } from '@/state/pictures'
 import { useUmbrelContextSync } from '@/state/umbrel-context'
+import { useDesktopToolsSync } from '@/state/toolsets'
+import { wireNotices } from '@/features/chat/notices'
 import { useUmbrelMcpSync } from '@/state/umbrel-mcp'
 import { ensureTimezone } from '@/state/timezone'
 import { useGroupSummaries } from '@/state/groups'
@@ -48,6 +50,7 @@ export const queryClient = new QueryClient({
 export function App() {
   useEffect(() => {
     wireChats()
+    wireNotices()
     wireSessionLists(queryClient)
     // Split out of the main bundle and fetched once the first screen is up, so
     // they don't compete with it: markdown first (chats are what people open),
@@ -256,6 +259,8 @@ function Background() {
   // On an Umbrel, every agent knows it runs there, not just the main one.
   useUmbrelContextSync(agents?.map((a) => a.id))
   useUmbrelMcpSync(agents?.map((a) => a.id))
+  // Hermes Desktop's tips and tours off, reactions on (src/state/toolsets.ts).
+  useDesktopToolsSync(agents?.map((a) => a.id))
   useEffect(() => setMainAgent(agents?.find((a) => a.isDefault)?.id), [agents])
   useSeenTracking()
   useDocumentTitle()

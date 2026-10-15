@@ -72,6 +72,8 @@ const RULES: Record<string, Rule> = {
   web_crawl: { label: 'Reading a website', category: 'web', detail: url },
 
   browser_navigate: { label: 'Opening a page', category: 'browser', detail: url },
+  // Hermes Desktop's preview pane; in Murmur what it opens shows under the step.
+  desktop_preview: { label: 'Opening a page', category: 'browser', detail: url },
   browser_click: { label: 'Clicking', category: 'browser', detail: (a) => pick(a, 'element', 'ref', 'text') },
   browser_type: { label: 'Typing', category: 'browser', detail: (a) => pick(a, 'text') },
   browser_snapshot: { label: 'Looking at the page', category: 'browser' },

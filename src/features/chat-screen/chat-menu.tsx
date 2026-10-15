@@ -8,12 +8,14 @@ import { cn } from '@/lib/cn'
 import { useLongPress } from '@/features/chat/message-menu'
 import { copyText } from '@/features/chat/use-copy'
 
-// Copy or share a whole chat. On wide screens a quiet "…" sits in the header;
+// Copy or share a whole chat, or look into it. On wide screens a quiet "…" sits in the header;
 // anywhere, press and hold (or right-click) the agent's name for the same menu.
 
 const canShare = () => typeof navigator !== 'undefined' && typeof navigator.share === 'function'
 
-export function useChatMenu(getText: () => { title: string; text: string } | undefined) {
+type Action = { label: string; icon: typeof Copy; onSelect: () => unknown }
+
+export function useChatMenu(getText: () => { title: string; text: string } | undefined, more: Action[] = []) {
   const [anchor, setAnchor] = useState<HTMLElement | null>(null)
   const latest = useRef(getText)
   latest.current = getText
@@ -38,6 +40,7 @@ export function useChatMenu(getText: () => { title: string; text: string } | und
   const actions = [
     { label: 'Copy chat', icon: Copy, onSelect: copy },
     ...(canShare() ? [{ label: 'Share…', icon: Share, onSelect: share }] : []),
+    ...more,
   ]
 
   // Hold the name: a press that opened the menu isn't also a tap.

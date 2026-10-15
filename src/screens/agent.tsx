@@ -13,6 +13,8 @@ import { createChat, send } from '@/state/chats'
 import { useAgentActions } from '@/features/home/actions'
 import { MemorySheet, rememberMessage } from '@/features/memory'
 import { TelegramSheet } from '@/features/telegram'
+import { WhatsAppSheet } from '@/features/whatsapp'
+import { AppsSheet } from '@/features/apps'
 import { RoutinesSheet } from '@/features/routines'
 import { NotFound } from '@/features/chat-screen/not-found'
 import { AgentHero } from '@/features/agent-page/hero'
@@ -20,15 +22,16 @@ import { QuickActions } from '@/features/agent-page/quick-actions'
 import { ChatList } from '@/features/agent-page/chat-list'
 import { AgentModelSheet } from '@/features/agent-page/model-sheet'
 import { PageBar } from '@/features/agent-page/page-bar'
+import { WeekCard } from '@/features/agent-page/week'
 import { usePageScroll } from '@/features/agent-page/scroll'
 import { useAgentChatList, useDeleteChat } from '@/features/agent-page/chats'
 
 // An agent's home: who it is, a way to start talking, what it can do besides
-// (routines, memory, Telegram, its look), and every chat you've had with it.
+// (routines, memory, apps, Telegram and WhatsApp, its look), and every chat you've had with it.
 // Phones reach it from a chat's header and go back to that chat; wide screens
 // show it beside the sidebar.
 
-type Sheet = 'model' | 'routines' | 'memory' | 'telegram'
+type Sheet = 'model' | 'routines' | 'memory' | 'apps' | 'telegram' | 'whatsapp'
 
 export function AgentScreen({ agentId }: { agentId: string }) {
   const agents = useAgents()
@@ -138,9 +141,13 @@ export function AgentScreen({ agentId }: { agentId: string }) {
               agent={agent}
               onRoutines={open('routines')}
               onMemory={open('memory')}
+              onApps={open('apps')}
               onTelegram={open('telegram')}
+              onWhatsApp={open('whatsapp')}
               onEdit={() => actions.edit(agent)}
             />
+
+            <WeekCard agent={agent} />
 
             <ChatList
               agent={agent}
@@ -163,7 +170,9 @@ export function AgentScreen({ agentId }: { agentId: string }) {
           }}
         />
         <MemorySheet agent={agent} {...sheetProps('memory')} onRemember={(text) => void remember(text)} />
+        <AppsSheet agent={agent} {...sheetProps('apps')} />
         <TelegramSheet agent={agent} {...sheetProps('telegram')} />
+        <WhatsAppSheet agent={agent} {...sheetProps('whatsapp')} />
         {actions.sheets}
       </div>
     </MotionConfig>
