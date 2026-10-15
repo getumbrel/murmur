@@ -9,7 +9,7 @@
 | `murmur/exports.sh` | The built-in Hermes's dashboard password and session secret, derived per install. Only Murmur and its Hermes see them. |
 | `murmur/data/murmur/.gitkeep`, `murmur/data/hermes/.gitkeep` | Ship the data folders so umbrelOS creates them owned by the app user, not root. |
 | `gallery/murmur/icon.svg` | 256×256 square icon with no rounded corners. umbrelOS applies its own mask. |
-| `gallery/murmur/1.jpg`–`5.jpg` | 1440×900 screenshots for the Umbrel team's App Store images: home, a chat asking for approval, a group, the agent templates and the welcome. |
+| `gallery/murmur/1.webp`–`8.webp` | The App Store gallery, 2160×1350 WebP as the store shows it (16:10): the hero, existing agents, new agents, models, apps, groups, phones and messengers, and approvals. |
 
 ## Store screenshots
 
@@ -50,7 +50,7 @@ Murmur was submitted in [getumbrel/umbrel-apps#6196](https://github.com/getumbre
    - "Add to Home Screen" picks up the icon and name (those files are on `PROXY_AUTH_WHITELIST`).
 4. Open the PR with the store's template.
 
-A new app ships with `gallery: []` and no `icon`. The Umbrel team makes the App Store images and hosts them, with the icon, in [getumbrel/umbrel-apps-gallery](https://github.com/getumbrel/umbrel-apps-gallery). `gallery/murmur/` keeps the screenshots and `icon.svg` to hand over.
+The store loads each name in `gallery:` and the icon from [getumbrel/umbrel-apps-gallery](https://github.com/getumbrel/umbrel-apps-gallery) under `murmur/` (`https://getumbrel.github.io/umbrel-apps-gallery/murmur/<file>`), so a change to the images goes there too. `gallery/murmur/` keeps this repo's copy. `gallery/tools/retake.sh` still takes plain screenshots on a throwaway Hermes, for raw material.
 
 ## How Murmur reaches Hermes
 
