@@ -1109,7 +1109,9 @@ type P = Record<string, unknown>
 
 function onEvent(ev: GatewayEvent) {
   const runtimeId = (ev as { session_id?: string }).session_id ?? ''
-  const id = runtimeToStored.get(runtimeId)
+  // Most events name the live session; the agent's own tapback names the stored chat.
+  const id =
+    runtimeToStored.get(runtimeId) ?? (ev.type === 'message.reaction' && getChat(runtimeId) ? runtimeId : undefined)
   if (!id) return
   const payload = ((ev as { payload?: P }).payload ?? {}) as P
   const text = typeof payload.text === 'string' ? payload.text : ''
