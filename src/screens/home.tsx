@@ -1,7 +1,8 @@
 import { AnimatePresence, MotionConfig, motion, useScroll, useTransform } from 'motion/react'
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react'
 import { Link, useLocation, useRoute } from 'wouter'
-import { ChevronRight, LayoutGrid, Plus, Search, Settings } from 'lucide-react'
+import { ChevronRight, Plus, Search, Settings } from 'lucide-react'
+import { AgentsIcon } from '@/ui/icons'
 import { Button, IconButton } from '@/ui/button'
 import { Orb } from '@/ui/orb'
 import { ByUmbrel, MurmurWordmark } from '@/ui/brand'
@@ -363,7 +364,7 @@ function AllAgentsLink({ active }: { active: boolean }) {
       >
         {/* Centred on the Buddies' 40px column. */}
         <span className="grid w-10 flex-none place-items-center">
-          <LayoutGrid size={17} strokeWidth={1.85} aria-hidden />
+          <AgentsIcon size={21} />
         </span>
         All agents
       </Link>

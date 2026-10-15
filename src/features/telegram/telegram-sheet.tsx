@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
-import { Lock, MessageCircle, RotateCw, Sparkles } from 'lucide-react'
+import { RotateCw } from 'lucide-react'
 import { toast } from 'sonner'
 import { useQueryClient } from '@tanstack/react-query'
 import { Sheet } from '@/ui/sheet'
@@ -29,6 +29,7 @@ import {
 import { People } from '@/features/access/people'
 import { QrCode } from './qr-code'
 import { TelegramGlyph } from './telegram-glyph'
+import { BotIcon, ChatIcon, LockIcon } from '@/ui/icons'
 
 type Props = { agent: Agent; open: boolean; onOpenChange: (open: boolean) => void }
 
@@ -161,13 +162,13 @@ function Heading({ title, children }: { title: ReactNode; children?: ReactNode }
 function Intro({ agent, onStart }: { agent: Agent; onStart: () => void }) {
   const points: [ReactNode, string, string][] = [
     [
-      <Sparkles key="s" size={18} strokeWidth={1.85} />,
+      <BotIcon key="s" size={21} />,
       'Its own Telegram bot',
       `Made for ${agent.name} in a few taps.`,
     ],
-    [<Lock key="l" size={18} strokeWidth={1.85} />, 'Just for you', 'Only your Telegram account can message it.'],
+    [<LockIcon key="l" size={21} />, 'Just for you', 'Only your Telegram account can message it.'],
     [
-      <MessageCircle key="m" size={18} strokeWidth={1.85} />,
+      <ChatIcon key="m" size={21} />,
       `The same ${agent.name}`,
       'Same memory, and your chats show up here.',
     ],

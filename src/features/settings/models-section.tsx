@@ -1,6 +1,6 @@
 import { useMemo, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
-import { Check, HardDrive, KeyRound, Plus, RotateCw, Search, Sparkles } from 'lucide-react'
+import { Check, Plus, RotateCw, Search } from 'lucide-react'
 import { ListGroup, ListRow } from '@/ui/list'
 import { Sheet } from '@/ui/sheet'
 import { Skeleton } from '@/ui/skeleton'
@@ -17,6 +17,7 @@ import { LocalService } from './local-service'
 import { Tile } from './page'
 import { PicturesRow } from './pictures-row'
 import { Swap } from './swap'
+import { KeyIcon, ModelsIcon, ServerIcon } from '@/ui/icons'
 
 // Settings → Models: what the main agent thinks with, and the services that
 // make models available.
@@ -166,7 +167,7 @@ function PlanLine({ service }: { service: Service }) {
 
 function ServiceTile({ service }: { service: Service }) {
   const icon: ReactNode =
-    service.remove?.kind === 'endpoint' ? <HardDrive size={16} strokeWidth={2} /> : service.remove?.kind === 'key' ? <KeyRound size={16} strokeWidth={2} /> : <Sparkles size={16} strokeWidth={2} />
+    service.remove?.kind === 'endpoint' ? <ServerIcon size={19} /> : service.remove?.kind === 'key' ? <KeyIcon size={19} /> : <ModelsIcon size={19} />
   return <Tile>{icon}</Tile>
 }
 

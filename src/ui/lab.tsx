@@ -11,6 +11,7 @@ import { Segmented } from './segmented'
 import { Toggle } from './toggle'
 import { Skeleton, SkeletonText } from './skeleton'
 import { ListGroup, ListRow } from './list'
+import * as Icons from './icons'
 import { Island } from '@/screens/connection-banner'
 import '../styles.css'
 
@@ -26,6 +27,7 @@ const STATES: OrbState[] = [
   'offline',
 ]
 const SIZES = [20, 28, 44, 96]
+const ICONS = Object.entries(Icons).filter(([name]) => name.endsWith('Icon')) as [string, (p: Icons.IconProps) => ReactNode][]
 const param = new URLSearchParams(location.search)
 
 function Lab() {
@@ -63,6 +65,22 @@ function Lab() {
           <OrbStack hues={[222, 338]} size={44} />
           {[278, 250, 222, 192, 160, 128, 82, 52, 28, 4, 338, 308].map((h) => (
             <Orb key={h} hue={h} size={28} seed={String(h)} />
+          ))}
+        </div>
+      </Section>
+
+      <Section title="Icons" id="icons">
+        {/* Murmur's own set (./icons): bare in the accent and in ink, then on its lit chip. */}
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(5.5rem,1fr))] gap-2">
+          {ICONS.map(([name, Icon]) => (
+            <div key={name} className="flex flex-col items-center gap-2 rounded-xl bg-fill-1 px-1 pt-3 pb-2">
+              <span className="flex items-center gap-2">
+                <Icon size={24} className="text-accent" />
+                <Icon size={20} className="text-ink-2" />
+                <Icons.IconChip icon={Icon} size={29} />
+              </span>
+              <span className="text-caption text-ink-3">{name.replace(/Icon$/, '')}</span>
+            </div>
           ))}
         </div>
       </Section>

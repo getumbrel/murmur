@@ -1,18 +1,13 @@
-import { LayoutGrid } from 'lucide-react'
 import { UmbrelIcon } from '@/ui/brand'
+import { AppsIcon, IconChip } from '@/ui/icons'
 import { UMBREL_SERVER } from '@/state/umbrel-mcp'
 import { AppIcon } from './app-icon'
 
 // The Apps tile's icon on an agent's page: the apps it has, in a little
-// folder like a phone's, or the plain glyph when it has none yet.
+// folder like a phone's, or the lit chip beside it when it has none yet.
 
 export function AppsGlyph({ names }: { names: string[] }) {
-  if (!names.length)
-    return (
-      <span aria-hidden className="grid size-8 place-items-center rounded-[10px] bg-accent-soft text-accent">
-        <LayoutGrid size={16} strokeWidth={2} />
-      </span>
-    )
+  if (!names.length) return <IconChip icon={AppsIcon} size={32} radius={10} />
   return (
     <span aria-hidden className="grid size-8 grid-cols-2 content-start gap-[3px] rounded-[10px] bg-fill-2 p-[4px]">
       {names

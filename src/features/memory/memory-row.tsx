@@ -1,9 +1,9 @@
-import { Brain } from 'lucide-react'
 import type { CSSProperties } from 'react'
 import { ListRow } from '@/ui/list'
 import { Skeleton } from '@/ui/skeleton'
 import type { Agent } from '@/state/agents'
 import { useMemories } from '@/state/memory'
+import { MemoryIcon } from '@/ui/icons'
 
 /**
  * "Memory · Remembers 7 things", for the agent sheet. Sits in a ListGroup
@@ -25,7 +25,7 @@ export function MemoryRow({ agent, onOpen }: { agent: Agent; onOpen: () => void 
     <ListRow
       icon={
         <RowIcon hue={agent.hue}>
-          <Brain size={16} strokeWidth={2} />
+          <MemoryIcon size={19} />
         </RowIcon>
       }
       title="Memory"
@@ -36,11 +36,11 @@ export function MemoryRow({ agent, onOpen }: { agent: Agent; onOpen: () => void 
   )
 }
 
-/** The tinted tile Murmur's agent rows lead with. */
+/** The lit chip Murmur's agent rows lead with, in the agent's own colour. */
 export function RowIcon({ hue, children }: { hue: number; children: React.ReactNode }) {
   return (
     <span
-      className="hue-scope flex size-7 items-center justify-center rounded-lg bg-accent-soft text-accent"
+      className="hue-scope mi-chip size-[29px] rounded-[7px]"
       style={{ '--hue': hue } as CSSProperties}
       aria-hidden
     >

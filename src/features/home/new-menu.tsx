@@ -1,7 +1,8 @@
 import * as Popover from '@radix-ui/react-popover'
 import { AnimatePresence, motion } from 'motion/react'
 import { useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
-import { Plus, UserRoundPlus, UsersRound } from 'lucide-react'
+import { Plus } from 'lucide-react'
+import { AgentAddIcon, AgentsIcon } from '@/ui/icons'
 import { IconButton } from '@/ui/button'
 
 // The "+" in the corner: a small menu with the two things you can make, or
@@ -51,10 +52,10 @@ export function NewMenu({ onNewAgent, onNewGroup, size = 'md', variant = 'filled
                 exit={{ opacity: 0, scale: 0.96, transition: { duration: 0.14 } }}
                 transition={{ type: 'spring', stiffness: 520, damping: 34 }}
               >
-                <Item icon={<UserRoundPlus size={18} strokeWidth={1.85} />} onClick={pick(onNewAgent)}>
+                <Item icon={<AgentAddIcon size={21} />} onClick={pick(onNewAgent)}>
                   New agent
                 </Item>
-                <Item icon={<UsersRound size={18} strokeWidth={1.85} />} onClick={pick(onNewGroup)} divider>
+                <Item icon={<AgentsIcon size={21} />} onClick={pick(onNewGroup)} divider>
                   New group
                 </Item>
               </motion.div>

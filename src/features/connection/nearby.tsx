@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
-import { Check, Monitor, Server } from 'lucide-react'
+import { Check } from 'lucide-react'
 import { Spinner } from '@/ui/spinner'
 import { BuddyStack } from '@/ui/buddy'
 import { cn } from '@/lib/cn'
@@ -8,6 +8,7 @@ import { connectionApi, type HermesConnection } from '@/state/connection'
 import { orderedAgents, plural, type FoundHermes } from '@/state/setup'
 import { Tile } from '@/features/settings/page'
 import { agentHue } from '@/features/onboarding/setup-copy'
+import { ComputerIcon, ServerIcon } from '@/ui/icons'
 
 // Hermes people are likely to have, offered above the address field so most
 // never type one: the dashboard on this computer (its default port, or the
@@ -241,7 +242,7 @@ function NearbyRow({
             states={n.faces.map(() => (n.outdated ? 'offline' : 'idle'))}
           />
         ) : (
-          <Tile>{local ? <Monitor size={16} strokeWidth={2} /> : <Server size={16} strokeWidth={2} />}</Tile>
+          <Tile>{local ? <ComputerIcon size={19} /> : <ServerIcon size={19} />}</Tile>
         )}
       </span>
       <span className="min-w-0 flex-1">

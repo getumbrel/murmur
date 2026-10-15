@@ -1,7 +1,7 @@
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useId, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from 'react'
 import { toast } from 'sonner'
-import { Check, ChevronRight, Lock, RefreshCw, Server } from 'lucide-react'
+import { Check, ChevronRight, RefreshCw } from 'lucide-react'
 import { Button } from '@/ui/button'
 import { Buddy, type BuddyState } from '@/ui/buddy'
 import { ByUmbrel } from '@/ui/brand'
@@ -25,6 +25,7 @@ import {
 } from '@/state/setup'
 import { agentHue, problemLine, useLabel, whereBody } from './setup-copy'
 import { STEP_COLUMN, StepHeader } from './step'
+import { IconChip, LockIcon, ServerIcon } from '@/ui/icons'
 
 // "Where should your agents live?": the one question onboarding can't answer
 // for you. If a Hermes is already here (the Hermes Agent app on this Umbrel,
@@ -262,9 +263,7 @@ export function WhereStep({
           <ChoiceRow
             leading={
               <span className="grid size-11 place-items-center">
-                <span className="grid size-11 place-items-center rounded-md bg-accent-soft text-accent">
-                  <Server size={20} strokeWidth={1.75} />
-                </span>
+                <IconChip icon={ServerIcon} size={44} radius={12} />
               </span>
             }
             title="I already have Hermes"
@@ -404,13 +403,13 @@ function FoundCard({
       <div className={cn('flex min-h-9 items-center justify-between gap-3', dim(locked))}>
         {state === 'signin' && !agents.length ? (
           <Tile>
-            <Lock size={16} strokeWidth={2} />
+            <LockIcon size={19} />
           </Tile>
         ) : agents.length ? (
           <Faces agents={agents} total={total} state={face} />
         ) : (
           <Tile>
-            <Server size={16} strokeWidth={2} />
+            <ServerIcon size={19} />
           </Tile>
         )}
         <AnimatePresence mode="popLayout" initial={false}>

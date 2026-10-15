@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import { useLocation } from 'wouter'
 import { toast } from 'sonner'
-import { Bell } from 'lucide-react'
 import { create } from 'zustand'
 import { Buddy } from '@/ui/buddy'
 import { Button } from '@/ui/button'
@@ -14,6 +13,7 @@ import { useGroupSummaries } from '@/state/groups'
 import { onChatMoment, viewingChat } from '@/state/status'
 import { Tile } from '@/features/settings/page'
 import { chatNote, groupNote } from './compose'
+import { BellIcon } from '@/ui/icons'
 import {
   isOn,
   notificationsSupported,
@@ -175,7 +175,7 @@ export function NotificationsSetting() {
       <ListRow
         icon={
           <Tile>
-            <Bell size={16} strokeWidth={2} />
+            <BellIcon size={19} />
           </Tile>
         }
         title="Notifications"

@@ -1,6 +1,5 @@
 import type { CSSProperties, ReactNode } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
-import { Brain, Pencil, Repeat } from 'lucide-react'
 import type { Agent } from '@/state/agents'
 import { useRoutines } from '@/state/routines'
 import { useMemories } from '@/state/memory'
@@ -8,6 +7,7 @@ import { usePairing, useTelegram } from '@/state/telegram'
 import { useLinks, useWhatsApp } from '@/state/whatsapp'
 import { useAccess } from '@/state/access'
 import { Skeleton } from '@/ui/skeleton'
+import { IconChip, LookIcon, MemoryIcon, RoutinesIcon } from '@/ui/icons'
 import { cn } from '@/lib/cn'
 import { TelegramGlyph } from '@/features/telegram'
 import { WhatsAppGlyph } from '@/features/whatsapp'
@@ -84,8 +84,8 @@ export function QuickActions({ agent, onRoutines, onMemory, onApps, onTelegram, 
   // Two rows of three on a phone (what it can do, then where you reach it); one row when there's room.
   return (
     <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
-      <Tile label="Routines" note={routineNote} onClick={onRoutines} icon={<Glyph><Repeat size={17} strokeWidth={2} /></Glyph>} />
-      <Tile label="Memory" note={memoryNote} onClick={onMemory} icon={<Glyph><Brain size={17} strokeWidth={2} /></Glyph>} />
+      <Tile label="Routines" note={routineNote} onClick={onRoutines} icon={<IconChip icon={RoutinesIcon} size={32} radius={10} />} />
+      <Tile label="Memory" note={memoryNote} onClick={onMemory} icon={<IconChip icon={MemoryIcon} size={32} radius={10} />} />
       <Tile label="Apps" note={appsNote} onClick={onApps} icon={<AppsGlyph names={appsOn.map((a) => a.name)} />} />
       <Tile
         label="Telegram"
@@ -118,17 +118,8 @@ export function QuickActions({ agent, onRoutines, onMemory, onApps, onTelegram, 
           />
         }
       />
-      <Tile label="Edit" note="Name, look" onClick={onEdit} icon={<Glyph><Pencil size={16} strokeWidth={2} /></Glyph>} />
+      <Tile label="Edit" note="Name, look" onClick={onEdit} icon={<IconChip icon={LookIcon} size={32} radius={10} />} />
     </div>
-  )
-}
-
-/** The tinted square the agent's rows lead with, a size up. */
-function Glyph({ children }: { children: ReactNode }) {
-  return (
-    <span aria-hidden className="grid size-8 place-items-center rounded-[10px] bg-accent-soft text-accent">
-      {children}
-    </span>
   )
 }
 

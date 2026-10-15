@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { LayoutGroup, motion } from 'motion/react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { Check, Info, Plus, Server } from 'lucide-react'
+import { Check, Info, Plus } from 'lucide-react'
 import { Button } from '@/ui/button'
 import { Buddy, BuddyStack } from '@/ui/buddy'
 import { Label } from '@/ui/field'
@@ -36,6 +36,7 @@ import { StatusDot } from '@/features/connection/fields'
 import { agentHue } from '@/features/onboarding/setup-copy'
 import { ask } from './ask'
 import { Tile } from './page'
+import { ServerIcon } from '@/ui/icons'
 
 // Settings → Server: every Hermes this Murmur knows, the way iOS lists Wi-Fi
 // networks. A tap moves to that Hermes; (i) opens its details (name, address,
@@ -244,7 +245,7 @@ function FoundRow({ hermes: f, busy, onAdd }: { hermes: FoundHermes; busy: boole
     />
   ) : (
     <Tile>
-      <Server size={16} strokeWidth={2} />
+      <ServerIcon size={19} />
     </Tile>
   )
   // Too old to add: the row explains how to update it instead.

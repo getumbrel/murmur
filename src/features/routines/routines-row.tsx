@@ -1,9 +1,9 @@
-import { Repeat } from 'lucide-react'
 import { ListRow } from '@/ui/list'
 import { Skeleton } from '@/ui/skeleton'
 import type { Agent } from '@/state/agents'
 import { useRoutines } from '@/state/routines'
 import { RowIcon } from '@/features/memory/memory-row'
+import { RoutinesIcon } from '@/ui/icons'
 import { describeNext } from './schedule'
 
 /**
@@ -27,7 +27,7 @@ export function RoutinesRow({ agent, onOpen }: { agent: Agent; onOpen: () => voi
     <ListRow
       icon={
         <RowIcon hue={agent.hue}>
-          <Repeat size={16} strokeWidth={2} />
+          <RoutinesIcon size={19} />
         </RowIcon>
       }
       title="Routines"

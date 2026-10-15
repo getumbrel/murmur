@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import { ImageIcon } from 'lucide-react'
 import { ListRow } from '@/ui/list'
 import { Toggle } from '@/ui/toggle'
 import { cn } from '@/lib/cn'
 import { usePictures, useSetPictures } from '@/state/pictures'
 import { Tile } from './page'
 import { Swap } from './swap'
+import { PicturesIcon } from '@/ui/icons'
 
 // "Let agents make pictures", for a list under the ChatGPT account. Only
 // render it when ChatGPT is connected: the pictures come out of that plan.
@@ -43,7 +43,7 @@ export function PicturesRow() {
     <ListRow
       icon={
         <Tile>
-          <ImageIcon size={16} strokeWidth={2} />
+          <PicturesIcon size={19} />
         </Tile>
       }
       title="Let agents make pictures"

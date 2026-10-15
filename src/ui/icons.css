@@ -1,0 +1,51 @@
+/* Murmur's icons (src/ui/icons.tsx): two layers of currentColor. The body's
+   tint rises a little in dark mode, where a low fill reads fainter. */
+
+:root {
+  --mi-tint: 0.16;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --mi-tint: 0.24;
+  }
+}
+:root[data-theme='dark'] {
+  --mi-tint: 0.24;
+}
+
+.mi {
+  display: block;
+  flex: none;
+}
+.mi .mi-tint {
+  fill: currentColor;
+  fill-opacity: var(--mi-tint);
+  stroke: none;
+}
+.mi .mi-solid {
+  fill: currentColor;
+}
+.mi .mi-solid:not([stroke]) {
+  stroke: none;
+}
+
+/* The lit chip (IconChip). Its colour is its own, not --accent: dark mode's
+   accent is a pastel that would wash a white glyph out, so the chip keeps
+   light mode's depth in both themes (--accent-l is the same in each), lit
+   from the upper left and a touch deeper at the lower right. */
+.mi-chip {
+  --mi-tint: 0.4;
+  display: grid;
+  flex: none;
+  place-items: center;
+  color: #fff;
+  background: radial-gradient(
+    120% 120% at 28% 12%,
+    oklch(calc(var(--accent-l) + 0.16) 0.14 var(--hue)) 0%,
+    oklch(calc(var(--accent-l) + 0.03) 0.19 var(--hue)) 58%,
+    oklch(calc(var(--accent-l) - 0.04) 0.19 var(--hue)) 100%
+  );
+  box-shadow:
+    inset 0 0.5px 0 rgb(255 255 255 / 0.3),
+    inset 0 0 0 0.5px rgb(0 0 0 / 0.06);
+}

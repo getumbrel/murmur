@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
-import { Check, RotateCw, Smartphone, UserRound } from 'lucide-react'
+import { Check, RotateCw } from 'lucide-react'
 import { toast } from 'sonner'
 import { useQueryClient } from '@tanstack/react-query'
 import { Sheet } from '@/ui/sheet'
@@ -31,6 +31,7 @@ import {
 import { QrCode } from '@/features/telegram/qr-code'
 import { People } from '@/features/access/people'
 import { WhatsAppGlyph } from './whatsapp-glyph'
+import { PersonIcon, PhoneIcon } from '@/ui/icons'
 
 type Props = { agent: Agent; open: boolean; onOpenChange: (open: boolean) => void }
 
@@ -156,13 +157,13 @@ function OpenChat({ phone, className }: { phone: string; className?: string }) {
 const MODES: { mode: WhatsAppMode; icon: ReactNode; title: string; body: (name: string) => string }[] = [
   {
     mode: 'self-chat',
-    icon: <UserRound size={18} strokeWidth={1.85} />,
+    icon: <PersonIcon size={21} />,
     title: 'Your WhatsApp',
     body: (name) => `Talk to ${name} in Message yourself. Only you can.`,
   },
   {
     mode: 'bot',
-    icon: <Smartphone size={18} strokeWidth={1.85} />,
+    icon: <PhoneIcon size={21} />,
     title: 'A spare number',
     body: (name) => `${name} gets its own number. You approve who can text it.`,
   },

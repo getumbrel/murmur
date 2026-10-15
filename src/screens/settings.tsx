@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { useLocation } from 'wouter'
-import { ArrowUpRight, ChevronRight, Import, LogOut, Server, Sparkles, Users } from 'lucide-react'
+import { ArrowUpRight, ChevronRight } from 'lucide-react'
 import { ListGroup, ListRow } from '@/ui/list'
 import { Segmented } from '@/ui/segmented'
 import { Orb } from '@/ui/orb'
@@ -27,6 +27,7 @@ import { StatusDot } from '@/features/connection/fields'
 import { useHermesConnection, useMurmurSession } from '@/state/connection'
 import { useTheme, type ThemePref } from '@/features/settings/theme'
 import { NotificationsSetting } from '@/features/notifications/notify'
+import { AgentsIcon, ImportIcon, ModelsIcon, ServerIcon, SignOutIcon } from '@/ui/icons'
 
 // Settings, the Apple way: a short list of sections, each its own page.
 
@@ -121,7 +122,7 @@ function Root() {
         <ListRow
           icon={
             <Tile>
-              <Sparkles size={16} strokeWidth={2} />
+              <ModelsIcon size={19} />
             </Tile>
           }
           title="Models"
@@ -132,7 +133,7 @@ function Root() {
         <ListRow
           icon={
             <Tile>
-              <Users size={16} strokeWidth={2} />
+              <AgentsIcon size={19} />
             </Tile>
           }
           title="Agents"
@@ -143,7 +144,7 @@ function Root() {
         <ListRow
           icon={
             <Tile>
-              <Server size={16} strokeWidth={2} />
+              <ServerIcon size={19} />
             </Tile>
           }
           title="Server"
@@ -178,7 +179,7 @@ function Root() {
           <ListRow
             icon={
               <Tile>
-                <LogOut size={16} strokeWidth={2} />
+                <SignOutIcon size={19} />
               </Tile>
             }
             title="Sign out"
@@ -246,7 +247,7 @@ function AgentsSection() {
         <ListRow
           icon={
             <Tile>
-              <Import size={16} strokeWidth={2} />
+              <ImportIcon size={19} />
             </Tile>
           }
           title={<span className="text-accent">Import an agent</span>}

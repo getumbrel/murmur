@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { Cpu } from 'lucide-react'
 import { ListRow } from '@/ui/list'
 import { Spinner } from '@/ui/spinner'
 import { cn } from '@/lib/cn'
@@ -13,6 +12,7 @@ import { formatSize } from '@/state/local-tiers'
 import { ask } from './ask'
 import { Tile } from './page'
 import { Swap } from './swap'
+import { ChipIcon } from '@/ui/icons'
 
 // The models Hermes runs itself, in Settings → Models → Services: the service,
 // then each model downloaded for it. Removing one deletes it from Hermes's
@@ -99,7 +99,7 @@ export function LocalService({ service, services }: { service: Service; services
       <ListRow
         icon={
           <Tile>
-            <Cpu size={16} strokeWidth={2} />
+            <ChipIcon size={19} />
           </Tile>
         }
         title={service.name}

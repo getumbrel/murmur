@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react'
 import { ChevronLeft } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { WindowControlsGap } from '@/ui/titlebar'
+import '@/ui/icons.css'
 
 // Settings chrome: a large title that hands off to a small centred one in a
 // glass bar once you scroll, iOS style.
@@ -50,15 +51,14 @@ export function Page({ title, back, children }: { title: string; back?: { label?
 }
 
 /**
- * The leading tile for a list row: a 28px soft square in the accent with a
- * 16px line glyph, its 8px corners (~29%) the same proportion as a routine's
- * glyph, the Connect cards' tiles and Murmur's own app tile beside it.
- * Colour belongs to the agents, so Settings uses the app's accent rather
- * than a hue per row.
+ * The leading tile for a list row: a 29px lit chip (src/ui/icons.tsx) with a
+ * 19px glyph, its 7px corners the same as the Umbrel and Murmur app icons it
+ * sits among. Colour belongs to the agents, so Settings uses the app's accent
+ * rather than a hue per row.
  */
 export function Tile({ children }: { children: ReactNode }) {
   return (
-    <span className="flex size-7 flex-none items-center justify-center rounded-sm bg-accent-soft text-accent" aria-hidden>
+    <span className="mi-chip size-[29px] rounded-[7px]" aria-hidden>
       {children}
     </span>
   )
