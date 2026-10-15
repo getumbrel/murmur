@@ -8,7 +8,10 @@
 <h1 align="center">Murmur</h1>
 
 <p align="center">
-  <b>A beautiful way to use Hermes.</b><br>
+  <img src="docs/readme/hero.webp" alt="A beautiful home for your Hermes agents: the Buddies peeking over Murmur in a browser at umbrel.local" width="100%">
+</p>
+
+<p align="center">
   Chat with your own AI agents, one at a time or all together.<br>
   In the browser, on your Mac or PC, and on your phone.
 </p>
@@ -21,19 +24,12 @@
   <a href="docs/DEVELOPMENT.md">Develop</a>
 </p>
 
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/readme/hero-dark.png">
-    <img src="docs/readme/hero-light.png" alt="Murmur in a browser at umbrel.local: the sidebar with every agent, and Atlas answering a question about heat pumps" width="100%">
-  </picture>
-</p>
-
 Murmur is the app for [Hermes Agent](https://github.com/NousResearch/hermes-agent), the open-source agent that runs on your own hardware, remembers what matters, uses tools and gets things done. Murmur is the friendly face on top. There are no terminals, config files or jargon. Make a few agents, give each one a personality, and talk to them from anywhere.
 
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/readme/preview-dark.webp">
-    <img src="docs/readme/preview-light.webp" alt="Asking Atlas a question: he listens, searches the web, and the answer streams in" width="600">
+    <img src="docs/readme/preview-light.webp" alt="Asking Basil to plan next week's dinners: a plan ticks itself off, three helpers go looking for recipes, and the answer arrives with a shopping list" width="600">
   </picture>
 </p>
 
@@ -41,12 +37,19 @@ Murmur is the app for [Hermes Agent](https://github.com/NousResearch/hermes-agen
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/readme/everywhere-dark.png">
-  <img src="docs/readme/everywhere-light.png" alt="The same Murmur in a browser, as a Mac app, as a Windows app and on a phone" width="100%">
+  <img src="docs/readme/everywhere-light.png" alt="The same Murmur as a Mac app, on a phone and as a Windows app" width="100%">
 </picture>
 
 Open it in any browser on your network, install the app for **macOS**, **Windows** or **Linux**, or add it to your phone's home screen. It's the same Murmur everywhere, with the same agents and chats, and every chat picks up where you left off on another device.
 
 ## Bring your Hermes, or start fresh
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/readme/where-dark.png">
+  <img src="docs/readme/where-light.png" alt="Murmur finds the Hermes Agent app on this Umbrel, with seven agents in it, and offers to start fresh instead" width="100%">
+</picture>
+
+Murmur comes with Hermes built in, so you can start fresh with nothing else to install. Already have Hermes? It can live anywhere: on your Umbrel, a Mac in the closet, a Raspberry Pi or a server in the cloud. Murmur finds the ones on your network, or you can paste an address. Your agents, their memories and every past chat come along, including chats from the Hermes dashboard, Hermes Desktop, the terminal and Telegram. Nothing is imported or copied: it all stays in your Hermes.
 
 ### Make an agent in seconds
 
@@ -57,41 +60,14 @@ Open it in any browser on your network, install the app for **macOS**, **Windows
 
 Start from a template (Researcher, Writer, Planner, Coder, Coach or Chef) or from scratch. Pick a name and a colour, say what it's for, and it's ready to talk.
 
-### Or connect the Hermes you already have
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/readme/connect-dark.png">
-  <img src="docs/readme/connect-light.png" alt="Connecting Murmur to a Hermes it found on the network" width="100%">
-</picture>
-
-Murmur comes with Hermes built in, so you can start fresh with nothing else to install. Already have Hermes? It can live anywhere: on your Umbrel, a Mac in the closet, a Linux box, a Raspberry Pi or a server in the cloud. Murmur finds the ones on your network for you, or you can paste an address. On umbrelOS it spots the Hermes Agent app by itself and offers it, with your agents already there.
-
 ### No model yet? Connect one in a minute
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/readme/onboarding-wide-dark.png">
-  <img src="docs/readme/onboarding-wide-light.png" alt="Connect a model: continue with ChatGPT, run a model on the Umbrel itself, use a model server, or an API key" width="100%">
+  <img src="docs/readme/onboarding-wide-light.png" alt="Connect a model: continue with ChatGPT, or run a model on the Umbrel itself, picked to fit" width="100%">
 </picture>
 
 Sign in with your ChatGPT plan, or run a model right on your Umbrel: Murmur picks one that fits its memory and sets it up in one tap, using its graphics when it has them. Or use Ollama or another model server, or an API key from OpenRouter, OpenAI, Anthropic and others. You can switch any time.
-
-### Every chat comes with you
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/readme/history-dark.png">
-  <img src="docs/readme/history-light.png" alt="Months of chats with an agent, including ones started on Telegram and in the terminal" width="100%">
-</picture>
-
-Your agents, their memories and every past chat show up the moment you connect. That includes chats from the Hermes dashboard, Hermes Desktop, the terminal and Telegram. Nothing to import, nothing copied: it all stays in your Hermes.
-
-### More than one Hermes? No problem
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/readme/servers-dark.png">
-  <img src="docs/readme/servers-light.png" alt="Switching between three Hermes: on this Umbrel, a Mac and a cloud server" width="100%">
-</picture>
-
-Keep a Hermes at home and another at work, and switch between them in one tap.
 
 ## What you can do
 
@@ -107,10 +83,19 @@ Every agent is a **Buddy**, a little character in its own colour that shows what
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/readme/work-dark.png">
-  <img src="docs/readme/work-light.png" alt="Atlas's steps, opened up: searched the web, read a page, ran a command" width="100%">
+  <img src="docs/readme/work-light.png" alt="Basil working through a plan for next week's dinners with three helpers, and on a phone, the finished shopping list with hearts on both sides" width="100%">
 </picture>
 
-Answers stream in as they're written. When an agent searches the web, reads a file or runs a command, you see it in plain words, and you can open any step. Stop it, steer it mid-answer, edit your last message, or have the answer read aloud.
+Answers stream in as they're written. For bigger jobs, the agent writes a plan and ticks it off as it goes, and sends helpers off to work side by side, each with a line on what it's doing. When it's done, it all folds away. Searches, pages and commands show up in plain words, and you can open any step. Stop it, steer it mid-answer, or have the answer read aloud. Tap a heart on a reply, and your agents react to you, too.
+
+### Connect your apps
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/readme/apps-dark.png">
+  <img src="docs/readme/apps-light.png" alt="Atlas's apps: Notion, Linear and Todoist switched on, and dozens more to add" width="100%">
+</picture>
+
+Give each agent the apps it needs: Notion, Linear, Todoist, Figma, Canva and dozens more, with one sign-in each. Add an app to another agent in a tap. Most apps only sign in over https, on localhost or in the desktop app.
 
 ### You stay in charge
 
@@ -119,7 +104,7 @@ Answers stream in as they're written. When an agent searches the web, reads a fi
   <img src="docs/readme/approval-wide-light.png" alt="Hermes checked storage and listed files on the Umbrel, then asks before deleting the old phone backups" width="100%">
 </picture>
 
-On umbrelOS, your agents can work with your Umbrel itself, through the tools it offers them. Before anything changes, like deleting files, the agent asks in plain words and waits for *Allow* or *Don't allow*. Whatever is waiting on you rises to the top.
+On umbrelOS, your agents can work with the Umbrel itself: its apps, files and more. Connect it in **Settings → Umbrel**, or just paste the message umbrelOS gives you into a chat, and every agent gets it. Before anything changes, like deleting files, the agent asks in plain words and waits for *Allow* or *Don't allow*.
 
 ### Group chats
 
@@ -130,22 +115,31 @@ On umbrelOS, your agents can work with your Umbrel itself, through the tools it 
 
 Put a few agents in one room and let them work it out together. Mention one with **@** to ask just them. Each one speaks in its own colour.
 
+### Text them on WhatsApp and Telegram
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/readme/messaging-dark.png">
+  <img src="docs/readme/messaging-light.png" alt="Linking Atlas to WhatsApp with a QR code, and on a phone, Sam asking to message Atlas" width="100%">
+</picture>
+
+Scan a code and an agent is on WhatsApp or Telegram, so you can text it from the apps already on your phone. Talk to it in your own WhatsApp, or give it a spare number of its own. When someone new writes in, they wait under *Needs you* until you tap *Allow*.
+
 ### In your pocket, too
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/readme/phones-dark.png">
-  <img src="docs/readme/phones-light.png" alt="On a phone: approving a cleanup on the Umbrel, a chart and a file from an agent, and an agent's page" width="100%">
+  <img src="docs/readme/phones-light.png" alt="On a phone: approving a cleanup on the Umbrel, a chart and a file from an agent, and Atlas's page with its week" width="100%">
 </picture>
 
 - **Answer from anywhere.** Approvals, questions and replies follow you to your phone.
 - **Pictures, files and live widgets.** Send photos and files, and get images, downloads and little interactive tools back right in the chat.
-- **Routines, memory, Telegram and WhatsApp.** Ask for a briefing every morning at 8. See what an agent remembers, and change or forget any of it. Text your agent on Telegram or WhatsApp after scanning a QR code, and let someone new in with one tap.
+- **Routines and memory.** Ask for a briefing every morning at 8. See what an agent remembers, and change or forget any of it.
 
 ### And the details
-- **Connect your apps.** Give an agent Notion, Linear, Todoist and dozens more from a wall of icons, with one sign-in each.
-- **Watch the plan come together.** Agents tick off a live checklist, send helpers off side by side, and react to your messages.
-- **Choose the model and how hard it thinks** for each agent or chat, and see how much of your plan is left, how full a chat is and what each agent did this week.
+- **Honest usage.** See how much of your plan is left and when it resets, how full a chat is, and what each agent did this week.
+- **Choose the model and how hard it thinks** for each agent or each chat.
 - **Move agents.** Export an agent to a file and bring it in on another Hermes.
+- **More than one Hermes?** Keep one at home and another at work, and switch in one tap.
 - **Give it a goal** with `/goal`, and the agent keeps working until it's done. Ask a quick side question with `/btw` without interrupting it.
 - **Search every chat**, with a command palette and keyboard shortcuts on desktop.
 - **Light and dark**, desktop notifications and a Dock badge, and fluid at every screen size.
@@ -182,7 +176,7 @@ docker compose up -d
 Or run Murmur alone and point it at your Hermes. [`docs/STANDALONE.md`](docs/STANDALONE.md) has every option.
 
 ```sh
-docker run -d -p 3000:3000 -v murmur:/data ghcr.io/getumbrel/murmur:0.4
+docker run -d -p 3000:3000 -v murmur:/data ghcr.io/getumbrel/murmur:0.5
 ```
 
 Murmur comes with **Hermes 0.22.0**, and works with any **Hermes Agent 0.21.4 or newer**. If yours is older, Murmur shows you how to update it.
