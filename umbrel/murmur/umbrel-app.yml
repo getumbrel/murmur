@@ -41,7 +41,11 @@ description: >-
 
 
   Voice input needs a secure connection, so the mic appears when you open Murmur over https. Reading replies aloud works everywhere.
-releaseNotes: ""
+releaseNotes: >-
+  Agents connected to your Umbrel now ask before changing anything on it, like deleting files or managing apps. Reading files, apps and system info still works without asking. Agents that were already connected are updated automatically.
+
+
+  An agent's own reactions to your messages now show as they happen.
 
 developer: Umbrel
 website: https://umbrel.com
