@@ -2,7 +2,7 @@
 // as events, read back over REST, and stopped, edited, reacted to and deleted.
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { api, connect, modelRequests, newChat, q, sleep, turn, type Socket } from './client'
+import { api, connect, modelRequests, newChat, q, sleep, turn, whenIdle, type Socket } from './client'
 
 let socket: Socket
 beforeAll(async () => {
@@ -238,7 +238,7 @@ describe('changing a chat', () => {
     const { runtime, stored } = await newChat(socket)
     await turn(socket, runtime, 'Keep [[say: Kept]]')
     await turn(socket, runtime, 'Drop [[say: Dropped]]')
-    const undone = await socket.request('session.undo', { session_id: runtime })
+    const undone = await whenIdle(() => socket.request('session.undo', { session_id: runtime }))
     expect(undone.removed).toBeGreaterThan(0)
     expect((await history(stored)).map((r) => r.content)).toEqual(['Keep [[say: Kept]]', 'Kept'])
   })

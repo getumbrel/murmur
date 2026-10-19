@@ -139,5 +139,20 @@ export async function modelRequests(): Promise<{ body: Json }[]> {
 
 export const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
+/**
+ * Hermes can still call a chat busy (4009) for a moment after message.complete,
+ * while it wraps the turn up. Retries `run` through that, for up to 10s.
+ */
+export async function whenIdle<T>(run: () => Promise<T>): Promise<T> {
+  for (let tries = 0; ; tries++) {
+    try {
+      return await run()
+    } catch (error) {
+      if ((error as { code?: number }).code !== 4009 || tries >= 40) throw error
+      await sleep(250)
+    }
+  }
+}
+
 /** A name for a throwaway agent, unique to this run. */
 export const agentName = (what: string) => `contract-${what}-${Date.now().toString(36)}`

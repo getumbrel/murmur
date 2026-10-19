@@ -24,10 +24,17 @@ const LOGS = 'test-results/contract'
 
 export default async function setup(project: TestProject) {
   const model = await startFakeModel()
-  const hermes = await startHermes()
+  const hermes = await startHermes().catch(async (error) => {
+    await model.close()
+    throw error
+  })
   console.log(`Contract suite: Hermes ${hermes.version} (${hermes.image})`)
   const dataDir = mkdtempSync(join(tmpdir(), 'murmur-contract-'))
-  const murmur = await startMurmur(hermes.url, dataDir)
+  const murmur = await startMurmur(hermes.url, dataDir).catch(async (error) => {
+    await Promise.all([hermes.stop(), model.close()])
+    rmSync(dataDir, { recursive: true, force: true })
+    throw error
+  })
 
   const teardown = async () => {
     mkdirSync(LOGS, { recursive: true })
