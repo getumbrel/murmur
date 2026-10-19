@@ -17,6 +17,7 @@ import { cn } from '@/lib/cn'
 import type { GroupMember } from '@/state/groups'
 import { activeQuery, mentionRanges, mentionedIds } from './mentions'
 import { useAutoGrow, useDraft } from '@/features/chat/use-draft'
+import { useKeyboardInset } from '@/features/chat/use-keyboard-inset'
 import { haptic } from '@/lib/haptics'
 import '@/features/chat/composer.css'
 
@@ -60,6 +61,8 @@ export function GroupComposer({
   const area = useRef<HTMLTextAreaElement>(null)
   const mirror = useRef<HTMLDivElement>(null)
   const touch = useMedia('(pointer: coarse)')
+  // With the keyboard up, the home indicator is under it: no room to keep for it.
+  const keyboard = useKeyboardInset() > 0
   const pickerId = useId()
 
   const roster = useMemo(() => members.map((m) => ({ id: m.id, name: m.name, handle: m.handle })), [members])
@@ -180,7 +183,7 @@ export function GroupComposer({
 
   return (
     <MotionConfig reducedMotion="user">
-      <div className={cn('px-3 pb-[max(env(safe-area-inset-bottom),12px)] sm:px-6 sm:pb-6', className)}>
+      <div className={cn('px-3 sm:px-6 sm:pb-6', keyboard ? 'pb-3' : 'pb-[max(env(safe-area-inset-bottom),12px)]', className)}>
         <div className="hue-scope relative" style={hue !== undefined ? ({ '--hue': hue } as CSSProperties) : undefined}>
           <AnimatePresence>
             {open && (

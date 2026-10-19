@@ -21,6 +21,7 @@ import { formatSize } from '@/features/media/files'
 import { CommandPalette, useCommandPalette } from '@/features/commands/command-palette'
 import { parseCommand, type Command } from '@/features/commands/commands'
 import { useAutoGrow, useDraft } from './use-draft'
+import { useKeyboardInset } from './use-keyboard-inset'
 import { DictationNote, DictationPanel, MicButton, canDictate, useDictation } from '@/features/voice/dictation'
 import './composer.css'
 
@@ -116,6 +117,8 @@ export function Composer({
   const area = useRef<HTMLTextAreaElement>(null)
   const picker = useRef<HTMLInputElement>(null)
   const touch = useMedia('(pointer: coarse)')
+  // With the keyboard up, the home indicator is under it: no room to keep for it.
+  const keyboard = useKeyboardInset() > 0
 
   useAutoGrow(area, text)
 
@@ -324,7 +327,7 @@ export function Composer({
 
   return (
     <MotionConfig reducedMotion="user">
-      <div className={cn('px-3 pb-[max(env(safe-area-inset-bottom),12px)] sm:px-6 sm:pb-6', className)}>
+      <div className={cn('px-3 sm:px-6 sm:pb-6', keyboard ? 'pb-3' : 'pb-[max(env(safe-area-inset-bottom),12px)]', className)}>
         <div className="relative">
           {commands && <CommandPalette state={palette} id={paletteId} />}
           {above?.(text)}

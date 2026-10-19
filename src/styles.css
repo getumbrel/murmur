@@ -290,7 +290,7 @@
   }
 
   body {
-    min-height: 100dvh;
+    min-height: calc(100dvh - var(--keyboard, 0px));
     letter-spacing: -0.011em;
   }
 
@@ -741,6 +741,26 @@ html[data-desktop] [data-sidebar] ~ [role='main'] [data-window-gap='start'] {
     transform: scale(0.97);
     transition-duration: 90ms;
     transition-timing-function: var(--ease-out);
+  }
+}
+
+/* A screen fills the screen. iOS 26 opened from the Home Screen gives the page
+   (and 100dvh with it) the screen's height less the status bar's, and the rest
+   is left blank below. 100lvh still reaches the bottom; a standalone app has no
+   browser bars to come and go, so there it's the full height everywhere. */
+@media (display-mode: standalone) {
+  @layer utilities {
+    .h-dvh {
+      height: 100lvh;
+    }
+    .min-h-dvh {
+      min-height: 100lvh;
+    }
+  }
+  @layer base {
+    body {
+      min-height: calc(100lvh - var(--keyboard, 0px));
+    }
   }
 }
 
