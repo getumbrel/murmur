@@ -29,6 +29,7 @@ export function ChatList({
   onRetry,
   onDelete,
   heading = true,
+  plain = false,
 }: {
   agent: Agent
   chats?: AgentChat[]
@@ -38,6 +39,8 @@ export function ChatList({
   onDelete: (chat: AgentChat) => Promise<void>
   /** Off where the page itself is the list of chats. */
   heading?: boolean
+  /** Home's look: open one-line rows, edge to edge, with no card around them. */
+  plain?: boolean
 }) {
   const [query, setQuery] = useState('')
   const [revealed, setRevealed] = useState<string | null>(null)
@@ -67,7 +70,7 @@ export function ChatList({
           value={query}
           onValueChange={setQuery}
           placeholder={`Search ${agent.name}’s chats`}
-          className="mb-3"
+          className={plain ? 'mb-2' : 'mb-3'}
           onKeyDown={(e) => e.key === 'Escape' && setQuery('')}
         />
       )}
@@ -101,13 +104,14 @@ export function ChatList({
           No chats match “{query.trim()}”.
         </p>
       ) : (
-        <ul className="animate-fade overflow-hidden rounded-xl bg-fill-1">
+        <ul className={cn('animate-fade overflow-hidden', plain ? '-mx-5' : 'rounded-xl bg-fill-1')}>
           <AnimatePresence initial={false}>
             {shown.map((chat) => (
               <ChatRow
                 key={chat.id}
                 agent={agent}
                 chat={chat}
+                plain={plain}
                 revealed={revealed === chat.id}
                 onReveal={(on) => setRevealed(on ? chat.id : null)}
                 onDelete={() =>
@@ -122,7 +126,9 @@ export function ChatList({
         </ul>
       )}
       {touch && (ordered?.length ?? 0) > 1 && !query && (
-        <p className="mt-2 px-4 text-footnote text-ink-3">Swipe left on a chat to delete it.</p>
+        <p className={cn('mt-2 text-footnote text-ink-3', plain ? 'hidden' : 'px-4')}>
+          Swipe left on a chat to delete it.
+        </p>
       )}
     </section>
   )
@@ -131,12 +137,14 @@ export function ChatList({
 function ChatRow({
   agent,
   chat,
+  plain,
   revealed,
   onReveal,
   onDelete,
 }: {
   agent: Agent
   chat: AgentChat
+  plain?: boolean
   revealed: boolean
   onReveal: (on: boolean) => void
   onDelete: () => void
@@ -181,7 +189,10 @@ function ChatRow({
       {/* Above the sliding row, inset to the text like every grouped list. */}
       <span
         aria-hidden
-        className="pointer-events-none absolute top-0 right-0 left-4 z-10 h-[0.5px] bg-line-strong group-first:hidden"
+        className={cn(
+          'pointer-events-none absolute top-0 right-0 z-10 h-[0.5px] group-first:hidden',
+          plain ? 'left-5 bg-line' : 'left-4 bg-line-strong',
+        )}
       />
       {deletable && (
         <motion.button
@@ -211,7 +222,8 @@ function ChatRow({
         }}
         onDragEnd={onDragEnd}
         className={cn(
-          'relative flex items-center bg-elevated [background-image:linear-gradient(var(--fill-1),var(--fill-1))]',
+          'relative flex items-center',
+          plain ? 'bg-bg' : 'bg-elevated [background-image:linear-gradient(var(--fill-1),var(--fill-1))]',
           // One fill for the whole row, trash slot included, under its contents.
           'before:pointer-events-none before:absolute before:inset-0 before:transition-colors before:duration-150',
           'hover:before:bg-fill-1 has-[a:active]:before:bg-fill-2',
@@ -247,25 +259,34 @@ function ChatRow({
             held.current = false
             dragged.current = false
           }}
-          className="relative flex min-h-15 min-w-0 flex-1 items-center gap-3 py-2.5 pr-4 pl-4 text-left select-none [-webkit-touch-callout:none] focus-visible:-outline-offset-2 [@media(hover:hover)]:pr-2"
+          className={cn(
+            'relative flex min-w-0 flex-1 items-center gap-3 text-left select-none [-webkit-touch-callout:none] focus-visible:-outline-offset-2',
+            plain ? 'min-h-14 py-3 pr-5 pl-5' : 'min-h-15 py-2.5 pr-4 pl-4 [@media(hover:hover)]:pr-2',
+          )}
         >
-          <span className="min-w-0 flex-1">
-            <span className="flex items-baseline gap-2">
-              <span title={chat.title} className={cn('min-w-0 flex-1 truncate text-body', unread && 'font-semibold')}>
-                {chat.title}
+          {plain ? (
+            <PlainLine chat={chat} unread={unread} via={via} />
+          ) : (
+            <span className="min-w-0 flex-1">
+              <span className="flex items-baseline gap-2">
+                <span title={chat.title} className={cn('min-w-0 flex-1 truncate text-body', unread && 'font-semibold')}>
+                  {chat.title}
+                </span>
+                {unread && (
+                  <span aria-label="New messages" className="size-2 flex-none self-center rounded-full bg-accent" />
+                )}
               </span>
-              {unread && <span aria-label="New messages" className="size-2 flex-none self-center rounded-full bg-accent" />}
+              <span className="flex min-w-0 items-center gap-1 text-footnote text-ink-3">
+                {chat.routine && <span className="flex-none font-medium text-accent">Routine ·</span>}
+                <span className="flex-none">{shortTime(chat.at)}</span>
+                {via && <span className="flex-none">· via {via}</span>}
+                {/* The main chat's title says what it is; what was said there tells them apart. */}
+                {chat.main && chat.preview && <span className="min-w-0 truncate">· {chat.preview}</span>}
+              </span>
             </span>
-            <span className="flex min-w-0 items-center gap-1 text-footnote text-ink-3">
-              {chat.routine && <span className="flex-none font-medium text-accent">Routine ·</span>}
-              <span className="flex-none">{shortTime(chat.at)}</span>
-              {via && <span className="flex-none">· via {via}</span>}
-              {/* The main chat's title says what it is; what was said there tells them apart. */}
-              {chat.main && chat.preview && <span className="min-w-0 truncate">· {chat.preview}</span>}
-            </span>
-          </span>
+          )}
         </Link>
-        {deletable && (
+        {deletable && !plain && (
           <button
             type="button"
             onClick={() => onReveal(!revealed)}
@@ -281,5 +302,25 @@ function ChatRow({
         )}
       </motion.div>
     </motion.li>
+  )
+}
+
+/**
+ * A plain row: one line, the title and when. Hermes keeps only a chat's opening
+ * words, which its title usually is already, so there's no second line to add.
+ */
+function PlainLine({ chat, unread, via }: { chat: AgentChat; unread: boolean; via: string | false | undefined }) {
+  const tag = chat.routine ? 'Routine' : via ? `via ${via}` : ''
+  return (
+    <span className="flex min-w-0 flex-1 items-baseline gap-2">
+      <span title={chat.title} className={cn('min-w-0 truncate text-body', unread && 'font-semibold')}>
+        {chat.title}
+      </span>
+      {unread && <span aria-label="New messages" className="size-2 flex-none self-center rounded-full bg-accent" />}
+      <span className="ml-auto flex flex-none items-baseline gap-1 pl-1 text-footnote tabular-nums">
+        {tag && <span className={cn(chat.routine ? 'font-medium text-accent' : 'text-ink-3')}>{tag} ·</span>}
+        <span className={cn(unread ? 'font-medium text-accent' : 'text-ink-3')}>{shortTime(chat.at)}</span>
+      </span>
+    </span>
   )
 }

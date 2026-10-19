@@ -1,7 +1,7 @@
 import { AnimatePresence, MotionConfig, motion, useScroll, useTransform } from 'motion/react'
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react'
 import { Link, useLocation, useRoute } from 'wouter'
-import { ChevronRight, Plus, Search, Settings } from 'lucide-react'
+import { ChevronRight, Plus, Search, Settings, SquarePen } from 'lucide-react'
 import { AgentsIcon } from '@/ui/icons'
 import { Button, IconButton } from '@/ui/button'
 import { Orb } from '@/ui/orb'
@@ -13,6 +13,7 @@ import { useAgentActions } from '@/features/home/actions'
 import { NewMenu } from '@/features/home/new-menu'
 import { NeedsYou, Roster } from '@/features/home/roster'
 import { Suggestion } from '@/features/home/suggestion'
+import { SoloChats, useSoloAgent } from '@/features/home/solo'
 import { greeting } from '@/features/home/time'
 import { SearchField } from '@/features/search/search-field'
 import { SearchResults, resultHref, useResultKeys } from '@/features/search/search-results'
@@ -44,6 +45,7 @@ function PhoneHome() {
   const collapsed = useScrolledPast(title, active)
   const search = useChatSearch(active ? text : '')
   const installTip = useInstallTip()
+  const solo = useSoloAgent()
   // The roster fades back in after a search, not on every visit.
   const [returning, setReturning] = useState(false)
   // The large title dissolves as it slides under the bar, iOS-style.
@@ -110,6 +112,12 @@ function PhoneHome() {
                 <Search size={20} strokeWidth={1.85} />
               </IconButton>
               <NewMenu size="lg" variant="plain" onNewAgent={actions.newAgent} onNewGroup={actions.newGroup} />
+              {/* With one agent, Home is its chats, so a new one is a tap away, as in Messages. */}
+              {solo && (
+                <IconButton size="lg" label="New chat" onClick={() => navigate(`/chat/${solo.id}/new`)}>
+                  <SquarePen size={20} strokeWidth={1.85} />
+                </IconButton>
+              )}
               <WindowControlsGap side="end" column={640} />
             </div>
           </div>
@@ -179,24 +187,42 @@ function PhoneHome() {
         <div className={cn(returning && 'animate-fade')}>
           <InstallTip kind={installTip} />
           <NeedsYou density="roomy" title={<SectionTitle>Needs you</SectionTitle>} />
-          {/* Everyone you can talk to, as a gallery, one tap off the list. */}
-          <div className="flex items-baseline justify-between px-5">
-            <SectionTitle>Chats</SectionTitle>
-            <Link
-              href="/agents"
-              className="pressable -mr-2 -mb-1 flex h-9 items-center gap-0.5 rounded-full pr-1 pl-2.5 text-footnote font-medium text-accent hover:bg-fill-1"
+          {/* One agent: its chats, right here. More: everyone you can talk to. Either
+              settles in when the other gives way (a second agent arriving, say). */}
+          <AnimatePresence mode="popLayout" initial={false}>
+            <motion.div
+              key={solo ? 'solo' : 'roster'}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, transition: { duration: 0.14 } }}
+              transition={{ type: 'spring', duration: 0.5, bounce: 0, delay: 0.06 }}
             >
-              All agents
-              <ChevronRight size={16} strokeWidth={2.25} aria-hidden />
-            </Link>
-          </div>
-          <Roster
-            density="roomy"
-            onEdit={actions.edit}
-            onDelete={actions.remove}
-            onRenameGroup={actions.renameGroup}
-            onDeleteGroup={actions.removeGroup}
-          />
+              {solo ? (
+                <SoloChats agent={solo} title={<SectionTitle>Chats</SectionTitle>} />
+              ) : (
+                <>
+                  {/* Everyone you can talk to, as a gallery, one tap off the list. */}
+                  <div className="flex items-baseline justify-between px-5">
+                    <SectionTitle>Chats</SectionTitle>
+                    <Link
+                      href="/agents"
+                      className="pressable -mr-2 -mb-1 flex h-9 items-center gap-0.5 rounded-full pr-1 pl-2.5 text-footnote font-medium text-accent hover:bg-fill-1"
+                    >
+                      All agents
+                      <ChevronRight size={16} strokeWidth={2.25} aria-hidden />
+                    </Link>
+                  </div>
+                  <Roster
+                    density="roomy"
+                    onEdit={actions.edit}
+                    onDelete={actions.remove}
+                    onRenameGroup={actions.renameGroup}
+                    onDeleteGroup={actions.removeGroup}
+                  />
+                </>
+              )}
+            </motion.div>
+          </AnimatePresence>
           {/* One nudge at a time. */}
           {!installTip && <Suggestion density="roomy" onNewAgent={actions.newAgent} onNewGroup={actions.newGroup} />}
           <footer className="flex justify-center px-5 pt-12 pb-2">
@@ -212,7 +238,15 @@ function PhoneHome() {
 function WideEmpty() {
   const actions = useAgentActions()
   const { data: agents } = useAgents()
+  const [, navigate] = useLocation()
+  // With one agent there's no one to pick: the pane is a new chat with it,
+  // its other chats folded open beside it in the sidebar.
+  const solo = useSoloAgent()
+  useEffect(() => {
+    if (solo) navigate(`/chat/${solo.id}/new`, { replace: true })
+  }, [solo, navigate])
   const hue = agents?.find((a) => a.isDefault)?.hue ?? 278
+  if (solo) return null
   return (
     <div
       className="hue-scope flex h-full flex-col items-center justify-center px-8 pb-[8vh] text-center"
@@ -254,6 +288,7 @@ export function Sidebar() {
   const search = useChatSearch(text)
   const keys = useResultKeys(search.results, (r) => navigate(resultHref(r)))
   const searching = text.trim().length > 0
+  const solo = useSoloAgent()
   useFocusShortcut(input)
 
   const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
@@ -314,7 +349,8 @@ export function Sidebar() {
             />
           ) : (
             <div key="roster" className="animate-fade">
-              <AllAgentsLink active={inAgents} />
+              {/* A gallery of one is no way to anywhere. */}
+              {!solo && <AllAgentsLink active={inAgents} />}
               <NeedsYou
                 density="compact"
                 title={

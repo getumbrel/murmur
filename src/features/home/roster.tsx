@@ -154,7 +154,8 @@ const arrivedAt = new Map<string, number>()
 const greeted = new Set<string>()
 let primed = false
 
-function noteArrivals(keys: string[]) {
+/** Notes who's in the roster; anyone not seen before arrives with a halo. */
+export function noteArrivals(keys: string[]) {
   if (!primed) {
     keys.forEach((k) => known.add(k))
     primed = true
@@ -176,7 +177,9 @@ function Halo({ id }: { id: string }) {
     greeted.add(id)
   }, [id])
   return (
-    <>
+    // Its own presence, so it blooms even in a roster that's just appeared
+    // (whose rows skip their entrance), as when a second agent ends Home's solo.
+    <AnimatePresence>
       {[0, 1].map((n) => (
         <motion.span
           key={n}
@@ -194,7 +197,7 @@ function Halo({ id }: { id: string }) {
         animate={{ opacity: [0, 1, 0], scale: [0.8, 1.25, 1.4] }}
         transition={{ duration: 1.4, ease, delay: 0.2, times: [0, 0.35, 1] }}
       />
-    </>
+    </AnimatePresence>
   )
 }
 
