@@ -153,6 +153,8 @@ type Props = Handlers &
     /** The agent this chat is with; colours the working orb in one-to-one chats. */
     agent?: Speaker
     emptyState?: ReactNode
+    /** Above the first message, scrolling with them: what a routine's run was for. */
+    lead?: ReactNode
     /** Pinned under the messages, e.g. the composer. Messages scroll beneath it. */
     footer?: ReactNode
     className?: string
@@ -167,6 +169,7 @@ export function Thread({
   busy,
   agent,
   emptyState,
+  lead,
   footer,
   className,
   media = NO_MEDIA,
@@ -280,6 +283,7 @@ export function Thread({
               <div ref={contentRef} className="flex min-h-full flex-col">
                 {/* One reading column (~688px of text), shared with the composer below. */}
                 <div className="relative mx-auto flex w-full max-w-[736px] flex-1 flex-col px-4 pt-6 pb-12 sm:px-6">
+                  {lead}
                   {rows.length === 0 && emptyState ? (
                     <div className="flex flex-1 flex-col items-center justify-center">{emptyState}</div>
                   ) : (

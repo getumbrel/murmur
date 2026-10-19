@@ -3,13 +3,15 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/hermes/rest'
 import { useAgentChats, useAgents, type Agent, type ChatSummary } from '@/state/agents'
 import { replaceGone } from '@/lib/transitions'
-import { routineRunsKey, useRoutineRuns } from '@/state/routines'
+import { routineRunsKey, useContinuedRuns } from '@/state/routines'
 import { deleteChat } from '@/state/chats'
 
 // One agent's chats as people think of them: its conversations, most recently
-// active first, with what its routines wrote slotted in among them and labelled.
+// active first. What its routines find lives with the routines; a run joins
+// the chats, labelled, once you've replied in it.
 
 export type AgentChat = ChatSummary & {
+  /** A routine's run you've replied in. */
   routine?: boolean
   /** When it last moved, or when it began where Hermes doesn't say. */
   at: number
@@ -19,15 +21,16 @@ export type AgentChat = ChatSummary & {
  * Hermes's chat list is in order of last activity but only says when each
  * began; its REST listing says when each last moved. Hidden chats (the main
  * one) aren't in it, so that time comes from the agent. Ids are the same rows.
+ * Routine runs are left out, so a busy routine can't crowd the window.
  */
 async function fetchActivity(profile: string): Promise<Record<string, number>> {
   const res = await api.get<{ sessions?: { id: string; last_active?: number }[] }>(
-    `/api/sessions?profile=${encodeURIComponent(profile)}&limit=60&order=recent`,
+    `/api/sessions?profile=${encodeURIComponent(profile)}&limit=60&order=recent&exclude_sources=cron`,
   )
   return Object.fromEntries((res.sessions ?? []).filter((s) => s.last_active).map((s) => [s.id, s.last_active! * 1000]))
 }
 
-/** A routine's result goes in front of the first conversation that last moved before it ran. */
+/** A replied-in run goes in front of the first conversation that last moved before it did. */
 function merge(conversations: AgentChat[], runs: AgentChat[]): AgentChat[] {
   const out: AgentChat[] = []
   let r = 0
@@ -43,7 +46,7 @@ export function useAgentChatList(of: Agent | string | undefined) {
   const agentId = typeof of === 'string' ? of : of?.id
   const roster = useAgents().data
   const conversations = useAgentChats(agentId)
-  const runs = useRoutineRuns(agentId)
+  const runs = useContinuedRuns(agentId)
   // Under ['chats', id], so whatever refreshes the list refreshes this too.
   const activity = useQuery({
     queryKey: ['chats', agentId, 'activity'],
@@ -65,7 +68,7 @@ export function useAgentChatList(of: Agent | string | undefined) {
         title: r.routineName,
         preview: '',
         startedAt: r.at,
-        at: r.at,
+        at: r.lastAt,
         messageCount: r.messageCount,
         source: 'routine',
         routine: true,

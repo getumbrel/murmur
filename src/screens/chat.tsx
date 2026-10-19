@@ -5,6 +5,8 @@ import { Gauge } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { Thread } from '@/features/chat/thread'
+import { RunHeader, useRunItems } from '@/features/routines/run-view'
+import { isRunId } from '@/features/routines/runs'
 import { Composer, useKeyboardInset, type ComposerHandle } from '@/features/chat/composer'
 import { DropZone } from '@/features/chat-screen/drop-zone'
 import type { MediaContext } from '@/features/media/context'
@@ -109,7 +111,9 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
 
   const status = chat?.status ?? (starting ? 'thinking' : 'idle')
   const busy = status === 'thinking' || status === 'working' || status === 'waiting'
-  const items = useSolo(chat?.items ?? (starting ? [starting] : []))
+  // A routine's run reads as a report, under what the routine is.
+  const run = useRunItems(id, useSolo(chat?.items ?? (starting ? [starting] : [])))
+  const items = run.items
   const tail = items.at(-1)
   const writing = tail?.kind === 'assistant' && tail.streaming
   // The header says what the thread's live line says: a step running is work; anything else is thinking.
@@ -433,6 +437,7 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
           items={items}
           busy={busy}
           agent={speaker}
+          lead={id && agent && isRunId(id) ? <RunHeader agent={agent} chatId={id} title={chat?.title} ranAt={run.ranAt} /> : undefined}
           media={media}
           // The header floats over the messages; they scroll up beneath it.
           className={

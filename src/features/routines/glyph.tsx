@@ -1,15 +1,7 @@
-import type { LucideIcon } from 'lucide-react'
-import { cn } from '@/lib/cn'
+import { IconChip } from '@/ui/icons'
+import type { RoutineIcon } from './templates'
 
-/** A routine's face: a soft tile in the agent's colour with a line glyph. */
-export function Glyph({ icon: Icon, size = 36, className }: { icon: LucideIcon; size?: number; className?: string }) {
-  return (
-    <span
-      className={cn('flex flex-none items-center justify-center bg-accent-soft text-accent', className)}
-      style={{ width: size, height: size, borderRadius: Math.round(size * 0.3) }}
-      aria-hidden
-    >
-      <Icon size={Math.round(size * 0.5)} strokeWidth={1.85} />
-    </span>
-  )
+/** A routine's face: one of Murmur's own icons on a lit chip of the agent's colour, like the agent page's tiles. */
+export function Glyph({ icon, size = 36, className }: { icon: RoutineIcon; size?: number; className?: string }) {
+  return <IconChip icon={icon} size={size} className={className} />
 }

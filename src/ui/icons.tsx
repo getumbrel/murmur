@@ -397,3 +397,220 @@ export function PersonIcon(props: IconProps) {
     </Icon>
   )
 }
+
+// ── Routines ─────────────────────────────────────────────────────────────────
+// One for each kind of routine, so a list of them reads at a glance. A plain
+// request of your own wears the routine clock (RoutinesIcon); a reminder, the
+// bell (BellIcon).
+
+/** A morning briefing: the sun coming up over the horizon. */
+export function SunriseIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path className="mi-tint" d="M6.5 16a5.5 5.5 0 0 1 11 0Z" />
+      <path d="M6.5 16a5.5 5.5 0 0 1 11 0" />
+      <path d="M3.25 16h17.5M8 19.5h8" />
+      <path d="M12 8.25v-2M6.52 10.52 5.1 9.1M17.48 10.52l1.42-1.42" />
+    </Icon>
+  )
+}
+
+/** News on a topic: a folded paper with its picture and its columns. */
+export function NewsIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect className="mi-tint" x="3.75" y="4.5" width="16.5" height="15" rx="3.25" />
+      <rect x="3.75" y="4.5" width="16.5" height="15" rx="3.25" />
+      <rect className="mi-solid" x="7" y="8" width="4.5" height="4" rx="1.1" />
+      <path d="M14.5 8.75h2.5M14.5 11.5h2.5M7 15.5h10" />
+    </Icon>
+  )
+}
+
+/** The evening: a crescent moon, and a star coming out. */
+export function MoonIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path className="mi-tint" d="M18.75 15.1A7.5 7.5 0 1 1 9.15 5.25a6.25 6.25 0 0 0 9.6 9.85Z" />
+      <path d="M18.75 15.1A7.5 7.5 0 1 1 9.15 5.25a6.25 6.25 0 0 0 9.6 9.85Z" />
+      <path className="mi-solid" d="M17.25 3.5l.62 1.63 1.63.62-1.63.62-.62 1.63-.62-1.63L15 5.75l1.63-.62Z" />
+    </Icon>
+  )
+}
+
+/** The workday: a soft briefcase with its clasp. */
+export function BriefcaseIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M9 7.25V6a1.75 1.75 0 0 1 1.75-1.75h2.5A1.75 1.75 0 0 1 15 6v1.25" />
+      <rect className="mi-tint" x="3.75" y="7.25" width="16.5" height="12.5" rx="3.25" />
+      <rect x="3.75" y="7.25" width="16.5" height="12.5" rx="3.25" />
+      <path d="M4 12.75h6.25M13.75 12.75H20" />
+      <rect className="mi-solid" x="10.5" y="11.25" width="3" height="3" rx="1" />
+    </Icon>
+  )
+}
+
+/** A review of the week: a calendar page, ticked off. */
+export function WeekIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect className="mi-tint" x="3.75" y="5" width="16.5" height="15.25" rx="3.25" />
+      <rect x="3.75" y="5" width="16.5" height="15.25" rx="3.25" />
+      <path d="M8.25 3.25v3.5M15.75 3.25v3.5M4 9.75h16" />
+      <path d="m9 14.75 2 2 4-4" />
+    </Icon>
+  )
+}
+
+/** Once, on a day you pick: a calendar page with that day marked. */
+export function OnceIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect className="mi-tint" x="3.75" y="5" width="16.5" height="15.25" rx="3.25" />
+      <rect x="3.75" y="5" width="16.5" height="15.25" rx="3.25" />
+      <path d="M8.25 3.25v3.5M15.75 3.25v3.5M4 9.75h16" />
+      <rect className="mi-solid" x="13" y="13" width="3.75" height="3.75" rx="1.1" />
+    </Icon>
+  )
+}
+
+/** Learning something: an open book, its ribbon in today's page. */
+export function BookIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path
+        className="mi-tint"
+        d="M12 6.75C10.3 5.25 7.9 4.75 4.75 5v13.5c3.15-.25 5.55.25 7.25 1.75 1.7-1.5 4.1-2 7.25-1.75V5C16.1 4.75 13.7 5.25 12 6.75Z"
+      />
+      <path d="M12 6.75C10.3 5.25 7.9 4.75 4.75 5v13.5c3.15-.25 5.55.25 7.25 1.75 1.7-1.5 4.1-2 7.25-1.75V5C16.1 4.75 13.7 5.25 12 6.75Zm0 0v13.5" />
+      <path className="mi-solid" d="M15.25 4.6h2.5v4.9a.35.35 0 0 1-.56.28l-.69-.53-.69.53a.35.35 0 0 1-.56-.28Z" />
+    </Icon>
+  )
+}
+
+/** A habit: a sprout, two leaves up, growing a little each day. */
+export function SproutIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path className="mi-tint" d="M12 13.5c0-3.9-2.6-6-7-5.75-.1 4.1 2.6 6 7 5.75Z" />
+      <path d="M12 13.5c0-3.9-2.6-6-7-5.75-.1 4.1 2.6 6 7 5.75Z" />
+      <path className="mi-tint" d="M12 11c0-3.9 2.4-6.25 6.75-6.25.2 4.2-2.4 6.5-6.75 6.25Z" />
+      <path d="M12 11c0-3.9 2.4-6.25 6.75-6.25.2 4.2-2.4 6.5-6.75 6.25Z" />
+      <path d="M12 20.25V11M7.75 20.25h8.5" />
+    </Icon>
+  )
+}
+
+/** On this day: an hourglass, the sand gathered at the bottom. */
+export function HourglassIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path
+        className="mi-tint"
+        d="M7.5 3.75v2.1c0 2.1 1.5 3.6 3.4 5.1l1.1.9 1.1-.9c1.9-1.5 3.4-3 3.4-5.1v-2.1ZM7.5 20.25v-2.1c0-2.1 1.5-3.6 3.4-5.1l1.1-.9 1.1.9c1.9 1.5 3.4 3 3.4 5.1v2.1Z"
+      />
+      <path d="M7.5 3.75v2.1c0 2.1 1.5 3.6 3.4 5.1l1.1.9 1.1-.9c1.9-1.5 3.4-3 3.4-5.1v-2.1M7.5 20.25v-2.1c0-2.1 1.5-3.6 3.4-5.1l1.1-.9 1.1.9c1.9 1.5 3.4 3 3.4 5.1v2.1" />
+      <path d="M6 3.75h12M6 20.25h12" />
+      <path className="mi-solid" d="M9.25 20c.15-1.6 1.3-2.65 2.75-3.25 1.45.6 2.6 1.65 2.75 3.25Z" />
+    </Icon>
+  )
+}
+
+/** Gratitude: a soft heart. */
+export function HeartIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path
+        className="mi-tint"
+        d="M12 19.75c-.3 0-.6-.1-.85-.3-4.05-3.1-7.4-6.1-7.4-10.1 0-2.9 2.2-5.1 4.9-5.1 1.4 0 2.6.6 3.35 1.65.75-1.05 1.95-1.65 3.35-1.65 2.7 0 4.9 2.2 4.9 5.1 0 4-3.35 7-7.4 10.1-.25.2-.55.3-.85.3Z"
+      />
+      <path d="M12 19.75c-.3 0-.6-.1-.85-.3-4.05-3.1-7.4-6.1-7.4-10.1 0-2.9 2.2-5.1 4.9-5.1 1.4 0 2.6.6 3.35 1.65.75-1.05 1.95-1.65 3.35-1.65 2.7 0 4.9 2.2 4.9 5.1 0 4-3.35 7-7.4 10.1-.25.2-.55.3-.85.3Z" />
+      <path d="M7 9a2.25 2.25 0 0 1 1.75-1.75" />
+    </Icon>
+  )
+}
+
+/** Meals for the week: a pot with its lid on. */
+export function PotIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path className="mi-tint" d="M4.75 10.25h14.5v6.5a3.5 3.5 0 0 1-3.5 3.5h-7.5a3.5 3.5 0 0 1-3.5-3.5Z" />
+      <path d="M4.75 10.25h14.5v6.5a3.5 3.5 0 0 1-3.5 3.5h-7.5a3.5 3.5 0 0 1-3.5-3.5Z" />
+      <path d="M4.75 13H3M19.25 13H21M4.25 10.25c1.9-2.05 4.6-3.1 7.75-3.1s5.85 1.05 7.75 3.1" />
+      <circle className="mi-solid" cx="12" cy="4.75" r="1.35" />
+    </Icon>
+  )
+}
+
+/** Water and a stretch: a glass, half full. */
+export function GlassIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path className="mi-tint" d="M6.62 10.75h10.76l-.8 7.8a2 2 0 0 1-1.99 1.7H9.41a2 2 0 0 1-1.99-1.7Z" />
+      <path d="M6 3.75h12l-1.42 14.8a2 2 0 0 1-1.99 1.7H9.41a2 2 0 0 1-1.99-1.7Z" />
+      <path d="M6.7 10.75c1.15-.75 2.3-.75 3.45 0s2.3.75 3.45 0 2.3-.75 3.45 0" />
+    </Icon>
+  )
+}
+
+/** Bills and renewals: a receipt with its torn edge. */
+export function ReceiptIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path className="mi-tint" d="M5.75 3.75h12.5v16.5l-2.08-1.25-2.09 1.25L12 19l-2.08 1.25L7.83 19l-2.08 1.25Z" />
+      <path d="M5.75 3.75h12.5v16.5l-2.08-1.25-2.09 1.25L12 19l-2.08 1.25L7.83 19l-2.08 1.25Z" />
+      <path d="M9 8h6M9 11.25h6" />
+      <rect className="mi-solid" x="9" y="13.75" width="3.5" height="2" rx="1" />
+    </Icon>
+  )
+}
+
+/** A price to watch: a tag on its string hole. */
+export function TagIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path
+        className="mi-tint"
+        d="M3.75 11.35V5.5c0-.97.78-1.75 1.75-1.75h5.85c.46 0 .9.18 1.24.51l7.33 7.34c.68.68.68 1.79 0 2.47l-5.85 5.85c-.68.68-1.79.68-2.47 0l-7.34-7.33a1.75 1.75 0 0 1-.51-1.24Z"
+      />
+      <path d="M3.75 11.35V5.5c0-.97.78-1.75 1.75-1.75h5.85c.46 0 .9.18 1.24.51l7.33 7.34c.68.68.68 1.79 0 2.47l-5.85 5.85c-.68.68-1.79.68-2.47 0l-7.34-7.33a1.75 1.75 0 0 1-.51-1.24Z" />
+      <circle className="mi-solid" cx="8.25" cy="8.25" r="1.6" />
+    </Icon>
+  )
+}
+
+/** Email that needs you: an envelope. */
+export function MailIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect className="mi-tint" x="3.25" y="5.25" width="17.5" height="13.5" rx="3.25" />
+      <rect x="3.25" y="5.25" width="17.5" height="13.5" rx="3.25" />
+      <path d="m4.25 7.5 6.55 5.05c.7.55 1.7.55 2.4 0l6.55-5.05" />
+    </Icon>
+  )
+}
+
+/** Keeping an eye on something: a magnifier with a Buddy's eyes in it. */
+export function WatchIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle className="mi-tint" cx="10.5" cy="10.5" r="6.5" />
+      <circle cx="10.5" cy="10.5" r="6.5" />
+      <path d="m15.25 15.25 4.75 4.75" />
+      <Eyes cx={10.5} y={9.2} gap={3.2} />
+    </Icon>
+  )
+}
+
+/** In your own words: a soft pencil. */
+export function WriteIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path className="mi-tint" d="m15.4 4.6 4 4L9.5 18.5 4.25 19.75 5.5 14.5Z" />
+      <path d="m15.4 4.6 4 4L9.5 18.5 4.25 19.75 5.5 14.5Z" />
+      <path d="m12.9 7.1 4 4" />
+      <path className="mi-solid" d="M4.25 19.75 5.1 16.2l2.7 2.7Z" />
+    </Icon>
+  )
+}

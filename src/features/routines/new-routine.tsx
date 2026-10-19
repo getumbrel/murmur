@@ -11,7 +11,7 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
-import { PenLine } from 'lucide-react'
+import { WriteIcon } from '@/ui/icons'
 import { toast } from 'sonner'
 import { Sheet } from '@/ui/sheet'
 import { Button } from '@/ui/button'
@@ -250,7 +250,7 @@ function Gallery({
           {...rise(templates.length)}
           className="pressable col-span-2 flex items-center gap-3 rounded-xl p-4 text-left ring-1 ring-line-strong ring-inset hover:bg-fill-1"
         >
-          <Glyph icon={PenLine} size={36} />
+          <Glyph icon={WriteIcon} size={36} />
           <span className="min-w-0 flex-1">
             <span className="block text-subhead font-semibold tracking-[-0.01em]">Something else</span>
             <span className="block text-footnote text-ink-2">Tell {agent.name} what to do, and when.</span>
@@ -633,7 +633,7 @@ function CustomForm({
         template={{
           title: 'Something else',
           description: `Ask ${agent.name} for anything, on your schedule.`,
-          icon: PenLine,
+          icon: WriteIcon,
         }}
         onBack={onBack}
       />

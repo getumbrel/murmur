@@ -15,7 +15,7 @@ import { MemorySheet, rememberMessage } from '@/features/memory'
 import { TelegramSheet } from '@/features/telegram'
 import { WhatsAppSheet } from '@/features/whatsapp'
 import { AppsSheet } from '@/features/apps'
-import { RoutinesSheet } from '@/features/routines'
+import { RoutineDetailSheet, RoutineNewsList, RoutinesSheet } from '@/features/routines'
 import { NotFound } from '@/features/chat-screen/not-found'
 import { AgentHero } from '@/features/agent-page/hero'
 import { QuickActions } from '@/features/agent-page/quick-actions'
@@ -44,6 +44,10 @@ export function AgentScreen({ agentId }: { agentId: string }) {
   const actions = useAgentActions()
   const { page, title, scrolled, under, onScroll } = usePageScroll<HTMLHeadingElement>(`agent:${agentId}`)
   const [sheet, setSheet] = useState<Sheet | null>(null)
+  // A routine opened from what it found, showing that result.
+  const [news, setNews] = useState<{ id: string; runId?: string } | null>(null)
+  const [newsShown, setNewsShown] = useState(news)
+  if (news && news !== newsShown) setNewsShown(news)
   // Pressing "New chat": the Buddy looks up to listen.
   const [perk, setPerk] = useState(false)
   const up = useUpFrom(location)
@@ -147,6 +151,8 @@ export function AgentScreen({ agentId }: { agentId: string }) {
               onEdit={() => actions.edit(agent)}
             />
 
+            <RoutineNewsList agent={agent} onOpen={(id, runId) => setNews({ id, runId })} />
+
             <WeekCard agent={agent} />
 
             <ChatList
@@ -166,6 +172,18 @@ export function AgentScreen({ agentId }: { agentId: string }) {
           {...sheetProps('routines')}
           onOpenRun={(runId) => {
             setSheet(null)
+            navigate(`/chat/${agentId}/${runId}`)
+          }}
+        />
+        <RoutineDetailSheet
+          agent={agent}
+          // Kept while it closes, so it doesn't empty as it goes.
+          routineId={newsShown?.id}
+          openRunId={newsShown?.runId}
+          open={news !== null}
+          onOpenChange={(on) => !on && setNews(null)}
+          onOpenRun={(runId) => {
+            setNews(null)
             navigate(`/chat/${agentId}/${runId}`)
           }}
         />

@@ -11,7 +11,20 @@ import { ConfirmCard } from '@/ui/confirm-card'
 import { cn } from '@/lib/cn'
 import { Markdown } from '@/features/chat/lazy-markdown'
 import type { Agent } from '@/state/agents'
-import { useJobRuns, useRoutineActions, useRoutines, useRunResult, useRunningNow, type Routine } from '@/state/routines'
+import { useQueries } from '@tanstack/react-query'
+import {
+  fetchRunResult,
+  runResultKey,
+  useJobRuns,
+  useRoutineActions,
+  useRoutines,
+  useRunningNow,
+  type JobRun,
+  type Routine,
+  type RunResult,
+} from '@/state/routines'
+import { markChatSeen } from '@/state/status'
+import { foldQuiet } from './runs'
 import { Glyph } from './glyph'
 import { TimeWheel } from './time-wheel'
 import { RepeatPicker } from './day-picker'
@@ -29,10 +42,12 @@ type Props = {
   onOpenChange: (open: boolean) => void
   /** Open a run as a chat (it's an ordinary chat with the agent). */
   onOpenRun?: (runId: string) => void
+  /** A result to show open from the start. */
+  openRunId?: string
 }
 
 /** One routine: when it runs, switch it off, run it now, see what it made. */
-export function RoutineDetailSheet({ agent, routineId, open, onOpenChange, onOpenRun }: Props) {
+export function RoutineDetailSheet({ agent, routineId, open, onOpenChange, onOpenRun, openRunId }: Props) {
   const { data } = useRoutines(agent.id, { live: open })
   const routine = data?.find((r) => r.id === routineId)
   // Keep showing the last known routine while the sheet animates away after a delete.
@@ -46,7 +61,7 @@ export function RoutineDetailSheet({ agent, routineId, open, onOpenChange, onOpe
     <Sheet open={open && Boolean(r)} onOpenChange={onOpenChange} title={r?.name ?? 'Routine'} width={460}>
       {r && (
         <Grow className="hue-scope" style={{ '--hue': agent.hue } as CSSProperties}>
-          <Body agent={agent} routine={r} onClose={() => onOpenChange(false)} onOpenRun={onOpenRun} />
+          <Body agent={agent} routine={r} openRunId={openRunId} onClose={() => onOpenChange(false)} onOpenRun={onOpenRun} />
         </Grow>
       )}
     </Sheet>
@@ -56,11 +71,13 @@ export function RoutineDetailSheet({ agent, routineId, open, onOpenChange, onOpe
 function Body({
   agent,
   routine,
+  openRunId,
   onClose,
   onOpenRun,
 }: {
   agent: Agent
   routine: Routine
+  openRunId?: string
   onClose: () => void
   onOpenRun?: (id: string) => void
 }) {
@@ -166,9 +183,11 @@ function Body({
       <section className="mt-8">
         <h3 className="mb-2 px-4 text-footnote font-medium text-ink-2">Results</h3>
         <RoutineRunsList
+          key={openRunId}
           agentId={agent.id}
           routine={routine}
           zone={zone}
+          openRunId={openRunId}
           onOpenRun={onOpenRun ? (id) => (onClose(), onOpenRun(id)) : undefined}
         />
       </section>
@@ -220,22 +239,44 @@ function EditTime({
 
 // ── Results ─────────────────────────────────────────────────────────────────
 
-/** A routine's past runs, newest first; tap one to read what came of it. */
+/** A routine's past runs, newest first; tap one to read what came of it. Runs with nothing to report fold together. */
 export function RoutineRunsList({
   agentId,
   routine,
   zone,
+  openRunId,
   onOpenRun,
 }: {
   agentId: string
   routine: Routine
   /** Times on this zone's clock (the agent's) rather than this browser's. */
   zone?: string
+  /** A run to show open from the start. */
+  openRunId?: string
   onOpenRun?: (runId: string) => void
 }) {
   const runs = useJobRuns(agentId, routine.id)
   const running = useRunningNow((s) => Boolean(s.ids[routine.id]))
-  const [openId, setOpenId] = useState<string | null>(null)
+  const [openId, setOpenId] = useState<string | null>(openRunId ?? null)
+  const results = useQueries({
+    queries: (runs.data ?? []).map((run) => ({
+      queryKey: runResultKey(agentId, run),
+      queryFn: () => fetchRunResult(agentId, run.id),
+      staleTime: Infinity,
+    })),
+  })
+  const resultOf = new Map((runs.data ?? []).map((run, i) => [run.id, results[i]?.data]))
+  // Opening a run reopens it in Hermes, so one that has had its say isn't still going, whatever Hermes says.
+  const list = (runs.data ?? []).map((run) => {
+    const r = resultOf.get(run.id)
+    return run.running && (r?.quiet || r?.text) ? { ...run, running: false } : run
+  })
+  const groups = foldQuiet(list, (run) => resultOf.get(run.id)?.quiet === true && !resultOf.get(run.id)?.replied)
+
+  // Reading a result is reading that run: it no longer counts as new.
+  useEffect(() => {
+    if (openId) markChatSeen(openId)
+  }, [openId])
 
   // A run that just finished: open it, so Run now lands on its result. Until
   // the result is in, "Working on it" stays put rather than blinking out.
@@ -261,7 +302,6 @@ export function RoutineRunsList({
       </div>
     )
   }
-  const list = runs.data ?? []
   if (!list.length && !live) {
     return (
       <p className="rounded-xl bg-fill-1 px-6 py-6 text-center text-subhead text-balance text-ink-3">
@@ -288,20 +328,49 @@ export function RoutineRunsList({
             <span className="text-shimmer text-subhead">Working on it now</span>
           </motion.li>
         )}
-        {list.map((run, i) => (
-          <RunRow
-            key={run.id}
-            agentId={agentId}
-            run={run}
-            zone={zone}
-            preview={i < 6}
-            open={openId === run.id}
-            onToggle={() => setOpenId((o) => (o === run.id ? null : run.id))}
-            onOpenRun={onOpenRun}
-          />
-        ))}
+        {groups.map((group) =>
+          group.kind === 'quiet' ? (
+            <QuietRow key={`quiet-${group.runs.at(-1)!.id}`} runs={group.runs} zone={zone} />
+          ) : (
+            <RunRow
+              key={group.run.id}
+              run={group.run}
+              result={resultOf.get(group.run.id)}
+              zone={zone}
+              open={openId === group.run.id}
+              onToggle={() => setOpenId((o) => (o === group.run.id ? null : group.run.id))}
+              onOpenRun={onOpenRun}
+            />
+          ),
+        )}
       </AnimatePresence>
     </ul>
+  )
+}
+
+const rowMotion = {
+  layout: true,
+  initial: { opacity: 0, y: 6 },
+  animate: { opacity: 1, y: 0 },
+  exit: { opacity: 0 },
+  transition: { type: 'spring', duration: 0.4, bounce: 0 },
+  className: '[&+&]:shadow-[inset_0_0.5px_0_var(--line)]',
+} as const
+
+/** Runs in a row that had nothing to report: one calm line, so the results stand out. */
+function QuietRow({ runs, zone }: { runs: JobRun[]; zone?: string }) {
+  const last = capitalize(relativeDate(runs[0].at, { withTime: true, zone }))
+  return (
+    <motion.li {...rowMotion}>
+      <div className="flex min-h-12 items-center gap-3 px-4 py-2.5">
+        <span className="min-w-0 flex-1">
+          <span className="block text-subhead text-ink-3">Nothing to report</span>
+          <span className="block truncate text-footnote text-ink-3">
+            {runs.length > 1 ? `Checked ${runs.length} times, last ${last.replace(/^\w/, (c) => c.toLowerCase())}` : last}
+          </span>
+        </span>
+      </div>
+    </motion.li>
   )
 }
 
@@ -315,35 +384,25 @@ function plain(md: string) {
 }
 
 function RunRow({
-  agentId,
   run,
+  result,
   zone,
-  preview,
   open,
   onToggle,
   onOpenRun,
 }: {
-  agentId: string
-  run: { id: string; at: number; running: boolean }
+  run: JobRun
+  result?: RunResult
   zone?: string
-  preview: boolean
   open: boolean
   onToggle: () => void
   onOpenRun?: (id: string) => void
 }) {
   const reduce = useReducedMotion()
-  const result = useRunResult(agentId, preview || open ? run.id : undefined)
-  const text = result.data ?? ''
+  const text = result?.text ?? ''
   const summary = run.running ? '' : plain(text)
   return (
-    <motion.li
-      layout
-      initial={{ opacity: 0, y: 6 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0 }}
-      transition={{ type: 'spring', duration: 0.4, bounce: 0 }}
-      className="[&+&]:shadow-[inset_0_0.5px_0_var(--line)]"
-    >
+    <motion.li {...rowMotion}>
       <button
         type="button"
         onClick={onToggle}
@@ -364,7 +423,7 @@ function RunRow({
                   transition={{ duration: 0.15 }}
                   className="block truncate text-footnote text-ink-2"
                 >
-                  {summary || (result.isFetching ? ' ' : result.isFetched ? 'Nothing to report' : 'Tap to read')}
+                  {summary || (result ? 'No answer this time' : '\u00a0')}
                 </motion.span>
               )}
             </AnimatePresence>
@@ -390,7 +449,7 @@ function RunRow({
             className="overflow-hidden"
           >
             <div className="px-4 pb-4">
-              {result.isPending ? (
+              {!result && !run.running ? (
                 <div className="flex justify-center py-4 text-ink-3">
                   <Spinner />
                 </div>
@@ -399,12 +458,14 @@ function RunRow({
                   <Markdown text={text} />
                 </div>
               ) : (
-                <p className="text-subhead text-ink-3">Nothing to report this time.</p>
+                <p className="text-subhead text-ink-3">
+                  {run.running ? 'Still working on it.' : 'It finished without an answer.'}
+                </p>
               )}
               {onOpenRun && (
                 <Button variant="ghost" size="sm" className="-ml-3 mt-1 text-accent!" onClick={() => onOpenRun(run.id)}>
                   <MessageSquareText size={15} strokeWidth={2} aria-hidden />
-                  Continue in chat
+                  {result?.replied ? 'Open the chat' : 'Continue in chat'}
                 </Button>
               )}
             </div>

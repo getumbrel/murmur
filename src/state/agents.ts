@@ -20,6 +20,8 @@ import { parseUserMessage } from '@/features/media/parse'
 import type { Speaker } from '@/features/chat/types'
 import { scoped } from '@/hermes/instance'
 import { listProfileNames, listProfiles } from '@/hermes/compat'
+import { isQuietExcerpt, isRunBrief, isRunId, runTitle } from '@/features/routines/runs'
+import { fetchRunResult } from '@/state/routines'
 
 type LastSession = {
   id: string
@@ -57,8 +59,11 @@ export type Agent = {
   isDefault: boolean
   model?: string
   provider?: string
-  /** The newest chat, for the roster (the main chat counts, though Hermes hides it). */
-  lastChat?: { id: string; title: string; at: number; main?: boolean }
+  /**
+   * The newest chat, for the roster (the main chat counts, though Hermes hides
+   * it). A routine's run counts only when it had something to say.
+   */
+  lastChat?: { id: string; title: string; at: number; main?: boolean; routine?: boolean }
   /** When the main chat last moved (Hermes hides it from the lists that say so). */
   mainChatAt?: number
   /** Bot Mode's presentation record, kept so edits merge instead of clobbering. */
@@ -185,14 +190,67 @@ const activeAt = (s: LastSession) => (s.last_active || s.started_at || 0) * 1000
 
 /** Hermes's newest listed chat, or the hidden main chat if that moved more recently. */
 function newestChat(p: Profile): Agent['lastChat'] {
-  const last = p.last_session?.id ? p.last_session : undefined
+  const last = p.last_session?.id && !quietRun(p.last_session) ? p.last_session : undefined
   const main = p.canonical_session?.id && (p.canonical_session.message_count ?? 1) > 0 ? p.canonical_session : undefined
   if (main && (!last || activeAt(main) >= activeAt(last))) {
     // Its title is always "Bot Chat"; what was last said reads better.
     return { id: main.resolved_id || main.id, title: readable(main.preview) || MAIN_CHAT, at: activeAt(main), main: true }
   }
   if (!last) return undefined
+  if (isRunId(last.id)) {
+    // What the routine found, under its name.
+    const said = readable(last.preview)
+    return { id: last.id, title: [runTitle(last.title ?? '') || 'Routine', said].filter(Boolean).join(' · '), at: activeAt(last), routine: true }
+  }
   return { id: last.id, title: readable(last.title, { files: false }) || readable(last.preview) || 'New chat', at: activeAt(last) }
+}
+
+/**
+ * A routine's run that had nothing to report, or is still going: its latest
+ * words are then Hermes's brief, which opens "[IMPORTANT: …" (cut short here).
+ */
+const quietRun = (s: LastSession) =>
+  isRunId(s.id) &&
+  (!s.preview || s.preview.startsWith('[IMPORTANT:') || isRunBrief(s.preview) || isQuietExcerpt(s.preview))
+
+/**
+ * Hermes's newest chat can be a routine's run with nothing to say. Then the
+ * newest chat that did say something stands in: a conversation, or a run with
+ * a result. Asked for only for agents where that's so, and each run read once.
+ */
+async function skipQuietRuns<P extends Profile>(profiles: P[]): Promise<P[]> {
+  return Promise.all(
+    profiles.map(async (p) => {
+      if (!p.last_session?.id || !quietRun(p.last_session)) return p
+      try {
+        const res = await api.get<{ sessions?: LastSession[] }>(
+          `/api/sessions?profile=${encodeURIComponent(p.name)}&limit=8&order=recent&min_messages=1`,
+        )
+        for (const row of res.sessions ?? []) {
+          if (!isRunId(row.id)) return { ...p, last_session: row }
+          const said = await runSaid(p.name, row)
+          if (said) return { ...p, last_session: { ...row, preview: said } }
+        }
+        return { ...p, last_session: null }
+      } catch {
+        return p
+      }
+    }),
+  )
+}
+
+const runWords = new Map<string, Promise<string>>()
+
+/** What a run had to say: '' when nothing to report, or nothing yet. A run that moves is read again. */
+function runSaid(profile: string, run: LastSession) {
+  const key = `${profile}:${run.id}@${run.last_active ?? 0}`
+  let out = runWords.get(key)
+  if (!out) {
+    out = fetchRunResult(profile, run.id).then((r) => (r.quiet ? '' : r.text))
+    out.catch(() => runWords.delete(key))
+    runWords.set(key, out)
+  }
+  return out
 }
 
 export const speakerOf = (a: Agent): Speaker => ({ id: a.id, name: a.name, hue: a.hue })
@@ -220,7 +278,9 @@ export function useAgents() {
   return useQuery({
     queryKey: agentsKey,
     queryFn: async () => {
-      const res = { profiles: await listProfiles<Profile & { [key: string]: unknown }>({ include_sessions: true }) }
+      const res = {
+        profiles: await skipQuietRuns(await listProfiles<Profile & { [key: string]: unknown }>({ include_sessions: true })),
+      }
       const hues = storedHues()
       const pending = pendingLooks()
       const prefix = devPrefix()

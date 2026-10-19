@@ -1,15 +1,16 @@
 // Routines: things an agent does on its own, on a schedule. They're Hermes's
 // scheduled jobs (per agent), started from Hermes's built-in blueprints or
-// from a plain request. Every run is saved as a chat with the agent, kept
-// apart from your own chats, so Murmur can show what came of it.
+// from a plain request. Every run is a chat Hermes keeps; Murmur shows what
+// came of it with its routine, leaves out runs with nothing to report, and
+// counts a run among your chats only once you've replied in it.
 //
 // Results are delivered "locally" (saved only), which is what makes them show
 // up here; Telegram is offered only when that agent has Telegram connected.
 
-import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
+import { useQueries, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
+import { useMemo } from 'react'
 import { create } from 'zustand'
 import { api, HermesError } from '@/hermes/rest'
-import { rpc } from '@/hermes/gateway'
 import { agentZone, ensureAgentTimezone } from '@/state/timezone'
 import {
   dayPreset,
@@ -22,6 +23,7 @@ import {
   type RawSchedule,
   type When,
 } from '@/features/routines/schedule'
+import { isQuiet, isRunBrief, routineIdOf, runTitle } from '@/features/routines/runs'
 
 // ── Shapes ──────────────────────────────────────────────────────────────────
 
@@ -98,6 +100,10 @@ export type RoutineRun = {
   /** The routine's name, or the run's own title if the routine is gone. */
   routineName: string
   at: number
+  /** When it last moved: when it finished, or when you last replied in it. */
+  lastAt: number
+  /** Hermes closed it as a routine run. Until then it's going; opening it in a chat reopens it. */
+  finished: boolean
   messageCount: number
 }
 
@@ -105,9 +111,13 @@ export type JobRun = {
   id: string
   at: number
   endedAt?: number
+  lastAt: number
   running: boolean
   messageCount: number
 }
+
+/** What came of a run: what the agent said last, whether that was "nothing to report", and whether you replied. */
+export type RunResult = { text: string; quiet: boolean; replied: boolean }
 
 // ── Reading ─────────────────────────────────────────────────────────────────
 
@@ -188,7 +198,16 @@ export function useDeliveryTargets(agentId: string | undefined) {
   })
 }
 
-const RUN_ID = /^cron_([0-9a-z]+)_\d{8}_\d{6}$/i
+type SessionRow = {
+  id: string
+  title?: string | null
+  started_at?: number
+  ended_at?: number | null
+  end_reason?: string | null
+  last_active?: number
+  is_active?: boolean
+  message_count?: number
+}
 
 /**
  * Every run of every routine of one agent, newest first, labelled with the
@@ -200,17 +219,26 @@ export function useRoutineRuns(agentId: string | undefined) {
     queryKey: routineRunsKey(agentId ?? ''),
     enabled: Boolean(agentId),
     queryFn: async () => {
-      type Row = { id: string; title?: string; started_at?: number; message_count?: number; source?: string }
-      const res = await rpc<{ sessions: Row[] }>('session.list', { profile: agentId, limit: 100 })
-      return res.sessions
-        .filter((s) => s.source === 'cron' && RUN_ID.test(s.id))
-        .map((s) => ({
-          id: s.id,
-          routineId: RUN_ID.exec(s.id)![1],
-          title: (s.title ?? '').replace(/\s+·\s+[A-Z][a-z]{2} \d{1,2} \d{1,2}:\d{2}$/, '').trim(),
-          at: (s.started_at ?? 0) * 1000,
-          messageCount: s.message_count ?? 0,
-        }))
+      const res = await api.get<{ sessions?: SessionRow[] }>(
+        `/api/sessions?${p(agentId!)}&source=cron&order=recent&limit=100`,
+      )
+      return (res.sessions ?? []).flatMap((s) => {
+        const routineId = routineIdOf(s.id)
+        if (!routineId) return []
+        const at = (s.started_at ?? 0) * 1000
+        return [
+          {
+            id: s.id,
+            routineId,
+            title: runTitle(s.title ?? ''),
+            at,
+            lastAt: s.last_active ? s.last_active * 1000 : at,
+            // Hermes ends a run "cron_complete" (or "cron_incomplete_no_output"); opening it reopens it.
+            finished: Boolean(s.end_reason?.startsWith('cron_')),
+            messageCount: s.message_count ?? 0,
+          },
+        ]
+      })
     },
     staleTime: 15_000,
   })
@@ -228,37 +256,126 @@ export function useJobRuns(agentId: string, routineId: string | undefined) {
     queryKey: ['routine-job-runs', agentId, routineId],
     enabled: Boolean(routineId),
     queryFn: async () => {
-      type Row = { id: string; started_at?: number; ended_at?: number | null; is_active?: boolean; message_count?: number }
-      const res = await api.get<{ runs: Row[] }>(`${job(routineId!, agentId, 'runs')}&limit=20`)
-      return (res.runs ?? []).map<JobRun>((r) => ({
-        id: r.id,
-        at: (r.started_at ?? 0) * 1000,
-        endedAt: r.ended_at ? r.ended_at * 1000 : undefined,
-        running: Boolean(r.is_active),
-        messageCount: r.message_count ?? 0,
-      }))
+      const res = await api.get<{ runs: SessionRow[] }>(`${job(routineId!, agentId, 'runs')}&limit=30`)
+      return (res.runs ?? []).map<JobRun>((r) => {
+        const at = (r.started_at ?? 0) * 1000
+        return {
+          id: r.id,
+          at,
+          endedAt: r.ended_at ? r.ended_at * 1000 : undefined,
+          lastAt: r.last_active ? r.last_active * 1000 : at,
+          running: Boolean(r.is_active) && !r.end_reason,
+          messageCount: r.message_count ?? 0,
+        }
+      })
     },
     staleTime: 10_000,
   })
 }
 
-/** What the agent said at the end of a run. */
-export function useRunResult(agentId: string, runId: string | undefined) {
-  return useQuery({
-    queryKey: ['routine-run-result', agentId, runId],
-    enabled: Boolean(runId),
-    queryFn: async () => {
-      type Row = { id?: number; timestamp?: number; role?: string; content?: string | null }
-      const res = await api.get<{ messages?: Row[] }>(
-        `/api/sessions/${encodeURIComponent(runId!)}/messages?${p(agentId)}&order=latest&limit=20`,
-      )
-      const said = (res.messages ?? [])
-        .filter((r) => r.role === 'assistant' && r.content?.trim())
-        .sort((a, b) => (a.timestamp ?? a.id ?? 0) - (b.timestamp ?? b.id ?? 0))
-      return (said.at(-1)?.content ?? '').trim().replace(/^\[SILENT\]\s*/i, '')
-    },
-    staleTime: Infinity,
+/** What came of a run. A run that has moved since is asked again; one that hasn't never changes. */
+export const runResultKey = (agentId: string, run: { id: string; lastAt: number }) =>
+  ['routine-run-result', agentId, run.id, run.lastAt] as const
+
+export async function fetchRunResult(agentId: string, runId: string): Promise<RunResult> {
+  type Row = { id?: number; timestamp?: number; role?: string; content?: string | null }
+  const res = await api.get<{ messages?: Row[] }>(
+    `/api/sessions/${encodeURIComponent(runId)}/messages?${p(agentId)}&order=latest&limit=20`,
+  )
+  const rows = (res.messages ?? []).sort((a, b) => (a.timestamp ?? a.id ?? 0) - (b.timestamp ?? b.id ?? 0))
+  const said = rows.filter((r) => r.role === 'assistant' && r.content?.trim())
+  const text = (said.at(-1)?.content ?? '').trim()
+  return {
+    text: isQuiet(text) ? '' : text,
+    quiet: isQuiet(text),
+    // Anything you wrote, as opposed to Hermes's brief that opens every run.
+    replied: rows.some((r) => r.role === 'user' && r.content?.trim() && !isRunBrief(r.content)),
+  }
+}
+
+// ── What came of them ───────────────────────────────────────────────────────
+
+/** How many of a routine's newest runs are read for its latest result. */
+const LOOK_BACK = 12
+
+export type RoutineNews = {
+  routine: Routine
+  /** Its newest run with something to say, and what it said. */
+  latest?: { run: RoutineRun; text: string }
+  /** Runs since then (or in all, with no result) that had nothing to report. */
+  quiet: number
+  /** There were more quiet runs than were read. */
+  more: boolean
+  /** Its newest run that said something (or nothing to report). */
+  lastAt?: number
+}
+
+/**
+ * Each routine that has run, with what it last had to say, newest first;
+ * the ones with nothing to report so far go last. Reads only each routine's
+ * newest few runs, and each run once.
+ */
+export function useRoutineNews(agentId: string | undefined) {
+  const routines = useRoutines(agentId)
+  const runs = useRoutineRuns(agentId)
+  const byRoutine = new Map<string, RoutineRun[]>()
+  for (const run of runs.data ?? []) {
+    const list = byRoutine.get(run.routineId) ?? []
+    if (list.length < LOOK_BACK) byRoutine.set(run.routineId, [...list, run])
+  }
+  const read = [...byRoutine.values()].flat()
+  const results = useQueries({
+    queries: read.map((run) => ({
+      queryKey: runResultKey(agentId ?? '', run),
+      queryFn: () => fetchRunResult(agentId!, run.id),
+      staleTime: Infinity,
+      enabled: Boolean(agentId),
+    })),
   })
+  const resultOf = new Map(read.map((run, i) => [run.id, results[i]?.data]))
+  const loaded = results.every((r) => !r.isPending)
+  // Opening a run reopens it in Hermes, so whether it's finished says little;
+  // what it said does. One still going has said nothing yet, and one you've
+  // replied in is a conversation now, among the chats.
+  const said = (run: RoutineRun) => {
+    const r = resultOf.get(run.id)
+    return !r || r.replied ? undefined : r.quiet ? 'quiet' : r.text ? 'result' : undefined
+  }
+
+  const data: RoutineNews[] | undefined =
+    routines.data && runs.data && loaded
+      ? routines.data
+          .filter((r) => byRoutine.get(r.id)?.some(said))
+          .map((routine) => {
+            const list = byRoutine.get(routine.id)!.filter(said)
+            const index = list.findIndex((run) => said(run) === 'result')
+            const latest = index >= 0 ? { run: list[index], text: resultOf.get(list[index].id)!.text } : undefined
+            const quiet = index >= 0 ? index : list.length
+            const total = runs.data!.filter((run) => run.routineId === routine.id).length
+            return { routine, latest, quiet, more: index < 0 && total > LOOK_BACK, lastAt: list[0]?.at }
+          })
+          .sort((a, b) => (b.latest?.run.at ?? -1) - (a.latest?.run.at ?? -1) || (b.lastAt ?? 0) - (a.lastAt ?? 0))
+      : undefined
+  return { data, isPending: routines.isPending || runs.isPending || !loaded }
+}
+
+/** Runs you've replied in, which have become conversations. */
+export function useContinuedRuns(agentId: string | undefined) {
+  const runs = useRoutineRuns(agentId)
+  const open = (runs.data ?? []).filter((run) => !run.finished)
+  const results = useQueries({
+    queries: open.map((run) => ({
+      queryKey: runResultKey(agentId ?? '', run),
+      queryFn: () => fetchRunResult(agentId!, run.id),
+      staleTime: Infinity,
+      enabled: Boolean(agentId),
+    })),
+  })
+  const replied = open.filter((_, i) => results[i]?.data?.replied)
+  const key = replied.map((run) => `${run.id}@${run.lastAt}:${run.routineName}`).join('|')
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const data = useMemo(() => (runs.data ? replied : undefined), [Boolean(runs.data), key])
+  return { ...runs, data }
 }
 
 /** How many routines an agent has switched on, for "Routines · 2 on". */

@@ -1,97 +1,100 @@
 // Hermes ships a catalog of routine blueprints. Murmur shows them with its own
-// short, human copy and a glyph, in an order that starts with the everyday
+// short, human copy and one of its own icons, in an order that starts with the everyday
 // ones. Blueprints Hermes adds later still show up, with Hermes's words.
 
+import type { ComponentType } from 'react'
 import {
-  Bell,
-  BookOpen,
-  Briefcase,
-  CalendarCheck,
-  CookingPot,
-  GlassWater,
-  Heart,
-  Hourglass,
-  Mail,
-  Moon,
-  Newspaper,
-  PenLine,
-  Receipt,
-  Sparkles,
-  Sprout,
-  Sunrise,
-  Tag,
-  Telescope,
-  CalendarClock,
-  type LucideIcon,
-} from 'lucide-react'
+  BellIcon,
+  BookIcon,
+  BriefcaseIcon,
+  GlassIcon,
+  HeartIcon,
+  HourglassIcon,
+  MailIcon,
+  MoonIcon,
+  NewsIcon,
+  OnceIcon,
+  PotIcon,
+  ReceiptIcon,
+  RoutinesIcon,
+  SproutIcon,
+  SunriseIcon,
+  TagIcon,
+  WatchIcon,
+  WeekIcon,
+  type IconProps,
+} from '@/ui/icons'
 import type { Blueprint, BlueprintField } from '@/state/routines'
 
-type Copy = { title: string; description: string; icon: LucideIcon; name?: (v: Record<string, string>) => string }
+/** One of Murmur's own icons (src/ui/icons.tsx), shown on the agent's lit chip. */
+export type RoutineIcon = ComponentType<IconProps>
+
+type Copy = { title: string; description: string; icon: RoutineIcon; name?: (v: Record<string, string>) => string }
 
 const sentence = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s).replace(/[.\s]+$/, '')
 
 const COPY: Record<string, Copy> = {
-  'morning-brief': { title: 'Morning briefing', description: 'Weather, plans and anything urgent.', icon: Sunrise },
+  'morning-brief': { title: 'Morning briefing', description: 'Weather, plans and anything urgent.', icon: SunriseIcon },
   'custom-reminder': {
     title: 'Reminder',
     description: 'A nudge, in your own words.',
-    icon: Bell,
+    icon: BellIcon,
     name: (v) => sentence(v.what ?? '') || 'Reminder',
   },
   'news-digest': {
     title: 'News on a topic',
     description: 'Only what’s new on a topic you follow.',
-    icon: Newspaper,
+    icon: NewsIcon,
     name: (v) => (v.topic ? `${sentence(v.topic)} news` : 'News digest'),
   },
   'evening-winddown': {
     title: 'Evening wind-down',
     description: 'Tomorrow at a glance, and what to prep.',
-    icon: Moon,
+    icon: MoonIcon,
   },
-  'workday-start': { title: 'Workday start', description: 'Your agenda and top priorities.', icon: Briefcase },
+  'workday-start': { title: 'Workday start', description: 'Your agenda and top priorities.', icon: BriefcaseIcon },
   'weekly-review': {
     title: 'Weekly review',
     description: 'What’s done, what’s open, what’s next.',
-    icon: CalendarCheck,
+    icon: WeekIcon,
   },
   'learn-daily': {
     title: 'Learn something',
     description: 'A small lesson every day.',
-    icon: BookOpen,
+    icon: BookIcon,
     name: (v) => (v.topic ? `Learn ${v.topic}` : 'Daily lesson'),
   },
   'habit-checkin': {
     title: 'Habit check-in',
     description: 'A gentle nudge to keep a habit going.',
-    icon: Sprout,
+    icon: SproutIcon,
     name: (v) => sentence(v.habit ?? '') || 'Habit check-in',
   },
-  'on-this-day': { title: 'On this day', description: 'A bit of history, a word or a fact.', icon: Hourglass },
-  'gratitude-journal': { title: 'Gratitude', description: 'An evening moment for what went well.', icon: Heart },
-  'meal-plan': { title: 'Weekly meal plan', description: 'Meals for the week and a grocery list.', icon: CookingPot },
+  'on-this-day': { title: 'On this day', description: 'A bit of history, a word or a fact.', icon: HourglassIcon },
+  'gratitude-journal': { title: 'Gratitude', description: 'An evening moment for what went well.', icon: HeartIcon },
+  'meal-plan': { title: 'Weekly meal plan', description: 'Meals for the week and a grocery list.', icon: PotIcon },
   'hydration-move': {
     title: 'Water and stretch',
     description: 'Drink water and move, during the day.',
-    icon: GlassWater,
+    icon: GlassIcon,
   },
   'bill-renewal-watch': {
     title: 'Bills and renewals',
     description: 'A heads-up before something is due.',
-    icon: Receipt,
+    icon: ReceiptIcon,
     name: (v) => sentence(v.what ?? '') || 'Bills and renewals',
   },
   'price-watch': {
     title: 'Price watch',
     description: 'Know when a price drops.',
-    icon: Tag,
+    icon: TagIcon,
     name: (v) => (v.item ? `Watch ${v.item}` : 'Price watch'),
   },
-  'important-mail': { title: 'Important email', description: 'Only the mail that needs you.', icon: Mail },
+  'important-mail': { title: 'Important email', description: 'Only the mail that needs you.', icon: MailIcon },
   'competitor-watch': {
     title: 'Company news',
     description: 'Launches, pricing and funding news for companies you follow.',
-    icon: Telescope,
+    icon: WatchIcon,
   },
 }
 
@@ -123,7 +126,7 @@ export type Template = {
   key: string
   title: string
   description: string
-  icon: LucideIcon
+  icon: RoutineIcon
   blueprint: Blueprint
   /** Has a time of day (and maybe days) to pick. */
   timed: boolean
@@ -148,7 +151,7 @@ export function toTemplate(b: Blueprint): Template {
     key: b.key,
     title: copy?.title ?? b.title,
     description: copy?.description ?? b.description,
-    icon: copy?.icon ?? Sparkles,
+    icon: copy?.icon ?? RoutinesIcon,
     blueprint: b,
     timed,
     days,
@@ -184,14 +187,14 @@ export const tileFor = (key: string): Tile | undefined => (COPY[key] ? { key, ..
 
 export const isHintOnly = (template: string, field: string) => HINT_ONLY.has(`${template}:${field}`)
 
-/** The glyph for an existing routine. */
-export function iconFor(template: string | undefined, name: string): LucideIcon {
+/** The icon for an existing routine. One in your own words wears the routine clock. */
+export function iconFor(template: string | undefined, name: string): RoutineIcon {
   if (template && COPY[template]) return COPY[template].icon
-  if (template === 'custom-once') return CalendarClock
-  if (template === 'custom') return PenLine
+  if (template === 'custom-once') return OnceIcon
+  if (template === 'custom') return RoutinesIcon
   // Made elsewhere (Hermes Desktop, or another browser): match by name.
   const byName = Object.values(COPY).find((c) => c.title.toLowerCase() === name.toLowerCase())
-  return byName?.icon ?? Sparkles
+  return byName?.icon ?? RoutinesIcon
 }
 
 // ── Field wording ───────────────────────────────────────────────────────────
