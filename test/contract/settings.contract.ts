@@ -2,9 +2,11 @@
 // tools, memory, apps, messaging, who may message an agent, insights and
 // backups. Murmur's own readers run on the real answers where it has them.
 
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { QueryClient } from '@tanstack/react-query'
+import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest'
 import { startGateway, stopGateway } from '@/hermes/gateway'
 import { accessFrom } from '@/state/access'
+import { connectOnUmbrel, tokenError, useConnections, type CatalogApp } from '@/state/apps'
 import { importAgent } from '@/state/backups'
 import { chatUsageOf, slicesOf, summarizeWeek } from '@/state/insights'
 import { ensureAgentTimezone, readTimezone } from '@/state/timezone'
@@ -112,6 +114,34 @@ describe('apps', () => {
     await api.delete(`/api/mcp/servers/${name}?${p}`)
     expect((await api.get(`/api/mcp/servers?${p}`)).servers.map((s: { name: string }) => s.name)).not.toContain(name)
     expect(await socket.request('reload.mcp', { confirm: true })).toBeDefined()
+  })
+})
+
+describe('an app connected with a token', () => {
+  const servers = async () => (await api.get(`/api/mcp/servers?${p}`)).servers.map((s: { name: string }) => s.name)
+
+  // Murmur explains a failed check from Hermes's words for it (src/state/apps.ts tokenError).
+  it.each([
+    ['unauthorized', 'didn’t accept that token'],
+    ['missing', 'Turn on Instance-level MCP'],
+  ])('explains an app that answers %s', async (kind, explained) => {
+    const name = `contract-${kind}`
+    const url = `${inject('model').forHermes.replace(/\/v1$/, '')}/mcp/${kind}`
+    await api.post(`/api/mcp/servers?${p}`, { name, url, auth: 'header', bearer_token: 'contract-token', profile: agent })
+    const probe = await api.post(`/api/mcp/servers/${name}/test?${p}`)
+    expect(probe.ok).toBe(false)
+    expect(tokenError('n8n', probe.error)).toContain(explained)
+    await api.delete(`/api/mcp/servers/${name}?${p}`)
+  })
+
+  it('connects n8n on this Umbrel, and takes it away again when n8n isn’t there', async () => {
+    const { entries } = await api.get<{ entries: CatalogApp[] }>('/api/mcp/catalog')
+    const n8n = entries.find((e) => e.name === 'n8n-official')!
+    expect(n8n).toBeDefined()
+
+    await connectOnUmbrel(new QueryClient(), agent, n8n, 'n8n', 'Bearer contract-token')
+    expect(useConnections.getState()[`${agent}\nn8n-official`]).toMatchObject({ phase: 'failed', message: expect.stringContaining('Couldn’t find n8n on this Umbrel') })
+    expect(await servers()).not.toContain('n8n-official')
   })
 })
 

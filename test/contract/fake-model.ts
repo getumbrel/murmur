@@ -12,6 +12,9 @@
 // Anything else gets "pong". Requests without tools (titles and other side
 // calls Hermes makes) always get a short plain answer. Every request is kept,
 // and GET /_requests returns them, so a test can see what Hermes asked.
+//
+// It also plays a connected app that turns Hermes away: /mcp/unauthorized
+// answers 401 and /mcp/missing 404, as an MCP server would.
 
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
@@ -71,6 +74,8 @@ export async function startFakeModel(port = 0) {
       } catch {}
 
       if (req.method === 'GET' && path === '/_requests') return send(200, requests)
+      if (path === '/mcp/unauthorized') return send(401, { error: 'Unauthorized' })
+      if (path === '/mcp/missing') return send(404, { error: 'Not Found' })
       if (req.method === 'GET' && path === '/v1/models') {
         return send(200, { object: 'list', data: MODELS.map((id) => ({ id, object: 'model', created: 1760000000, owned_by: 'murmur' })) })
       }
