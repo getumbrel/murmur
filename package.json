@@ -12,6 +12,7 @@
     "start": "node server/index.ts",
     "typecheck": "tsc -b",
     "test": "vitest run",
+    "test:contract": "vitest run --config test/contract/vitest.config.ts",
     "desktop:dev": "node desktop/scripts/dev.ts",
     "desktop:build": "npm run build && node desktop/scripts/build.ts",
     "desktop:dist": "npm run desktop:build && node desktop/scripts/dist.ts",

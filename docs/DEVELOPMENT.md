@@ -37,6 +37,8 @@ MURMUR_FIND_HERMES='Hermes Agent=http://localhost:18789' \
 |---|---|
 | `npm run typecheck` | `tsc -b` for the app and the server |
 | `npm run build` | Typecheck, then build the app into `dist/` |
+| `npm test` | The unit tests (Vitest) |
+| `npm run test:contract` | The Hermes contract suite, against a real Hermes in Docker (below) |
 | `npm start` | Serve `dist/` and proxy Hermes, the same way production does |
 | `node scripts/shot.mjs <url> <out.png> [w] [h] [dark\|light]` | Take a screenshot with Playwright |
 
@@ -83,6 +85,18 @@ MURMUR_FIND_HERMES='Hermes Agent=http://localhost:18789' \
 - **Dev-only pages** (`playground.html`, `onboarding.html`, `connection.html`, `routines.html`, `ui.html`, `buddy.html`) work under `npm run dev:web` and are never part of `vite build`.
 - The design rules are in [`DESIGN.md`](DESIGN.md). The Hermes integration specs and the live probe scripts that back them are in [`hermes/`](hermes).
 
+## Hermes contract tests
+
+Murmur depends on a lot of Hermes behaviour that no type can describe, such as how a routine's run is named, that a quiet run ends in `[SILENT]`, or which fields a chat's rows carry. `npm run test:contract` checks that behaviour against a real Hermes. It needs Docker and nothing else, and takes about a minute once the image is pulled.
+
+- **What runs.** `test/contract/setup.ts` starts the Hermes image that `umbrel/murmur/docker-compose.yml` pins, set up like Murmur's built-in Hermes (password sign-in, the gateway running). It also starts a scripted fake model (`test/contract/fake-model.ts`) and connects it the way onboarding does, then starts Murmur's own server pinned to that Hermes. Each run starts from a fresh Hermes with no saved data, and leaves the Hermes and Murmur logs in `test-results/contract/`.
+- **How tests talk to it.** Tests go through Murmur's server, so the proxy, the sign-in and the socket ticket are covered too. They also call Murmur's own data layer, such as `createAgent`, `connectLocal`, `isQuiet` and `fetchAgentChats`, through a small browser stand-in (`test/contract/browser.ts`).
+- **Steering the model.** A test steers the fake model with tags in its message: `[[say: text]]`, `[[silent]]`, `[[tool: terminal {"command":"…"}]]`, `[[slow: 200]]` and `[[fail]]`. Anything else gets "pong".
+- **Another Hermes.** Set `HERMES_IMAGE` to test against a different image, for example `HERMES_IMAGE=nousresearch/hermes-agent:latest npm run test:contract`.
+- **In CI.** `ci.yml` runs the suite on every pull request against the pinned Hermes. `hermes-nightly.yml` runs it every night against Hermes's newest release. It can also be started by hand with any image, such as an Umbrel build you're about to pin.
+
+When the suite finds something new about Hermes, add a test for it here, rather than another probe script in `docs/hermes/scripts/`. Those scripts remain for exploring.
+
 ## Updating the vendored Hermes client
 
 `src/hermes/vendor/` is an exact copy of `apps/shared/src/` from `NousResearch/hermes-agent`. Its tag must match the Hermes that Murmur bundles. To bump it:
@@ -98,7 +112,7 @@ MURMUR_FIND_HERMES='Hermes Agent=http://localhost:18789' \
    ```
 3. Update the tag in `src/hermes/vendor/README.md`, and the image in `umbrel/murmur/docker-compose.yml`, `docker-compose.yml` and `dev/docker-compose.yml` (which upgrades `dev/hermes-data` in place on its next start).
 4. Run `npm run typecheck`. Contract drift shows up as type errors.
-5. Re-run the probes in `docs/hermes/scripts/` against the new dev Hermes.
+5. Run `npm run test:contract`. It tests the image you just pinned, and any behaviour Murmur relies on that changed fails there.
 
 ## Desktop
 
@@ -121,5 +135,5 @@ npm run desktop:dist -- --mac --x64 --arm64  # or name the platforms and archite
   ```
   `docker-compose.yml` runs the same image beside its own Hermes, as on umbrelOS ([`STANDALONE.md`](STANDALONE.md)).
 - **Release.** Pushing a `v*` tag runs `.github/workflows/release.yml`. It first checks that the tag matches `version` in both `package.json` and `umbrel/murmur/umbrel-app.yml`, then builds `linux/amd64` and `linux/arm64` images and pushes them to `ghcr.io/getumbrel/murmur`. The run summary prints the digest to pin. `.github/workflows/desktop.yml` attaches the desktop apps to the same release.
-- **CI.** `.github/workflows/ci.yml` runs the typecheck, the build and a Docker build on every push to `main` (or `master`) and every pull request, then starts the image and checks `/healthz`, the app, the manifest and the `/data` permissions. `npm test` runs the unit tests (Vitest). Workflow actions are pinned to commit SHAs, and `.github/dependabot.yml` proposes monthly bumps for them and for the base images.
+- **CI.** `.github/workflows/ci.yml` runs the typecheck, the unit tests, the build and a Docker build on every push to `main` (or `master`) and every pull request. It then starts the image and checks `/healthz`, the app, the manifest and the `/data` permissions, and runs the Hermes contract suite. `hermes-nightly.yml` runs that suite against Hermes's newest release. Workflow actions are pinned to commit SHAs, and `.github/dependabot.yml` proposes monthly bumps for them and for the base images.
 - **umbrelOS.** The store app lives in [`umbrel/murmur/`](../umbrel/murmur), and its icon and App Store gallery in [`umbrel/gallery/murmur/`](../umbrel/gallery/murmur), mirrored in getumbrel/umbrel-apps-gallery. `sh umbrel/gallery/tools/retake.sh` takes plain screenshots on a throwaway Hermes with demo data. It runs Murmur beside its own Hermes and offers the Hermes Agent app when it's installed. See [`umbrel/README.md`](../umbrel/README.md) for how to submit it.

@@ -53,3 +53,21 @@ jobs:
           test "$(docker exec murmur stat -c '%a %u' /data)" = '700 1000'
       - if: failure()
         run: docker logs murmur
+
+  # Murmur's expectations of Hermes, checked against the Hermes it ships
+  # (test/contract). A fake model stands in for a real one, so no key is needed.
+  hermes-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run test:contract
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: hermes-contract-logs
+          path: test-results/contract/

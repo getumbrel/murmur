@@ -398,7 +398,8 @@ export function createHermes(target: Target) {
   return { url: base, prefix, target, check: () => once('check', check), status, restAuth, socketAuth, reject, read, write, send, peek }
 }
 
-function readCookies(lines: string[]) {
+/** Set-Cookie lines by name, without any __Host-/__Secure- prefix or quotes. */
+export function readCookies(lines: string[]) {
   const out = new Map<string, { value: string; maxAge?: number }>()
   for (const line of lines) {
     const [pair, ...attrs] = line.split(';')
