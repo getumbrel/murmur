@@ -12,6 +12,7 @@ import { Grow } from '@/ui/grow'
 import { Skeleton } from '@/ui/skeleton'
 import { Spinner } from '@/ui/spinner'
 import { Toggle } from '@/ui/toggle'
+import { Segmented } from '@/ui/segmented'
 import { TextField, Label } from '@/ui/field'
 import { ListGroup, ListRow } from '@/ui/list'
 import { UmbrelIcon } from '@/ui/brand'
@@ -24,6 +25,9 @@ import {
   cancelConnect,
   clearConnection,
   connectApp,
+  connectOnUmbrel,
+  nextStep,
+  onUmbrel as onUmbrelHere,
   openSignInTab,
   removeApp,
   setAppEnabled,
@@ -84,6 +88,11 @@ export function AppsSheet({ agent, open, onOpenChange }: Props) {
     void connectApp(qc, agent.id, app, { name, tab, env, added })
   }
 
+  const connectHere = (app: CatalogApp, token: string) => {
+    setPicked(app.name)
+    void connectOnUmbrel(qc, agent.id, app, appName(app.name), token)
+  }
+
   const back = () => {
     if (!picked) return
     setPicked(null)
@@ -121,6 +130,7 @@ export function AppsSheet({ agent, open, onOpenChange }: Props) {
                 server={pickedServer}
                 onBack={back}
                 onConnect={connect}
+                onConnectHere={connectHere}
                 onClose={() => onOpenChange(false)}
               />
             ) : (
@@ -452,6 +462,7 @@ function AppView({
   server,
   onBack,
   onConnect,
+  onConnectHere,
   onClose,
 }: {
   agent: Agent
@@ -460,9 +471,14 @@ function AppView({
   server: AppServer | undefined
   onBack: () => void
   onConnect: (app: CatalogApp, env?: Record<string, string>) => void
+  onConnectHere: (app: CatalogApp, token: string) => void
   onClose: () => void
 }) {
   const connection = useConnection(agent.id, name)
+  // Kept while the app is open, so trying again comes back to what was typed.
+  const [draft, setDraft] = useState<Draft>({ here: true, values: {}, token: '' })
+  // One that asked for something goes back to its form to try again; the rest just go again.
+  const retry = app && (app.required_env.length ? () => clearConnection(agent.id, name) : () => onConnect(app))
   return (
     <div>
       {connection ? (
@@ -472,7 +488,7 @@ function AppView({
           app={app}
           onBack={onBack}
           onClose={onClose}
-          onRetry={app ? () => onConnect(app) : undefined}
+          onRetry={retry || undefined}
         />
       ) : server ? (
         <Manage
@@ -483,7 +499,13 @@ function AppView({
           onSignIn={app ? () => onConnect(app) : undefined}
         />
       ) : app ? (
-        <Form app={app} onConnect={(env) => onConnect(app, env)} />
+        <Form
+          app={app}
+          draft={draft}
+          onDraft={setDraft}
+          onConnect={(env) => onConnect(app, env)}
+          onConnectHere={(token) => onConnectHere(app, token)}
+        />
       ) : null}
     </div>
   )
@@ -590,7 +612,7 @@ function Connecting({
           {phase === 'adding' && (
             <>
               <Heading title={`Adding ${label}`}>
-                {app?.auth_type === 'oauth' ? 'Its sign-in opens in a new tab.' : 'One moment.'}
+                {app?.auth_type === 'oauth' && !connection.token ? 'Its sign-in opens in a new tab.' : 'One moment.'}
               </Heading>
               <div className="mt-7 grid place-items-center">
                 <Spinner />
@@ -628,7 +650,7 @@ function Connecting({
           )}
           {done && (
             <>
-              <Heading title={`${agent.name} can now use ${label}`}>{app?.description}</Heading>
+              <Heading title={`${agent.name} can now use ${label}`}>{nextStep(name) ?? app?.description}</Heading>
               <AlsoFor agent={agent} app={app} />
               <div className="mt-7 grid">
                 <Button variant="accent" size="lg" onClick={onClose}>
@@ -732,17 +754,40 @@ function Manage({
   )
 }
 
-/** The few apps that need something first (n8n's address): one tidy field each. */
-function Form({ app, onConnect }: { app: CatalogApp; onConnect: (env: Record<string, string>) => void }) {
+type Draft = { here: boolean; values: Record<string, string>; token: string }
+
+/**
+ * The few apps that need something first (n8n's address): one tidy field
+ * each. One that can run on this Umbrel asks which: here, it only needs its
+ * token; elsewhere, what it always asks for.
+ */
+function Form({
+  app,
+  draft,
+  onDraft,
+  onConnect,
+  onConnectHere,
+}: {
+  app: CatalogApp
+  draft: Draft
+  onDraft: (next: Draft) => void
+  onConnect: (env: Record<string, string>) => void
+  onConnectHere: (token: string) => void
+}) {
   const label = appName(app.name)
-  const [values, setValues] = useState<Record<string, string>>({})
-  const ready = app.required_env.every((e) => !e.required || values[e.name]?.trim())
+  const local = onUmbrelHere(app.name)
+  const hermesOnUmbrel = useHermesOnUmbrel().data === true
+  const here = !!local && hermesOnUmbrel && draft.here
+  const { values, token } = draft
+  const ready = here ? !!token.trim() : app.required_env.every((e) => !e.required || values[e.name]?.trim())
   return (
     <form
       className="pb-1"
       onSubmit={(e) => {
         e.preventDefault()
-        if (ready) onConnect(Object.fromEntries(Object.entries(values).map(([k, v]) => [k, v.trim()])))
+        if (!ready) return
+        if (here) onConnectHere(token)
+        else onConnect(Object.fromEntries(Object.entries(values).map(([k, v]) => [k, v.trim()])))
       }}
     >
       <div className="flex flex-col items-center pt-3 text-center">
@@ -754,23 +799,60 @@ function Form({ app, onConnect }: { app: CatalogApp; onConnect: (env: Record<str
         <h2 className="mt-4 text-title font-semibold tracking-[-0.02em]">{label}</h2>
         <p className="mx-auto mt-1 max-w-80 text-subhead text-balance text-ink-2">{app.description}</p>
       </div>
-      <div className="mt-7 space-y-4">
-        {app.required_env.map((env, i) => (
-          <div key={env.name}>
-            <Label>{fieldLabel(env.prompt)}</Label>
-            <TextField
-              autoFocus={i === 0}
-              autoComplete="off"
-              spellCheck={false}
-              placeholder={/url/i.test(env.name) ? 'https://' : undefined}
-              inputMode={/url/i.test(env.name) ? 'url' : undefined}
-              value={values[env.name] ?? ''}
-              onChange={(e) => setValues((v) => ({ ...v, [env.name]: e.target.value }))}
-            />
-            {fieldHint(env.prompt) && <p className="mt-2 px-4 text-footnote text-ink-3">{fieldHint(env.prompt)}</p>}
-          </div>
-        ))}
-      </div>
+      {local && hermesOnUmbrel && (
+        <Segmented
+          className="mt-7"
+          label={`Where ${label} runs`}
+          value={draft.here ? 'here' : 'elsewhere'}
+          options={[
+            { value: 'here', label: 'On this Umbrel' },
+            { value: 'elsewhere', label: 'Elsewhere' },
+          ]}
+          onChange={(v) => onDraft({ ...draft, here: v === 'here' })}
+        />
+      )}
+      <AnimatePresence mode="popLayout" initial={false}>
+        <motion.div
+          key={here ? 'here' : 'elsewhere'}
+          className={cn('space-y-4', local && hermesOnUmbrel ? 'mt-5' : 'mt-7')}
+          initial={{ opacity: 0, y: 4 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, transition: { duration: 0.12 } }}
+          transition={{ duration: 0.28, ease }}
+        >
+          {here ? (
+            <div>
+              <Label>Access token</Label>
+              <TextField
+                autoFocus
+                autoComplete="off"
+                autoCapitalize="off"
+                spellCheck={false}
+                placeholder="Paste it here"
+                value={token}
+                onChange={(e) => onDraft({ ...draft, token: e.target.value })}
+              />
+              <p className="mt-2 px-4 text-footnote text-pretty text-ink-3">{local.steps}</p>
+            </div>
+          ) : (
+            app.required_env.map((env, i) => (
+              <div key={env.name}>
+                <Label>{fieldLabel(env.prompt)}</Label>
+                <TextField
+                  autoFocus={i === 0}
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder={/url/i.test(env.name) ? 'https://' : undefined}
+                  inputMode={/url/i.test(env.name) ? 'url' : undefined}
+                  value={values[env.name] ?? ''}
+                  onChange={(e) => onDraft({ ...draft, values: { ...values, [env.name]: e.target.value } })}
+                />
+                {fieldHint(env.prompt) && <p className="mt-2 px-4 text-footnote text-ink-3">{fieldHint(env.prompt)}</p>}
+              </div>
+            ))
+          )}
+        </motion.div>
+      </AnimatePresence>
       <div className="mt-7">
         <Button type="submit" variant="accent" size="lg" disabled={!ready}>
           Connect

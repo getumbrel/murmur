@@ -87,12 +87,20 @@ export function arrange(apps: CatalogApp[], nameOf: (name: string) => string) {
   }
 }
 
+// Said for people rather than for Hermes ("…official MCP server with browser OAuth").
+const ABOUT: Record<string, string> = {
+  'n8n-official': 'Search and run your n8n workflows.',
+}
+
 /** Hermes's catalog. The same for every agent, so it's fetched once. */
 export function useCatalog(enabled = true) {
   return useQuery({
     queryKey: ['apps-catalog'],
     enabled,
-    queryFn: async () => (await api.get<{ entries: CatalogApp[] }>('/api/mcp/catalog')).entries,
+    queryFn: async () =>
+      (await api.get<{ entries: CatalogApp[] }>('/api/mcp/catalog')).entries.map((a) =>
+        ABOUT[a.name] ? { ...a, description: ABOUT[a.name] } : a,
+      ),
     staleTime: 30 * 60_000,
   })
 }
@@ -163,7 +171,15 @@ export type Phase =
   | 'done'
   | 'failed'
 
-export type Connection = { phase: Phase; url?: string; flowId?: string; message?: string; added?: boolean }
+export type Connection = {
+  phase: Phase
+  url?: string
+  flowId?: string
+  message?: string
+  added?: boolean
+  /** Connected with a token instead: there's no sign-in to open. */
+  token?: boolean
+}
 
 type Store = Record<string, Connection>
 export const useConnections = create<Store>(() => ({}))
@@ -307,6 +323,80 @@ export async function connectApp(
     tab?.close()
     if (added) await removeServer(profile, app.name).catch(() => {})
     patch(key, { phase: 'failed', message: friendlyError(name, (e as Error).message ?? '', secureHere()) })
+    void refresh(qc, profile)
+  }
+}
+
+// ── On this Umbrel ──────────────────────────────────────────────────────────
+
+// Apps people may run on the same Umbrel as Hermes. Inside an app's container
+// umbrel.local doesn't resolve, and the app's port on the Umbrel sits behind
+// its login, so Hermes reaches the app's own container by name instead. That
+// also rules out signing in: n8n names umbrel.local as where to finish, so
+// it's connected with the access token n8n hands out instead.
+const ON_UMBREL: Record<string, { url: string; steps: string }> = {
+  'n8n-official': {
+    url: 'http://n8n_server_1:5678/mcp-server/http',
+    steps:
+      'In n8n, open Settings › Instance-level MCP and turn it on. Then choose Connect › API key and copy the access token. n8n shows it only once; the button beside it makes a new one.',
+  },
+}
+
+/** What's left to do in the app itself once it's connected, for the few that need it. */
+const NEXT: Record<string, string> = {
+  'n8n-official': 'Next, pick which workflows it can use, in n8n’s Settings › Instance-level MCP.',
+}
+export const nextStep = (app: string): string | undefined => NEXT[app]
+
+/** How to connect an app that's on this Umbrel, when it can be. */
+export const onUmbrel = (app: string) => ON_UMBREL[app]
+
+/** What a token test's failure means, in a sentence for the person. */
+export function tokenError(name: string, raw: string) {
+  if (/\b401\b|unauthori[sz]ed|forbidden|\b403\b/i.test(raw))
+    return `${name} didn’t accept that token. Copy a new one from ${name} and try again.`
+  if (/^not found$|\b404\b/i.test(raw.trim()))
+    return `Turn on Instance-level MCP in ${name}’s settings, then try again.`
+  if (/name or service|no address|resolve|connection attempts failed|refused|unreachable/i.test(raw))
+    return `Couldn’t find ${name} on this Umbrel. Check it’s installed and running.`
+  return `Couldn’t connect ${name}. Try again in a moment.`
+}
+
+/** "Bearer eyJ…", or the token on its own, with whatever came along when it was copied. */
+export const cleanToken = (text: string) =>
+  text
+    .trim()
+    .replace(/^bearer\s+/i, '')
+    .replace(/\s+/g, '')
+
+/**
+ * Connects an app on this Umbrel with its token: adds it at its container's
+ * address, checks it answers, and takes it away again if it doesn't.
+ */
+export async function connectOnUmbrel(qc: QueryClient, profile: string, app: CatalogApp, name: string, token: string) {
+  const key = keyOf(profile, app.name)
+  const where = ON_UMBREL[app.name]
+  patch(key, { phase: 'adding', token: true })
+  let added = false
+  try {
+    await api.post(`/api/mcp/servers?${q(profile)}`, {
+      name: app.name,
+      url: where.url,
+      auth: 'header',
+      bearer_token: cleanToken(token),
+      profile,
+    })
+    added = true
+    const probe = await api.post<{ ok: boolean; error?: string }>(
+      `/api/mcp/servers/${path(app.name)}/test?${q(profile)}`,
+    )
+    if (!probe.ok) throw new Error(probe.error ?? '')
+    await reload()
+    await refresh(qc, profile)
+    patch(key, { phase: 'done', token: true, added })
+  } catch (e) {
+    if (added) await removeServer(profile, app.name).catch(() => {})
+    patch(key, { phase: 'failed', token: true, message: tokenError(name, (e as Error).message ?? '') })
     void refresh(qc, profile)
   }
 }

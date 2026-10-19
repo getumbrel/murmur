@@ -28,12 +28,15 @@ const apps = await import('./apps')
 const {
   arrange,
   cancelConnect,
+  cleanToken,
   connectApp,
+  connectOnUmbrel,
   friendlyError,
   healthOf,
   removeApp,
   returnUrl,
   setAppEnabled,
+  tokenError,
   useConnections,
 } = apps
 
@@ -301,5 +304,57 @@ describe('managing an app', () => {
     await removeApp(qc, 'atlas', 'notion')
     expect(calls).toEqual(['DELETE /api/mcp/servers/notion'])
     expect(list()).toEqual([{ name: 'linear', enabled: true }])
+  })
+})
+
+describe('n8n on this Umbrel', () => {
+  // Hermes's errors from testing it, as seen against n8n 2.43.7.
+  const n8n = {
+    name: 'n8n-official',
+    description: 'Workflows',
+    auth_type: 'oauth',
+    required_env: [{ name: 'N8N_MCP_SERVER_URL', prompt: 'MCP Server URL', required: true }],
+    url: '${N8N_MCP_SERVER_URL}',
+    needs_install: false,
+  }
+
+  it('takes the token however it was copied', () => {
+    expect(cleanToken('  Bearer eyJa.b\n.c ')).toBe('eyJa.b.c')
+    expect(cleanToken('eyJa.b.c')).toBe('eyJa.b.c')
+  })
+
+  it('says what to do when it doesn’t work', () => {
+    expect(tokenError('n8n', 'Streamable HTTP: Server returned an error response (HTTP 401 from POST …)')).toMatch(
+      /didn’t accept that token/,
+    )
+    expect(tokenError('n8n', 'Not Found')).toMatch(/Turn on Instance-level MCP/)
+    expect(tokenError('n8n', '[Errno -2] Name or service not known')).toMatch(/installed and running/)
+    expect(tokenError('n8n', 'All connection attempts failed')).toMatch(/installed and running/)
+    expect(tokenError('n8n', 'boom')).toBe('Couldn’t connect n8n. Try again in a moment.')
+  })
+
+  it('reaches n8n’s own container with the token, and checks it answers', async () => {
+    let added: unknown
+    routes['POST /api/mcp/servers'] = (body) => ((added = body), { ok: true })
+    routes['POST /api/mcp/servers/n8n-official/test'] = () => ({ ok: true, tools: [] })
+    await connectOnUmbrel(qc, 'atlas', n8n, 'n8n', 'Bearer eyJ.x.y')
+    expect(added).toEqual({
+      name: 'n8n-official',
+      url: 'http://n8n_server_1:5678/mcp-server/http',
+      auth: 'header',
+      bearer_token: 'eyJ.x.y',
+      profile: 'atlas',
+    })
+    expect(calls).not.toContain('POST /api/mcp/servers/n8n-official/auth')
+    expect(connection('n8n-official')).toMatchObject({ phase: 'done', token: true })
+  })
+
+  it('takes it away again when n8n turns the token down', async () => {
+    routes['POST /api/mcp/servers'] = () => ({ ok: true })
+    routes['POST /api/mcp/servers/n8n-official/test'] = () => ({ ok: false, error: 'HTTP 401 Unauthorized' })
+    routes['DELETE /api/mcp/servers/n8n-official'] = () => ({ ok: true })
+    await connectOnUmbrel(qc, 'atlas', n8n, 'n8n', 'eyJ.x.y')
+    expect(calls).toContain('DELETE /api/mcp/servers/n8n-official')
+    expect(connection('n8n-official')).toMatchObject({ phase: 'failed', message: expect.stringMatching(/token/) })
   })
 })
