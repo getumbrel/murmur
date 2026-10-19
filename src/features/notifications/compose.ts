@@ -1,6 +1,7 @@
 // What a notification says. Pure, so it's easy to test (compose.test.ts).
 
 import { proseOf } from '@/features/media/parse'
+import { secretAskText } from '@/features/chat/secret-text'
 import type { Chat } from '@/state/chats'
 import type { GroupSummary } from '@/state/groups'
 import type { ChatMoment } from '@/state/status'
@@ -47,9 +48,11 @@ export const chatHref = (chat: Pick<Chat, 'id' | 'profile'>) =>
 export function chatNote({ kind, chat }: ChatMoment, name: string): Note | null {
   const base = { title: name, tag: `murmur:chat:${chat.id}`, href: chatHref(chat) }
   if (kind === 'needs-you') {
-    const ask = chat.items.findLast((i) => (i.kind === 'approval' || i.kind === 'clarify') && i.status === 'pending')
+    const ask = chat.items.findLast(
+      (i) => (i.kind === 'approval' || i.kind === 'clarify' || i.kind === 'secret') && i.status === 'pending',
+    )
     const question = ask?.kind === 'clarify' ? clip(ask.questions[0]?.question?.trim() ?? '') : ''
-    return { ...base, body: question || 'Needs your OK' }
+    return { ...base, body: question || (ask?.kind === 'secret' ? secretAskText(ask) : 'Needs your OK') }
   }
   const tail = chat.items.at(-1)
   if (!tail || tail.kind === 'notice' || tail.kind === 'error') return null

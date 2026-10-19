@@ -13,7 +13,7 @@ import { isMissingMethod } from '@/hermes/compat'
 import { toolLabel } from '@/features/chat/tool-labels'
 import { approvalText, detailOf, isCallTo, toolAsked, type ToolCall } from '@/features/chat/approval-text'
 import { explainError } from '@/features/chat/errors'
-import type { ApprovalChoice, ChatItem, ChatStatus, ClarifyQuestion, Reaction, Speaker } from '@/features/chat/types'
+import type { ApprovalChoice, ChatItem, ChatStatus, ClarifyQuestion, Reaction, SecretAsk, Speaker } from '@/features/chat/types'
 import { parseUserMessage, rememberUpload, type UserAttachment } from '@/features/media/parse'
 import { toolMedia } from '@/features/media/tool-media'
 import { scoped } from '@/hermes/instance'
@@ -1023,9 +1023,31 @@ export function answerQuestion(id: string, requestId: string, answers: Record<st
   }))
 }
 
+/**
+ * A login, a code or a key, answered in a masked field. The value goes
+ * straight back on the socket: it's never put in the store, so it can't reach
+ * the transcript, a notification or a reload. An empty value is "not now".
+ */
+export function answerSecret(id: string, requestId: string, value: string) {
+  requests.get(requestId)?.respond({ value })
+  requests.delete(requestId)
+  patch(id, (c) => ({
+    items: c.items.map((i) =>
+      i.kind === 'secret' && i.requestId === requestId ? { ...i, status: value ? 'sent' : 'skipped' } : i,
+    ),
+    status: 'working',
+  }))
+}
+
+/** Hermes's masked prompts, by what each asks you for. */
+const SECRET_ASKS: Record<string, SecretAsk> = { 'vault.save_login': 'login', 'vault.code': 'code', secret: 'key' }
+
+const trimmed = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : undefined)
+
 function onServerRequest(req: ServerRequest) {
   const params = req.params as Record<string, unknown>
-  if (req.method !== 'approval' && req.method !== 'clarify') return false
+  const secret = SECRET_ASKS[req.method]
+  if (req.method !== 'approval' && req.method !== 'clarify' && !secret) return false
   const runtimeId = String(params.session_id ?? '')
   const id = runtimeToStored.get(runtimeId)
   // Only re-deliveries wait: a live request for an id we don't know is
@@ -1038,7 +1060,7 @@ function onServerRequest(req: ServerRequest) {
   // A re-delivery after reconnect (or a pending card from before a reload):
   // answer through the newest copy, and don't add a second card.
   const shown = getChat(id)?.items.some(
-    (i) => (i.kind === 'approval' || i.kind === 'clarify') && i.requestId === req.id,
+    (i) => (i.kind === 'approval' || i.kind === 'clarify' || i.kind === 'secret') && i.requestId === req.id,
   )
   if (requests.has(req.id) || shown) {
     requests.set(req.id, req)
@@ -1046,7 +1068,27 @@ function onServerRequest(req: ServerRequest) {
   }
   requests.set(req.id, req)
   const speaker = getChat(id)?.speaker
-  if (req.method === 'approval') {
+  if (secret) {
+    const meta = (params.metadata ?? {}) as Record<string, unknown>
+    patch(id, (c) => ({
+      status: 'waiting',
+      items: [
+        ...c.items,
+        {
+          kind: 'secret',
+          id: uid('s'),
+          requestId: req.id,
+          ask: secret,
+          site: trimmed(params.site),
+          prompt: trimmed(secret === 'code' ? params.hint : params.prompt),
+          skill: trimmed(meta.skill_name),
+          help: trimmed(meta.help),
+          status: 'pending',
+          speaker,
+        },
+      ],
+    }))
+  } else if (req.method === 'approval') {
     const command = typeof params.command === 'string' ? params.command : undefined
     const tool = toolAsked(command)
     const text = approvalText({
@@ -1410,7 +1452,7 @@ function onEvent(ev: GatewayEvent) {
       return patch(id, (c) => ({
         status: c.status === 'waiting' ? 'working' : c.status,
         items: c.items.flatMap((i) => {
-          if (i.kind === 'approval' && i.requestId === reqId && i.status === 'pending')
+          if ((i.kind === 'approval' || i.kind === 'secret') && i.requestId === reqId && i.status === 'pending')
             return [{ ...i, status: 'expired' as const }]
           if (i.kind === 'clarify' && i.requestId === reqId && i.status === 'pending') return []
           return [i]
@@ -1434,8 +1476,11 @@ function onEvent(ev: GatewayEvent) {
   }
 }
 
-const hasPending = (items: ChatItem[]) =>
-  items.some((i) => (i.kind === 'approval' || i.kind === 'clarify') && i.status === 'pending')
+/** A card that's waiting for you: an approval, a question, or a masked field. */
+const isAsking = (i: ChatItem) =>
+  (i.kind === 'approval' || i.kind === 'clarify' || i.kind === 'secret') && i.status === 'pending'
+
+const hasPending = (items: ChatItem[]) => items.some(isAsking)
 
 /** Side questions and command cards sit beside the conversation: a reply carries on past them. */
 const isSide = (i: ChatItem) => i.kind === 'aside' || i.kind === 'command'
@@ -1504,7 +1549,7 @@ function cancelApprovals(payload: P) {
   for (const i of items) if (hit(i)) requests.delete(i.requestId)
   patch(id, (c) => {
     const next = c.items.map((i): ChatItem => (hit(i) ? { ...i, status: 'expired' } : i))
-    const stillAsking = next.some((i) => (i.kind === 'approval' || i.kind === 'clarify') && i.status === 'pending')
+    const stillAsking = next.some(isAsking)
     return { status: c.status === 'waiting' && !stillAsking ? 'working' : c.status, items: next }
   })
 }

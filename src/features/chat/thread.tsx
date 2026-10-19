@@ -25,6 +25,7 @@ import { MediaProvider, type MediaContext } from '@/features/media/context'
 import { mediaPathsOf, proseOf } from '@/features/media/parse'
 import { ApprovalCard } from './approval-card'
 import { ClarifyCard } from './clarify-card'
+import { SecretCard } from './secret-card'
 import { MessageActions } from './message-actions'
 import { MentionText, MentionsProvider } from './mention'
 import { MessageMenu, useLongPress, type MenuAction } from './message-menu'
@@ -42,6 +43,7 @@ type Block =
   | { kind: 'text'; id: string; item: Of<'assistant'> }
   | { kind: 'approval'; id: string; item: Of<'approval'> }
   | { kind: 'clarify'; id: string; item: Of<'clarify'> }
+  | { kind: 'secret'; id: string; item: Of<'secret'> }
   | { kind: 'error'; id: string; item: Of<'error'> }
   | { kind: 'plan'; id: string; item: Of<'plan'> }
   | { kind: 'helpers'; id: string; items: Of<'helper'>[] }
@@ -127,6 +129,8 @@ function toRows(items: ChatItem[], busy: boolean, live: Set<string>): Row[] {
 type Handlers = {
   onApprove: (requestId: string, choice: ApprovalChoice) => void
   onAnswer: (requestId: string, answers: Record<string, string>) => void
+  /** A masked answer (a login, a code, a key); empty for "not now". */
+  onSecret?: (requestId: string, value: string) => void
   onRetry?: () => void
   /** The way out an error offers: Models, or a fresh chat. */
   onErrorAction?: (action: ErrorAction) => void
@@ -199,6 +203,7 @@ export function Thread({
     () => ({
       onApprove: (id, choice) => latest.current.onApprove(id, choice),
       onAnswer: (id, answers) => latest.current.onAnswer(id, answers),
+      onSecret: (id, value) => latest.current.onSecret?.(id, value),
       onRetry: () => latest.current.onRetry?.(),
       onErrorAction: (action) => latest.current.onErrorAction?.(action),
       onReact: (itemId, emoji) => latest.current.onReact?.(itemId, emoji),
@@ -328,6 +333,7 @@ export function Thread({
                               isNew={isNew(row.id)}
                               onApprove={stable.onApprove}
                               onAnswer={stable.onAnswer}
+                              onSecret={handlers.onSecret ? stable.onSecret : undefined}
                               onRetry={last && handlers.onRetry ? stable.onRetry : undefined}
                               onErrorAction={last && handlers.onErrorAction ? stable.onErrorAction : undefined}
                               onReact={handlers.onReact ? stable.onReact : undefined}
@@ -543,6 +549,7 @@ const Turn = memo(function Turn({
   className,
   onApprove,
   onAnswer,
+  onSecret,
   onRetry,
   onErrorAction,
   onReact,
@@ -561,7 +568,7 @@ const Turn = memo(function Turn({
     !(tail?.kind === 'work') &&
     !(tail?.kind === 'helpers' && tail.items.some((h) => h.status === 'running')) &&
     !(tail?.kind === 'text' && tail.item.streaming) &&
-    !((tail?.kind === 'approval' || tail?.kind === 'clarify') && tail.item.status === 'pending')
+    !((tail?.kind === 'approval' || tail?.kind === 'clarify' || tail?.kind === 'secret') && tail.item.status === 'pending')
   const fallback = sections.at(-1)?.speaker ?? agent
 
   // What a tapback lands on: the reply's last words, once it's finished (and,
@@ -628,6 +635,17 @@ const Turn = memo(function Turn({
                   return <ApprovalCard key={block.id} item={block.item} hue={hue} seed={seed} onApprove={onApprove} />
                 case 'clarify':
                   return <ClarifyCard key={block.id} item={block.item} hue={hue} seed={seed} onAnswer={onAnswer} />
+                case 'secret':
+                  return (
+                    <SecretCard
+                      key={block.id}
+                      item={block.item}
+                      name={(section.speaker ?? agent)?.name}
+                      hue={hue}
+                      seed={seed}
+                      onSecret={onSecret}
+                    />
+                  )
                 case 'error':
                   return (
                     <ErrorNote

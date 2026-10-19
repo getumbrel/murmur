@@ -9,6 +9,7 @@ import { create } from 'zustand'
 import { useShallow } from 'zustand/react/shallow'
 import { gateway, rpc } from '@/hermes/gateway'
 import { useChats, type Chat } from '@/state/chats'
+import { secretAskText } from '@/features/chat/secret-text'
 import type { OrbState } from '@/ui/orb'
 import { scoped } from '@/hermes/instance'
 import { listProfiles } from '@/hermes/compat'
@@ -204,8 +205,17 @@ export function useNeedsYou(): NeedsYou[] {
   return [
     ...local.map((chatId) => {
       const chat = chats[chatId]
-      const ask = chat.items.findLast((i) => (i.kind === 'approval' || i.kind === 'clarify') && i.status === 'pending')
-      const text = ask?.kind === 'approval' ? ask.title : ask?.kind === 'clarify' ? ask.questions[0]?.question : undefined
+      const ask = chat.items.findLast(
+        (i) => (i.kind === 'approval' || i.kind === 'clarify' || i.kind === 'secret') && i.status === 'pending',
+      )
+      const text =
+        ask?.kind === 'approval'
+          ? ask.title
+          : ask?.kind === 'clarify'
+            ? ask.questions[0]?.question
+            : ask?.kind === 'secret'
+              ? secretAskText(ask)
+              : undefined
       return { chatId, agentId: chat.profile, text: text || 'Waiting for your answer' }
     }),
     ...remote.map((chatId) => ({ chatId, agentId: owners[chatId], text: 'Waiting for your answer' })),

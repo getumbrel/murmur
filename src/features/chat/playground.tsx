@@ -17,7 +17,7 @@ const ATLAS: Speaker = { id: 'atlas', name: 'Atlas', hue: 278 }
 const JUNIPER: Speaker = { id: 'juniper', name: 'Juniper', hue: 160 }
 const WREN: Speaker = { id: 'wren', name: 'Wren', hue: 28 }
 
-type Scene = 'solo' | 'live' | 'group' | 'empty' | 'media' | 'cards' | 'errors'
+type Scene = 'solo' | 'live' | 'group' | 'empty' | 'media' | 'cards' | 'secrets' | 'errors'
 
 let n = 0
 const uid = (p: string) => `${p}-${++n}`
@@ -298,7 +298,9 @@ function Chat({ scene }: { scene: Scene }) {
             ? mediaHistory()
             : scene === 'cards'
               ? cardsHistory()
-              : [],
+              : scene === 'secrets'
+                ? secretsHistory()
+                : [],
   )
   const inset = useKeyboardInset()
 
@@ -435,6 +437,17 @@ function Chat({ scene }: { scene: Scene }) {
         agent={group ? undefined : ATLAS}
         onApprove={approve}
         onAnswer={answer}
+        onSecret={(requestId, value) =>
+          window.setTimeout(
+            () =>
+              setItems((it) =>
+                it.map((i) =>
+                  i.kind === 'secret' && i.requestId === requestId ? { ...i, status: value ? 'sent' : 'skipped' } : i,
+                ),
+              ),
+            500,
+          )
+        }
         onRetry={retry}
         emptyState={
           <div className="flex flex-col items-center gap-4 pb-16 text-center">
@@ -491,6 +504,34 @@ function mediaHistory(): ChatItem[] {
 }
 
 /** The quieter pieces of a thread: a notice, a side question, a command's output, an error. */
+/** Hermes asking for what it must never see: a login, a code, a key. Then how each one settles. */
+function secretsHistory(): ChatItem[] {
+  const at = T0
+  const ask = (ask: 'login' | 'code' | 'key', status: 'pending' | 'sent' | 'skipped' | 'expired', more: object = {}): ChatItem => ({
+    kind: 'secret',
+    id: uid('sc'),
+    requestId: uid('r'),
+    ask,
+    status,
+    speaker: ATLAS,
+    ...more,
+  })
+  return [
+    { kind: 'user', id: uid('u'), text: 'Book my usual table at Taberna da Rua das Flores', at },
+    ask('login', 'sent', { site: 'tabernadaruadasflores.pt' }),
+    ask('code', 'skipped', { site: 'tabernadaruadasflores.pt' }),
+    ask('key', 'expired', { prompt: 'Enter your OpenTable API key', skill: 'opentable' }),
+    { kind: 'assistant', id: uid('a'), at, streaming: false, text: 'Signed in. Their booking page wants one more thing:' },
+    ask('login', 'pending', { site: 'opentable.com' }),
+    ask('code', 'pending', { site: 'opentable.com', prompt: 'Sent by text to the number ending 42.' }),
+    ask('key', 'pending', {
+      prompt: 'Your OpenTable API key',
+      skill: 'opentable',
+      help: 'Find it at opentable.com/developers under Keys.',
+    }),
+  ]
+}
+
 function cardsHistory(): ChatItem[] {
   const at = T0
   return [
@@ -523,6 +564,7 @@ const SCENES: { value: Scene; label: string }[] = [
   { value: 'group', label: 'Group' },
   { value: 'empty', label: 'Empty' },
   { value: 'cards', label: 'Cards' },
+  { value: 'secrets', label: 'Logins' },
   { value: 'errors', label: 'Errors' },
 ]
 

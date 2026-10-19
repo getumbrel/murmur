@@ -36,6 +36,7 @@ import { useUpFrom } from '@/lib/transitions'
 import {
   answerApproval,
   answerQuestion,
+  answerSecret,
   askAside,
   attachmentsOf,
   continueHere,
@@ -462,6 +463,7 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
           }
           onApprove={(requestId, choice) => id && answerApproval(id, requestId, choice)}
           onAnswer={(requestId, answers) => id && answerQuestion(id, requestId, answers)}
+          onSecret={(requestId, value) => id && answerSecret(id, requestId, value)}
           // A fresh reply to the message Hermes already saved, rather than a second copy of it.
           onRetry={id ? () => void regenerate(id).catch(() => toast.error('Couldn’t try again. Try once more in a moment.')) : undefined}
           onErrorAction={(action) => {

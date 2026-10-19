@@ -47,7 +47,7 @@ function useWaitingElsewhere(chatId: string | undefined): Waiting[] {
       const agent = agents?.find((a) => a.id === n.agentId)
       if (!agent) continue
       const pending = chats[n.chatId]?.items.findLast(
-        (i) => (i.kind === 'approval' || i.kind === 'clarify') && i.status === 'pending',
+        (i) => (i.kind === 'approval' || i.kind === 'clarify' || i.kind === 'secret') && i.status === 'pending',
       )
       out.push({
         key: `${n.chatId}:${pending && 'requestId' in pending ? pending.requestId : n.text}`,

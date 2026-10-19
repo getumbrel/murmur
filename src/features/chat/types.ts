@@ -5,6 +5,8 @@ export type Speaker = { id: string; name: string; hue: number }
 
 export type ApprovalChoice = 'once' | 'session' | 'always' | 'deny'
 
+export type SecretAsk = 'login' | 'code' | 'key'
+
 export type ClarifyQuestion = {
   qid: string
   question: string
@@ -103,6 +105,23 @@ export type ChatItem =
       questions: ClarifyQuestion[]
       status: 'pending' | 'answered'
       answers?: Record<string, string>
+      speaker?: Speaker
+    }
+  | {
+      kind: 'secret'
+      id: string
+      requestId: string
+      /** A login to keep in Hermes's vault, a one-time code, or a key a skill needs. */
+      ask: SecretAsk
+      /** The site, by host (a login or a code). */
+      site?: string
+      /** Hermes's own words for it: the code's hint, or what the key is. */
+      prompt?: string
+      /** The skill a key is for, and where to get one. */
+      skill?: string
+      help?: string
+      /** The value itself is never kept: it goes straight back to Hermes. */
+      status: 'pending' | 'sent' | 'skipped' | 'expired'
       speaker?: Speaker
     }
   | { kind: 'error'; id: string; message: string; retryable?: boolean }

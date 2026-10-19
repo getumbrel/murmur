@@ -63,6 +63,18 @@ export function transcript(items: ChatItem[], { title, agent }: { title?: string
           if (answer) block('You', answer)
         }
         break
+      case 'secret':
+        // Only that it was asked: the value never reached the chat.
+        if (item.status === 'sent')
+          step(
+            name,
+            item.ask === 'login'
+              ? `Saved your login${item.site ? ` for ${item.site}` : ''}`
+              : item.ask === 'code'
+                ? `Entered your code${item.site ? ` for ${item.site}` : ''}`
+                : `Saved your key${item.skill ? ` for ${item.skill}` : ''}`,
+          )
+        break
       case 'aside':
         block('You', `(Side question) ${item.question}`)
         if (item.answer) block(agent, item.answer)

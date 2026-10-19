@@ -68,6 +68,13 @@ describe('chatNote', () => {
     expect(compose.chatNote({ kind: 'needs-you', chat: chat([user('go'), approval], 'waiting') }, 'Atlas')?.body).toBe('Needs your OK')
     expect(compose.chatNote({ kind: 'needs-you', chat: chat([user('go'), clarify], 'waiting') }, 'Atlas')?.body).toBe('Which day works?')
   })
+
+  it('says what a masked prompt is for', () => {
+    const login: ChatItem = { kind: 'secret', id: 's', requestId: 'r', ask: 'login', site: 'example.com', status: 'pending' }
+    const key: ChatItem = { kind: 'secret', id: 'k', requestId: 'r2', ask: 'key', skill: 'weather', status: 'pending' }
+    expect(compose.chatNote({ kind: 'needs-you', chat: chat([user('go'), login], 'waiting') }, 'Atlas')?.body).toBe('Needs your login for example.com')
+    expect(compose.chatNote({ kind: 'needs-you', chat: chat([user('go'), key], 'waiting') }, 'Atlas')?.body).toBe('Needs a key for weather')
+  })
 })
 
 describe('groupNote', () => {
