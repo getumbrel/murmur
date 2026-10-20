@@ -1,16 +1,16 @@
 import { useMemo, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
-import { Check, Plus, RotateCw, Search } from 'lucide-react'
+import { Check, Plus, RotateCw } from 'lucide-react'
 import { ListGroup, ListRow } from '@/ui/list'
-import { Sheet } from '@/ui/sheet'
+import { Sheet, SheetPin } from '@/ui/sheet'
 import { Skeleton } from '@/ui/skeleton'
 import { Spinner } from '@/ui/spinner'
-import { TextField } from '@/ui/field'
 import { cn } from '@/lib/cn'
 import { useAgent } from '@/state/agents'
 import { disconnect, LOCAL_SLUG, modelName, planUsageLine, setMainModel, useModels, useOlderPlanUsage, useRefreshModels, type Service } from '@/state/models'
 import { restingUntil } from '@/state/limits'
 import { PlanGauge, Resting, ServiceHeading } from '@/features/model/plan'
+import { SearchField } from '@/features/search/search-field'
 import { ask } from './ask'
 import { ConnectFlow } from './connect-flow'
 import { LocalService } from './local-service'
@@ -213,10 +213,9 @@ function ModelPicker({
   return (
     <Sheet open={open} onOpenChange={onOpenChange} title="Default model" width={460}>
       {total > 12 && (
-        <div className="relative mb-5">
-          <Search size={16} className="pointer-events-none absolute top-1/2 left-4 -translate-y-1/2 text-ink-3" />
-          <TextField value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search models" aria-label="Search models" className="h-11 pl-10" />
-        </div>
+        <SheetPin query={query} className="mb-5">
+          <SearchField value={query} onValueChange={setQuery} placeholder="Search models" />
+        </SheetPin>
       )}
       <div className="space-y-6">
         {shown.map((s) => (

@@ -713,6 +713,21 @@ html[data-desktop] [data-sidebar] ~ [role='main'] [data-window-gap='start'] {
     0 12px 32px -6px hsl(var(--shadow-color) / 0.2);
 }
 
+/* A sheet's pinned search (SheetPin in src/ui/sheet.tsx): an opaque band the
+   list slips under, out to the sheet's edges, with a hairline once it has. */
+.sheet-pin::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: 0 calc(-1 * var(--sheet-x)) -12px;
+  background: var(--bg-elevated);
+  box-shadow: inset 0 -0.5px 0 transparent;
+  transition: box-shadow 200ms ease;
+}
+.sheet-pin[data-stuck]::before {
+  box-shadow: inset 0 -0.5px 0 var(--line-strong);
+}
+
 /* ── Utilities ────────────────────────────────────────────────────────────── */
 
 @utility glass {

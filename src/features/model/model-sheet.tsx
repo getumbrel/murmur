@@ -1,11 +1,12 @@
 import { useMemo, useState, type CSSProperties } from 'react'
-import { Check, Search } from 'lucide-react'
+import { Check } from 'lucide-react'
 import { toast } from 'sonner'
-import { Sheet } from '@/ui/sheet'
+import { Sheet, SheetPin } from '@/ui/sheet'
 import { Segmented } from '@/ui/segmented'
 import { Button } from '@/ui/button'
 import { Skeleton } from '@/ui/skeleton'
 import { cn } from '@/lib/cn'
+import { SearchField } from '@/features/search/search-field'
 import { EFFORT, THINKING_OPTIONS, prettyModel, thinkingOf, type Thinking } from './names'
 import { useModelOptions, useSetAgentDefault, useThinkingDefault, type ModelPick } from './use-models'
 import { Resting, ServiceHeading } from './plan'
@@ -102,17 +103,9 @@ export function ModelSheet({ open, onOpenChange, agent, pick, effort, onPick, on
         )}
 
         {count > 12 && (
-          <label className="relative block">
-            <Search size={16} strokeWidth={2} aria-hidden className="pointer-events-none absolute top-1/2 left-3.5 -translate-y-1/2 text-ink-3" />
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search models"
-              aria-label="Search models"
-              type="search"
-              className="h-10 w-full rounded-full bg-fill-2 pr-4 pl-10 text-body text-ink outline-none placeholder:text-ink-3 focus:bg-fill-3 [&::-webkit-search-cancel-button]:hidden"
-            />
-          </label>
+          <SheetPin query={query}>
+            <SearchField value={query} onValueChange={setQuery} placeholder="Search models" />
+          </SheetPin>
         )}
 
         {options.isPending ? (

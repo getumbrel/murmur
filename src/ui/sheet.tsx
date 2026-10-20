@@ -16,6 +16,7 @@ import {
   useId,
   useLayoutEffect,
   useRef,
+  useState,
   useSyncExternalStore,
   type CSSProperties,
   type ReactNode,
@@ -140,7 +141,7 @@ export function Sheet({
                   exit={reduce ? { opacity: 0, transition: fade } : { opacity: 0, scale: 0.97, transition: leave }}
                 >
                   <SheetHeader title={title} hideTitle={hideTitle} back={back} description={description} />
-                  <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-6">{children}</div>
+                  <SheetBody className="[--sheet-x:--spacing(6)] pb-6">{children}</SheetBody>
                   {footer && <div className="hairline-t px-6 py-4">{footer}</div>}
                 </motion.div>
               ) : (
@@ -179,7 +180,7 @@ export function Sheet({
                   <div onPointerDown={(e) => drag.start(e)} className="touch-none">
                     <SheetHeader title={title} hideTitle={hideTitle} back={back} description={description} compact />
                   </div>
-                  <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 pb-5">{children}</div>
+                  <SheetBody className="overscroll-contain [--sheet-x:--spacing(5)] pb-5">{children}</SheetBody>
                   {footer && (
                     <div className="hairline-t px-5 pt-3 pb-[max(12px,env(safe-area-inset-bottom))]">{footer}</div>
                   )}
@@ -242,6 +243,83 @@ function SheetHeader({
       </Dialog.Close>
     </div>
   )
+}
+
+// The scrolling part. `--sheet-x` is its side padding, which a pinned bar
+// reaches past to meet the sheet's edges; `--sheet-hold` is the height a
+// search holds it at while results come and go.
+function SheetBody({ className, children }: { className: string; children: ReactNode }) {
+  return (
+    <div data-sheet-body="" className={cn('min-h-0 flex-1 overflow-y-auto px-(--sheet-x)', className)}>
+      <div className="min-h-(--sheet-hold)">{children}</div>
+    </div>
+  )
+}
+
+// ── Pinned search ───────────────────────────────────────────────────────────
+// A long list's search field stays in reach: it rides up with the list and
+// pins under the title, with a hairline once rows pass beneath it. While
+// there's a query, the sheet keeps its size and the field its place, so
+// nothing shifts under your fingers as results come and go, and the first
+// match always lands right under the field.
+
+export function SheetPin({ query, className, children }: { query: string; className?: string; children: ReactNode }) {
+  const pin = useRef<HTMLDivElement>(null)
+  const [stuck, setStuck] = useState(false)
+
+  useEffect(() => {
+    const el = pin.current
+    const body = el?.closest<HTMLElement>('[data-sheet-body]')
+    if (!el || !body) return
+    const update = () =>
+      setStuck(body.scrollTop > 0 && el.getBoundingClientRect().top - body.getBoundingClientRect().top < 1)
+    update()
+    body.addEventListener('scroll', update, { passive: true })
+    return () => {
+      body.removeEventListener('scroll', update)
+      body.style.removeProperty('--sheet-hold')
+    }
+  }, [])
+
+  // The first keystroke, before the list narrows: hold the sheet at its
+  // current height, measured from where the field will rest.
+  const hold = () => {
+    const el = pin.current
+    const body = el?.closest<HTMLElement>('[data-sheet-body]')
+    if (!el || !body || body.style.getPropertyValue('--sheet-hold')) return
+    const top = Math.min(body.scrollTop, restingTop(el, body))
+    const padding = parseFloat(getComputedStyle(body).paddingBottom) || 0
+    body.style.setProperty('--sheet-hold', `${top + body.clientHeight - padding}px`)
+  }
+
+  // Each change brings the results' top up under the field; clearing lets go.
+  useLayoutEffect(() => {
+    const el = pin.current
+    const body = el?.closest<HTMLElement>('[data-sheet-body]')
+    if (!el || !body) return
+    if (!query) return void body.style.removeProperty('--sheet-hold')
+    const top = restingTop(el, body)
+    if (body.scrollTop > top) body.scrollTop = top
+  }, [query])
+
+  return (
+    <div
+      ref={pin}
+      onInputCapture={hold}
+      data-stuck={stuck || undefined}
+      className={cn('sheet-pin sticky top-0 z-10', className)}
+    >
+      {children}
+    </div>
+  )
+}
+
+/** Where a pinned element sits in its sheet's scroll when it isn't pinned. */
+function restingTop(el: HTMLElement, body: HTMLElement) {
+  el.style.position = 'static'
+  const top = el.getBoundingClientRect().top - body.getBoundingClientRect().top + body.scrollTop
+  el.style.position = ''
+  return top
 }
 
 // ── Stacking and hand-offs ──────────────────────────────────────────────────

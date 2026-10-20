@@ -1,10 +1,11 @@
 import { useMemo, useState, type CSSProperties } from 'react'
-import { Check, Search } from 'lucide-react'
+import { Check } from 'lucide-react'
 import { toast } from 'sonner'
-import { Sheet } from '@/ui/sheet'
+import { Sheet, SheetPin } from '@/ui/sheet'
 import { Skeleton } from '@/ui/skeleton'
 import { Spinner } from '@/ui/spinner'
 import { cn } from '@/lib/cn'
+import { SearchField } from '@/features/search/search-field'
 import type { Agent } from '@/state/agents'
 import { prettyModel } from '@/features/model/names'
 import { useModelOptions, useSetAgentDefault, type ModelPick } from '@/features/model/use-models'
@@ -67,22 +68,9 @@ export function AgentModelSheet({
     >
       <div className="hue-scope space-y-6 pt-3" style={{ '--hue': agent.hue } as CSSProperties}>
         {count > 12 && (
-          <label className="relative block">
-            <Search
-              size={16}
-              strokeWidth={2}
-              aria-hidden
-              className="pointer-events-none absolute top-1/2 left-3.5 -translate-y-1/2 text-ink-3"
-            />
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search models"
-              aria-label="Search models"
-              type="search"
-              className="h-10 w-full rounded-full bg-fill-2 pr-4 pl-10 text-body text-ink outline-none placeholder:text-ink-3 focus:bg-fill-3 [&::-webkit-search-cancel-button]:hidden"
-            />
-          </label>
+          <SheetPin query={query}>
+            <SearchField value={query} onValueChange={setQuery} placeholder="Search models" />
+          </SheetPin>
         )}
 
         {options.isPending ? (
