@@ -17,6 +17,15 @@
 </p>
 
 <p align="center">
+  <a href="https://apps.umbrel.com/app/murmur">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/readme/app-store-badge-dark.svg">
+      <img src="docs/readme/app-store-badge-light.svg" alt="Available on the Umbrel App Store" width="220">
+    </picture>
+  </a>
+</p>
+
+<p align="center">
   <a href="#get-murmur"><b>Get Murmur</b></a> ·
   <a href="#bring-your-hermes-or-start-fresh">Your Hermes</a> ·
   <a href="#what-you-can-do">Features</a> ·
@@ -151,7 +160,7 @@ Scan a code and an agent is on WhatsApp or Telegram, so you can text it from the
 <td width="50%" valign="top">
 
 #### On umbrelOS
-Install **Murmur** from the Umbrel App Store. It comes with Hermes built in. Already use the **Hermes Agent** app? Murmur finds it and offers to use it instead, agents and all.
+Install **Murmur** from the [Umbrel App Store](https://apps.umbrel.com/app/murmur). It comes with Hermes built in. Already use the **Hermes Agent** app? Murmur finds it and offers to use it instead, agents and all.
 
 </td>
 <td width="50%" valign="top">
