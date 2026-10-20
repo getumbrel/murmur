@@ -39,7 +39,8 @@ export function AgentScreen({ agentId }: { agentId: string }) {
   const [location, navigate] = useLocation()
   const wide = useIsWide()
   const status = useAgentStatus(agentId)
-  const chats = useAgentChatList(agent)
+  // What its routines found has its own place here, From routines.
+  const chats = useAgentChatList(agent, { results: false })
   const deleteChat = useDeleteChat(agentId)
   const actions = useAgentActions()
   const { page, title, scrolled, under, onScroll } = usePageScroll<HTMLHeadingElement>(`agent:${agentId}`)

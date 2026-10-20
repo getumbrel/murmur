@@ -8,15 +8,15 @@ import { Spinner } from '@/ui/spinner'
 import { cn } from '@/lib/cn'
 import { useMedia } from '@/lib/use-media'
 import { sourceLabel, type Agent } from '@/state/agents'
-import { useChatUnread } from '@/state/status'
 import { SearchField } from '@/features/search/search-field'
 import { shortTime } from '@/features/home/time'
-import type { AgentChat } from './chats'
+import { useUnread, type AgentChat } from './chats'
 
 // Every chat with this agent: the main chat first, then the most recently
-// active, each with when it last moved, as the roster says it. Routine
-// results are labelled. Swipe left (or hold, or hover with a mouse) to delete
-// any but the main chat; with more than a handful, a search narrows them.
+// active, each with when it last moved, as the roster says it. A routine's
+// line is labelled and says what it found. Swipe left (or hold, or hover with
+// a mouse) to delete a conversation; with more than a handful, a search
+// narrows them.
 
 const SEARCH_FROM = 8
 const REVEAL = 88
@@ -151,11 +151,10 @@ function ChatRow({
 }) {
   const [deleting, setDeleting] = useState(false)
   // The main chat is shared with Hermes Desktop; deleting it would break that link.
-  const deletable = !chat.main
+  // A routine's line is the routine's, and goes when it does.
+  const deletable = !chat.main && !chat.result
   const via = !chat.routine && sourceLabel(chat.source)
-  // Hermes only says when the newest chat last moved, so that's the one that can be unread.
-  const latest = agent.lastChat?.id === chat.id
-  const unread = useChatUnread(latest ? chat.id : undefined, agent.lastChat?.at)
+  const unread = useUnread(agent, chat)
   const press = useRef<ReturnType<typeof setTimeout>>(undefined)
   const held = useRef(false)
   const dragged = useRef(false)
@@ -280,8 +279,8 @@ function ChatRow({
                 {chat.routine && <span className="flex-none font-medium text-accent">Routine ·</span>}
                 <span className="flex-none">{shortTime(chat.at)}</span>
                 {via && <span className="flex-none">· via {via}</span>}
-                {/* The main chat's title says what it is; what was said there tells them apart. */}
-                {chat.main && chat.preview && <span className="min-w-0 truncate">· {chat.preview}</span>}
+                {/* The main chat's title says what it is, and a routine's who it is; what was said tells them apart. */}
+                {(chat.main || chat.result) && chat.preview && <span className="min-w-0 truncate">· {chat.preview}</span>}
               </span>
             </span>
           )}
@@ -308,19 +307,28 @@ function ChatRow({
 /**
  * A plain row: one line, the title and when. Hermes keeps only a chat's opening
  * words, which its title usually is already, so there's no second line to add.
+ * A routine's result has one: what it found.
  */
 function PlainLine({ chat, unread, via }: { chat: AgentChat; unread: boolean; via: string | false | undefined }) {
   const tag = chat.routine ? 'Routine' : via ? `via ${via}` : ''
+  const found = chat.result && chat.preview
   return (
-    <span className="flex min-w-0 flex-1 items-baseline gap-2">
-      <span title={chat.title} className={cn('min-w-0 truncate text-body', unread && 'font-semibold')}>
-        {chat.title}
+    <span className="min-w-0 flex-1">
+      <span className="flex min-w-0 items-baseline gap-2">
+        <span title={chat.title} className={cn('min-w-0 truncate text-body', unread && 'font-semibold')}>
+          {chat.title}
+        </span>
+        {unread && <span aria-label="New messages" className="size-2 flex-none self-center rounded-full bg-accent" />}
+        <span className="ml-auto flex flex-none items-baseline gap-1 pl-1 text-footnote tabular-nums">
+          {tag && <span className={cn(chat.routine ? 'font-medium text-accent' : 'text-ink-3')}>{tag} ·</span>}
+          <span className={cn(unread ? 'font-medium text-accent' : 'text-ink-3')}>{shortTime(chat.at)}</span>
+        </span>
       </span>
-      {unread && <span aria-label="New messages" className="size-2 flex-none self-center rounded-full bg-accent" />}
-      <span className="ml-auto flex flex-none items-baseline gap-1 pl-1 text-footnote tabular-nums">
-        {tag && <span className={cn(chat.routine ? 'font-medium text-accent' : 'text-ink-3')}>{tag} ·</span>}
-        <span className={cn(unread ? 'font-medium text-accent' : 'text-ink-3')}>{shortTime(chat.at)}</span>
-      </span>
+      {found && (
+        <span title={found} className="mt-0.5 block truncate text-subhead text-ink-2">
+          {found}
+        </span>
+      )}
     </span>
   )
 }

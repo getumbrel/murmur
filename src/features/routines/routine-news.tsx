@@ -5,6 +5,7 @@ import { useChatUnread } from '@/state/status'
 import { useRoutineNews, useRoutines, type RoutineNews } from '@/state/routines'
 import { shortTime } from '@/features/home/time'
 import { Glyph } from './glyph'
+import { resultLine } from './runs'
 import { iconFor } from './templates'
 
 // What an agent's routines have found lately, on its page above its chats:
@@ -58,16 +59,6 @@ export function RoutineNewsList({
   )
 }
 
-/** Markdown, as one line of words. */
-function plain(md: string) {
-  return md
-    .replace(/```[\s\S]*?```/g, ' ')
-    .replace(/!?\[([^\]]*)\]\([^)]+\)/g, '$1')
-    .replace(/[#>*_`~|]+/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
-
 function NewsRow({ item, onOpen }: { item: RoutineNews; onOpen: (routineId: string, runId?: string) => void }) {
   const { routine, latest, quiet, more } = item
   const unread = useChatUnread(latest?.run.id, latest?.run.lastAt)
@@ -90,7 +81,7 @@ function NewsRow({ item, onOpen }: { item: RoutineNews; onOpen: (routineId: stri
             </span>
           </span>
           {latest ? (
-            <span className="block truncate text-footnote text-ink-2">{plain(latest.text)}</span>
+            <span className="block truncate text-footnote text-ink-2">{resultLine(latest.text)}</span>
           ) : (
             <span className="block truncate text-footnote text-ink-3">Checked {checks}, nothing new</span>
           )}

@@ -3,16 +3,22 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/hermes/rest'
 import { useAgentChats, useAgents, type Agent, type ChatSummary } from '@/state/agents'
 import { replaceGone } from '@/lib/transitions'
-import { routineRunsKey, useContinuedRuns } from '@/state/routines'
+import { routineRunsKey, useContinuedRuns, useRoutineNews, type RoutineRun } from '@/state/routines'
 import { deleteChat } from '@/state/chats'
+import { useChatUnread } from '@/state/status'
+import { resultLine, standingResults } from '@/features/routines/runs'
 
-// One agent's chats as people think of them: its conversations, most recently
-// active first. What its routines find lives with the routines; a run joins
-// the chats, labelled, once you've replied in it.
+// One agent's chats as people think of them, most recently active first: its
+// conversations, and a line for each routine that has found something, its
+// newest result (what Home's row shows, one tap away). A busy routine is still
+// one line; its other runs stay with it, and quiet ones never show. A run
+// you've replied in is a chat of its own, labelled.
 
 export type AgentChat = ChatSummary & {
-  /** A routine's run you've replied in. */
+  /** A routine's run: its newest result, or one you've replied in. */
   routine?: boolean
+  /** A routine's newest result (its line among the chats), with what it found as the preview. */
+  result?: boolean
   /** When it last moved, or when it began where Hermes doesn't say. */
   at: number
 }
@@ -30,7 +36,7 @@ async function fetchActivity(profile: string): Promise<Record<string, number>> {
   return Object.fromEntries((res.sessions ?? []).filter((s) => s.last_active).map((s) => [s.id, s.last_active! * 1000]))
 }
 
-/** A replied-in run goes in front of the first conversation that last moved before it did. */
+/** A routine's line goes in front of the first conversation that last moved before it did. */
 function merge(conversations: AgentChat[], runs: AgentChat[]): AgentChat[] {
   const out: AgentChat[] = []
   let r = 0
@@ -41,12 +47,17 @@ function merge(conversations: AgentChat[], runs: AgentChat[]): AgentChat[] {
   return [...out, ...runs.slice(r)]
 }
 
-/** Takes the agent, or just its id (its main chat's time then comes from the roster). */
-export function useAgentChatList(of: Agent | string | undefined) {
+/**
+ * Takes the agent, or just its id (its main chat's time then comes from the
+ * roster). `results: false` leaves the routines' results out, for a page that
+ * shows them with the routines.
+ */
+export function useAgentChatList(of: Agent | string | undefined, { results = true } = {}) {
   const agentId = typeof of === 'string' ? of : of?.id
   const roster = useAgents().data
   const conversations = useAgentChats(agentId)
   const runs = useContinuedRuns(agentId)
+  const news = useRoutineNews(results ? agentId : undefined)
   // Under ['chats', id], so whatever refreshes the list refreshes this too.
   const activity = useQuery({
     queryKey: ['chats', agentId, 'activity'],
@@ -62,21 +73,44 @@ export function useAgentChatList(of: Agent | string | undefined) {
       ...c,
       at: (c.main ? mainAt : seen[c.id]) || c.startedAt,
     }))
-    const results: AgentChat[] = (runs.data ?? [])
-      .map((r) => ({
-        id: r.id,
-        title: r.routineName,
-        preview: '',
-        startedAt: r.at,
-        at: r.lastAt,
-        messageCount: r.messageCount,
-        source: 'routine',
-        routine: true,
-      }))
-      .sort((a, b) => b.at - a.at)
-    return merge(chats, results)
-  }, [conversations.data, runs.data, activity.data, mainAt])
-  return { data, isPending: conversations.isPending, isError: conversations.isError, refetch: conversations.refetch }
+    const line = (run: RoutineRun, found?: string): AgentChat => ({
+      id: run.id,
+      title: run.routineName,
+      preview: found ? resultLine(found) : '',
+      startedAt: run.at,
+      at: run.lastAt,
+      messageCount: run.messageCount,
+      source: 'routine',
+      routine: true,
+      result: found !== undefined,
+    })
+    const continued = runs.data ?? []
+    const newest = (news.data ?? []).flatMap((n) => (n.latest ? [n.latest] : []))
+    const standing = new Set(standingResults(newest.map((n) => n.run), continued))
+    const lines = [
+      ...continued.map((run) => line(run)),
+      ...newest.filter((n) => standing.has(n.run)).map((n) => line(n.run, n.text)),
+    ].sort((a, b) => b.at - a.at)
+    return merge(chats, lines)
+  }, [conversations.data, runs.data, news.data, activity.data, mainAt])
+  // The first time, wait for the routines too, so their lines don't push the chats down a beat later.
+  const waiting = results && !news.data && news.isPending
+  return {
+    data: waiting ? undefined : data,
+    isPending: conversations.isPending || waiting,
+    isError: conversations.isError,
+    refetch: conversations.refetch,
+  }
+}
+
+/**
+ * Is this chat in the list new to you? Hermes only says when an agent's newest
+ * conversation last moved, so that's the one that can be; a routine's result
+ * knows its own time.
+ */
+export function useUnread(agent: Agent, chat: AgentChat) {
+  const known = chat.result || agent.lastChat?.id === chat.id
+  return useChatUnread(known ? chat.id : undefined, chat.result ? chat.at : agent.lastChat?.at)
 }
 
 /** Delete one of an agent's chats and let every list of them know. */

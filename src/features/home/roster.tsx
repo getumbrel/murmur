@@ -227,14 +227,18 @@ function AgentRow({
   const warm = () => void qc.prefetchQuery({ queryKey: ['chats', agent.id], queryFn: () => fetchAgentChats(agent.id), staleTime: 10_000 })
   // With the open chat listed beneath, the highlight belongs to it rather than the agent.
   const showsChat = useShowsChat(agent.id, expanded, openChatId)
-  // On a phone's Home, an agent with several chats opens on the list of them; with one it opens straight into it.
-  const many = (useAgentChats(roomy ? agent.id : undefined).data?.length ?? 0) > 1
+  // On a phone's Home, an agent with several chats opens on the list of them; with one it opens straight
+  // into it. What a routine found, when the row shows it, is one of them: the list gives it a line.
+  const conversations = useAgentChats(roomy ? agent.id : undefined).data?.length ?? 0
+  const routine = agent.lastChat?.routine ? agent.lastChat.id : undefined
   const href =
     status.state === 'waiting' && status.chatId
       ? `/chat/${agent.id}/${status.chatId}`
-      : many
+      : conversations + (routine ? 1 : 0) > 1
         ? `/chats/${agent.id}`
-        : `/chat/${agent.id}`
+        : routine
+          ? `/chat/${agent.id}/${routine}`
+          : `/chat/${agent.id}`
   const active = Boolean(status.activity && status.state !== 'idle' && status.state !== 'done')
   const unread = useChatUnread(agent.lastChat?.id, agent.lastChat?.at) && !active
 

@@ -1,14 +1,15 @@
 // Routines: things an agent does on its own, on a schedule. They're Hermes's
 // scheduled jobs (per agent), started from Hermes's built-in blueprints or
 // from a plain request. Every run is a chat Hermes keeps; Murmur shows what
-// came of it with its routine, leaves out runs with nothing to report, and
-// counts a run among your chats only once you've replied in it.
+// came of it with its routine and leaves out runs with nothing to report.
+// Among your chats, each routine is one line, its newest result, and a run
+// you've replied in is a chat of its own.
 //
 // Results are delivered "locally" (saved only), which is what makes them show
 // up here; Telegram is offered only when that agent has Telegram connected.
 
 import { useQueries, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
-import { useMemo } from 'react'
+import { useMemo, useRef } from 'react'
 import { create } from 'zustand'
 import { api, HermesError } from '@/hermes/rest'
 import { agentZone, ensureAgentTimezone } from '@/state/timezone'
@@ -313,9 +314,11 @@ export type RoutineNews = {
 /**
  * Each routine that has run, with what it last had to say, newest first;
  * the ones with nothing to report so far go last. Reads only each routine's
- * newest few runs, and each run once.
+ * newest few runs, and each run once. While a new or moving run is read, what
+ * was known stays, so nothing blinks out and back.
  */
 export function useRoutineNews(agentId: string | undefined) {
+  const held = useRef<{ agentId?: string; data?: RoutineNews[] }>({})
   const routines = useRoutines(agentId)
   const runs = useRoutineRuns(agentId)
   const byRoutine = new Map<string, RoutineRun[]>()
@@ -356,7 +359,11 @@ export function useRoutineNews(agentId: string | undefined) {
           })
           .sort((a, b) => (b.latest?.run.at ?? -1) - (a.latest?.run.at ?? -1) || (b.lastAt ?? 0) - (a.lastAt ?? 0))
       : undefined
-  return { data, isPending: routines.isPending || runs.isPending || !loaded }
+  if (data) held.current = { agentId, data }
+  return {
+    data: data ?? (held.current.agentId === agentId ? held.current.data : undefined),
+    isPending: routines.isPending || runs.isPending || !loaded,
+  }
 }
 
 /** Runs you've replied in, which have become conversations. */

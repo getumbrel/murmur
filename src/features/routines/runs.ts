@@ -80,3 +80,23 @@ export function foldQuiet<R>(runs: R[], quiet: (run: R) => boolean): RunGroup<R>
   }
   return out
 }
+
+// ── Among the chats ─────────────────────────────────────────────────────────
+
+/**
+ * Which routines' newest results stand among the chats: one line per routine,
+ * unless you've since replied in a newer run of it, which stands for it there.
+ */
+export function standingResults<R extends { routineId: string; at: number }>(latest: R[], continued: R[]): R[] {
+  return latest.filter((run) => !continued.some((c) => c.routineId === run.routineId && c.at > run.at))
+}
+
+/** What a run found, as one line of words. */
+export function resultLine(markdown: string) {
+  return markdown
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/!?\[([^\]]*)\]\([^)]+\)/g, '$1')
+    .replace(/[#>*_`~|]+/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}

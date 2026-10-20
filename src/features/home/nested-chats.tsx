@@ -2,11 +2,10 @@ import { AnimatePresence, motion, useIsPresent } from 'motion/react'
 import { Link } from 'wouter'
 import { ArrowRight, Repeat, SquarePen } from 'lucide-react'
 import type { Agent } from '@/state/agents'
-import { useChatUnread } from '@/state/status'
 import { Grow } from '@/ui/grow'
 import { Skeleton } from '@/ui/skeleton'
 import { cn } from '@/lib/cn'
-import { useAgentChatList, type AgentChat } from '@/features/agent-page/chats'
+import { useAgentChatList, useUnread, type AgentChat } from '@/features/agent-page/chats'
 
 // An agent's latest chats, tucked under its row in the sidebar, with a way
 // through to all of them on its page. Text only, on the row's name column,
@@ -99,11 +98,14 @@ function List({ agent, openChatId }: { agent: Agent; openChatId?: string }) {
 }
 
 function ChatItem({ agent, chat, selected }: { agent: Agent; chat: AgentChat; selected: boolean }) {
-  // Hermes only says when the newest chat last moved, so that's the one that can be unread.
-  const latest = agent.lastChat?.id === chat.id
-  const unread = useChatUnread(latest ? chat.id : undefined, agent.lastChat?.at)
+  const unread = useUnread(agent, chat)
   return (
-    <Item href={`/chat/${agent.id}/${chat.id}`} selected={selected} title={chat.title} nav>
+    <Item
+      href={`/chat/${agent.id}/${chat.id}`}
+      selected={selected}
+      title={chat.result && chat.preview ? `${chat.title} · ${chat.preview}` : chat.title}
+      nav
+    >
       <span className={cn('min-w-0 flex-1 truncate', unread && 'font-medium text-ink')}>{chat.title}</span>
       {/* Trailing, so every title keeps the list's left edge. */}
       {chat.routine && (

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { foldQuiet, isQuiet, isQuietExcerpt, isRunBrief, routineIdOf, runTitle } from './runs'
+import { foldQuiet, isQuiet, isQuietExcerpt, isRunBrief, resultLine, routineIdOf, runTitle, standingResults } from './runs'
 
 describe('quiet runs, as Hermes reads them', () => {
   it('are a marker as the whole answer', () => {
@@ -59,5 +59,27 @@ describe('runs', () => {
       { kind: 'run', run: 'r3' },
       { kind: 'quiet', runs: ['q4', 'q5', 'q6'] },
     ])
+  })
+})
+
+describe('results among the chats', () => {
+  const run = (routineId: string, at: number) => ({ id: `cron_${routineId}_${at}`, routineId, at })
+
+  it('are each routine’s newest', () => {
+    const latest = [run('inbox', 300), run('prices', 200)]
+    expect(standingResults(latest, [])).toEqual(latest)
+  })
+
+  it('give way to a newer run of theirs you replied in', () => {
+    expect(standingResults([run('inbox', 300), run('prices', 200)], [run('inbox', 400)])).toEqual([run('prices', 200)])
+  })
+
+  it('but not to an older one, or another routine’s', () => {
+    expect(standingResults([run('inbox', 300)], [run('inbox', 100), run('prices', 500)])).toEqual([run('inbox', 300)])
+  })
+
+  it('read as one line of words', () => {
+    expect(resultLine('## Two new emails\n\n- **Sam**: the venue moved to [Hall B](https://x.y)')).toBe('Two new emails - Sam: the venue moved to Hall B')
+    expect(resultLine('```\nraw\n```\nDone.')).toBe('Done.')
   })
 })
