@@ -12,7 +12,8 @@ import { useAgents } from '@/state/agents'
 import { useGroupSummaries } from '@/state/groups'
 import { onChatMoment, viewingChat } from '@/state/status'
 import { Tile } from '@/features/settings/page'
-import { chatNote, groupNote } from './compose'
+import { chatNote, groupNote, runNote } from './compose'
+import { watchRoutineRuns } from './routine-runs'
 import { BellIcon } from '@/ui/icons'
 import {
   isOn,
@@ -57,9 +58,10 @@ function offerSoon(face: { hue: number; seed: string }) {
 
 /**
  * Tells the person, with a system notification, when an agent finishes a reply
- * or needs them in a chat or group they aren't looking at. Mount once, in the
- * app. Chats are told by the chat store (src/state/status.ts); groups by their
- * summaries, when a round ends.
+ * or needs them in a chat or group they aren't looking at, or a routine finds
+ * something. Mount once, in the app. Chats are told by the chat store
+ * (src/state/status.ts); groups by their summaries, when a round ends; routines
+ * by their runs (routine-runs.ts).
  */
 export function useSystemNotifications() {
   const [location, navigate] = useLocation()
@@ -79,6 +81,15 @@ export function useSystemNotifications() {
       if (moment.kind === 'finished') offerSoon({ hue: agent?.hue ?? 278, seed: agent?.id ?? moment.chat.profile })
     })
   }, [])
+
+  useEffect(
+    () =>
+      watchRoutineRuns((found) => {
+        const note = runNote(found)
+        if (note && !looking(viewingChat() === found.runId)) showNote(note, latest.current.navigate)
+      }),
+    [],
+  )
 
   const rounds = useRef(new Map<string, boolean>())
   useEffect(() => {
@@ -168,8 +179,8 @@ export function NotificationsSetting() {
         blocked
           ? `Notifications are blocked for Murmur. Allow them in ${allowIn}, then turn this on.`
           : desktop
-            ? `Murmur lets you know when an agent finishes or needs you while you’re somewhere else. None showing up? Make sure Murmur is allowed in ${allowIn}.`
-            : 'Murmur lets you know when an agent finishes or needs you while you’re somewhere else.'
+            ? `Murmur lets you know when an agent finishes, needs you or has news from a routine. None showing up? Make sure Murmur is allowed in ${allowIn}.`
+            : 'Murmur lets you know when an agent finishes, needs you or has news from a routine.'
       }
     >
       <ListRow

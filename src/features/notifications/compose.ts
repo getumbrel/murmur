@@ -61,6 +61,13 @@ export function chatNote({ kind, chat }: ChatMoment, name: string): Note | null 
   return { ...base, body: (reply?.kind === 'assistant' && firstLine(reply.text)) || 'Finished' }
 }
 
+/** A routine's run found something: titled with the routine, quoting what it found. */
+export function runNote({ agentId, runId, routine, text }: { agentId: string; runId: string; routine: string; text: string }): Note | null {
+  const body = firstLine(text)
+  if (!body) return null
+  return { title: routine, body, tag: `murmur:run:${runId}`, href: chatHref({ id: runId, profile: agentId }) }
+}
+
 /** A group's round ended with something new from its agents. */
 export function groupNote(group: Pick<GroupSummary, 'id' | 'name' | 'lastLine'>): Note | null {
   if (!group.lastLine || group.lastLine.startsWith('You: ')) return null

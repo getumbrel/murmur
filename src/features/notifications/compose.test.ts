@@ -92,3 +92,19 @@ describe('groupNote', () => {
     expect(compose.groupNote({ id: 'g', name: 'Trip', lastLine: '' })).toBeNull()
   })
 })
+
+describe('runNote', () => {
+  it('names the routine and quotes what it found', () => {
+    const note = compose.runNote({ agentId: 'atlas', runId: 'cron_abc123_20261020_080000', routine: 'Morning brief', text: '## Three things today\n- Rain at 4' })
+    expect(note).toEqual({
+      title: 'Morning brief',
+      body: 'Three things today',
+      tag: 'murmur:run:cron_abc123_20261020_080000',
+      href: '/chat/atlas/cron_abc123_20261020_080000',
+    })
+  })
+
+  it('says nothing when there are no words to quote', () => {
+    expect(compose.runNote({ agentId: 'atlas', runId: 'r', routine: 'Brief', text: '```\n```' })).toBeNull()
+  })
+})
