@@ -211,6 +211,12 @@ npm run dev:web                                        # the app on :5173, with 
 
 [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) covers the architecture, server settings, tests, releases and updating the Hermes client. [`docs/DESKTOP.md`](docs/DESKTOP.md) covers the desktop app, and [`docs/DESIGN.md`](docs/DESIGN.md) and [`docs/BRAND.md`](docs/BRAND.md) cover design and brand.
 
+## Contributing
+
+Found a bug, or wish Murmur did something it doesn't? [Open an issue](https://github.com/getumbrel/murmur/issues/new) and tell us about it. We read every one, reply, and work on them.
+
+We're not accepting pull requests for now. So many arrive written by AI that we can't review each one with the care it deserves, so an issue is the best way to help.
+
 ## License
 
 [MIT](LICENSE). Murmur includes Hermes Agent's typed client, which is also MIT.
