@@ -15,6 +15,7 @@ export function PageBar({
   under,
   back,
   trailing,
+  wideTrailing,
 }: {
   title: string
   /** Something has scrolled under the bar. */
@@ -24,6 +25,8 @@ export function PageBar({
   /** Where back goes (phones only). */
   back?: { href: string; label: string }
   trailing?: ReactNode
+  /** Two buttons on the right (a text one beside an icon): the small title keeps clear of both, on both sides. */
+  wideTrailing?: boolean
 }) {
   return (
     <header
@@ -51,7 +54,8 @@ export function PageBar({
         <span
           aria-hidden
           className={cn(
-            'pointer-events-none absolute inset-x-16 truncate text-center text-body font-semibold tracking-[-0.015em]',
+            'pointer-events-none absolute truncate text-center text-body font-semibold tracking-[-0.015em]',
+            wideTrailing ? 'inset-x-27' : 'inset-x-16',
             'transition-[opacity,transform] duration-300 ease-[var(--ease-out)]',
             under ? 'translate-y-0 opacity-100' : 'translate-y-1 opacity-0',
           )}

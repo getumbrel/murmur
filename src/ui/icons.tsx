@@ -614,3 +614,43 @@ export function WriteIcon(props: IconProps) {
     </Icon>
   )
 }
+
+// ── Passwords ────────────────────────────────────────────────────────────────
+
+/** Passwords: a filled-in password field, its secret shown only as dots. */
+export function PasswordsIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect className="mi-tint" x="2.75" y="6.75" width="18.5" height="10.5" rx="4" />
+      <rect x="2.75" y="6.75" width="18.5" height="10.5" rx="4" />
+      <g className="mi-solid">
+        <circle cx="7.75" cy="12" r="1.45" />
+        <circle cx="12" cy="12" r="1.45" />
+        <circle cx="16.25" cy="12" r="1.45" />
+      </g>
+    </Icon>
+  )
+}
+
+/** A payment card: its stripe, and the chip. */
+export function CardIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect className="mi-tint" x="2.75" y="5.25" width="18.5" height="13.5" rx="3" />
+      <rect x="2.75" y="5.25" width="18.5" height="13.5" rx="3" />
+      <path d="M2.75 9.75h18.5" />
+      <rect className="mi-solid" x="5.75" y="13.25" width="4.5" height="2.5" rx="1.25" />
+    </Icon>
+  )
+}
+
+/** An address: a house with its door. */
+export function HomeIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path className="mi-tint" d="M4.25 10.4 12 4l7.75 6.4V18a2.75 2.75 0 0 1-2.75 2.75H7A2.75 2.75 0 0 1 4.25 18Z" />
+      <path d="M4.25 10.4 12 4l7.75 6.4V18a2.75 2.75 0 0 1-2.75 2.75H7A2.75 2.75 0 0 1 4.25 18Z" />
+      <rect className="mi-solid" x="10.25" y="14" width="3.5" height="6.75" rx="1.25" />
+    </Icon>
+  )
+}

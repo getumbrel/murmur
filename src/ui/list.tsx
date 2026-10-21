@@ -36,9 +36,10 @@ type RowProps = {
   chevron?: boolean
   destructive?: boolean
   trailing?: ReactNode
+  className?: string
 }
 
-export function ListRow({ icon, title, subtitle, detail, onClick, chevron, destructive, trailing }: RowProps) {
+export function ListRow({ icon, title, subtitle, detail, onClick, chevron, destructive, trailing, className }: RowProps) {
   const Comp = onClick ? 'button' : 'div'
   return (
     <Comp
@@ -50,6 +51,7 @@ export function ListRow({ icon, title, subtitle, detail, onClick, chevron, destr
         'flex min-h-13 w-full items-center gap-3 px-4 py-2.5 text-left',
         // The group clips its corners, so the focus ring sits inside the row.
         onClick && 'transition-colors select-none hover:bg-fill-1 focus-visible:-outline-offset-2 active:bg-fill-2',
+        className,
       )}
     >
       {icon && <span className="flex size-7 flex-none items-center justify-center">{icon}</span>}

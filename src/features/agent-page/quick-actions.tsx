@@ -7,12 +7,13 @@ import { usePairing, useTelegram } from '@/state/telegram'
 import { useLinks, useWhatsApp } from '@/state/whatsapp'
 import { useAccess } from '@/state/access'
 import { Skeleton } from '@/ui/skeleton'
-import { IconChip, LookIcon, MemoryIcon, RoutinesIcon } from '@/ui/icons'
+import { IconChip, MemoryIcon, PasswordsIcon, RoutinesIcon } from '@/ui/icons'
 import { cn } from '@/lib/cn'
 import { TelegramGlyph } from '@/features/telegram'
 import { WhatsAppGlyph } from '@/features/whatsapp'
 import { AppsGlyph } from '@/features/apps'
 import { useAgentApps, useConnections } from '@/state/apps'
+import { useVault } from '@/state/vault'
 
 // The six things you do with an agent besides talking to it, as tiles that
 // each say where things stand: "2 on", "7 saved", "On", or
@@ -23,12 +24,12 @@ type Props = {
   onRoutines: () => void
   onMemory: () => void
   onApps: () => void
+  onPasswords: () => void
   onTelegram: () => void
   onWhatsApp: () => void
-  onEdit: () => void
 }
 
-export function QuickActions({ agent, onRoutines, onMemory, onApps, onTelegram, onWhatsApp, onEdit }: Props) {
+export function QuickActions({ agent, onRoutines, onMemory, onApps, onPasswords, onTelegram, onWhatsApp }: Props) {
   const routines = useRoutines(agent.id).data
   const memories = useMemories(agent.id)
   const telegram = useTelegram(agent.id)
@@ -38,6 +39,7 @@ export function QuickActions({ agent, onRoutines, onMemory, onApps, onTelegram, 
   const appsBusy = useConnections((all) =>
     Object.entries(all).some(([key, c]) => key.startsWith(`${agent.id}\n`) && c.phase !== 'done' && c.phase !== 'failed'),
   )
+  const vault = useVault(agent.id)
   const linking = useLinks((s) => s.byAgent[agent.id]?.phase)
   const asking = useAccess(agent.id).data?.pending
   const waiting = (platform: string) => {
@@ -56,6 +58,13 @@ export function QuickActions({ agent, onRoutines, onMemory, onApps, onTelegram, 
         : 'Empty'
   const appsOn = apps?.filter((a) => a.enabled && !a.name.startsWith('umbrel-')) ?? []
   const appsNote = appsBusy ? 'Connecting' : !apps ? undefined : appsOn.length ? `${appsOn.length} on` : apps.length ? 'Off' : 'None yet'
+  const passwordsNote = vault.isPending
+    ? undefined
+    : vault.isError
+      ? 'Open'
+      : vault.data.length
+        ? `${vault.data.length} saved`
+        : 'None yet'
   const live = telegram.data?.state === 'connected'
   const telegramNote =
     pairing === 'waiting' || pairing === 'starting'
@@ -81,12 +90,14 @@ export function QuickActions({ agent, onRoutines, onMemory, onApps, onTelegram, 
             ? (waiting('whatsapp') ?? 'On')
             : 'Off'
 
-  // Two rows of three on a phone (what it can do, then where you reach it); one row when there's room.
+  // Two rows of three on a phone (what it can do, then what it signs in with
+  // and where you reach it); one row when there's room.
   return (
     <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
       <Tile label="Routines" note={routineNote} onClick={onRoutines} icon={<IconChip icon={RoutinesIcon} size={32} radius={10} />} />
       <Tile label="Memory" note={memoryNote} onClick={onMemory} icon={<IconChip icon={MemoryIcon} size={32} radius={10} />} />
       <Tile label="Apps" note={appsNote} onClick={onApps} icon={<AppsGlyph names={appsOn.map((a) => a.name)} />} />
+      <Tile label="Passwords" note={passwordsNote} onClick={onPasswords} icon={<IconChip icon={PasswordsIcon} size={32} radius={10} />} />
       <Tile
         label="Telegram"
         note={telegramNote}
@@ -118,7 +129,6 @@ export function QuickActions({ agent, onRoutines, onMemory, onApps, onTelegram, 
           />
         }
       />
-      <Tile label="Edit" note="Name, look" onClick={onEdit} icon={<IconChip icon={LookIcon} size={32} radius={10} />} />
     </div>
   )
 }

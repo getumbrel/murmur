@@ -6,6 +6,9 @@
 //   [[silent]]             answer "[SILENT]" (a routine with nothing to report)
 //   [[tool: name {json}]]  call a tool with those arguments, then answer
 //                          "[[tool done]]" once Hermes sends back its result
+//   [[tools: base64]]      call several tools one after another in the same
+//                          turn (base64 of [{name, args}], see `toolsTag`),
+//                          then answer "[[tools done]]"
 //   [[slow: ms]]           stream the answer a word at a time, `ms` apart
 //   [[fail]]               refuse the request (400), an error Hermes won't retry
 //
@@ -36,11 +39,27 @@ const textOf = (content: unknown): string =>
       ? content.map((part) => (typeof part === 'string' ? part : ((part as { text?: string }).text ?? ''))).join('')
       : ''
 
+/** The directive for several tool calls in one turn, the way a model works through a page. */
+export function toolsTag(calls: { name: string; args: Record<string, unknown> }[]) {
+  return `[[tools: ${Buffer.from(JSON.stringify(calls)).toString('base64')}]]`
+}
+
 /** What to answer, from the newest message Hermes sent. Exported for the suite's own unit test. */
 export function decide(body: Body): Reply {
   const messages = body.messages ?? []
   const last = messages.at(-1)
   if (!body.tools?.length) return { kind: 'text', text: 'Contract test' }
+
+  // Several tools in a row: the next one for each result Hermes has sent back this turn.
+  const userAt = messages.map((m) => m.role).lastIndexOf('user')
+  const steps = textOf(messages[userAt]?.content).match(/\[\[tools:\s*([A-Za-z0-9+/=]+)\s*\]\]/)
+  if (steps) {
+    const calls = JSON.parse(Buffer.from(steps[1], 'base64').toString()) as { name: string; args: unknown }[]
+    const done = messages.slice(userAt + 1).filter((m) => m.role === 'tool').length
+    if (done < calls.length) return { kind: 'tool', name: calls[done].name, args: JSON.stringify(calls[done].args) }
+    return { kind: 'text', text: '[[tools done]]' }
+  }
+
   if (last?.role === 'tool') return { kind: 'text', text: '[[tool done]]' }
 
   const lastUser = textOf([...messages].reverse().find((m) => m.role === 'user')?.content)

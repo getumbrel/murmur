@@ -1,5 +1,15 @@
-import { forwardRef, useId, useLayoutEffect, useRef, type InputHTMLAttributes, type TextareaHTMLAttributes } from 'react'
+import {
+  forwardRef,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type InputHTMLAttributes,
+  type TextareaHTMLAttributes,
+} from 'react'
+import { Eye, EyeOff } from 'lucide-react'
 import { cn } from '@/lib/cn'
+import { IconButton } from './button'
 
 const base =
   'w-full rounded-xl bg-fill-1 px-4 text-body text-ink placeholder:text-ink-3 outline-none ring-1 ring-transparent ring-inset transition-[background-color,box-shadow] duration-200 focus:bg-fill-2 focus:ring-line-strong'
@@ -17,6 +27,36 @@ export const TextArea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<H
 ) {
   return <textarea ref={ref} className={cn(base, 'min-h-28 resize-none py-3 leading-6', className)} {...props} />
 })
+
+/**
+ * A password or key field you can peek at: easier to get right on a phone
+ * keyboard. It's never this site's own password, so browsers and password
+ * managers aren't invited to save it for Murmur.
+ */
+export function SecretField({ className, disabled, ...props }: InputHTMLAttributes<HTMLInputElement>) {
+  const [shown, setShown] = useState(false)
+  return (
+    <div className="relative">
+      <TextField
+        {...props}
+        disabled={disabled}
+        type={shown ? 'text' : 'password'}
+        className={cn('pr-12', className)}
+        autoComplete="new-password"
+        autoCapitalize="off"
+        autoCorrect="off"
+        spellCheck={false}
+        data-1p-ignore
+        data-lpignore="true"
+      />
+      <span className="absolute inset-y-0 right-1.5 flex items-center">
+        <IconButton label={shown ? 'Hide' : 'Show'} size="sm" disabled={disabled} onClick={() => setShown((s) => !s)}>
+          {shown ? <EyeOff size={16} strokeWidth={2} /> : <Eye size={16} strokeWidth={2} />}
+        </IconButton>
+      </span>
+    </div>
+  )
+}
 
 const ENTRY = 'input:not([type=hidden],[type=checkbox],[type=radio],[type=button],[type=submit]), textarea, select'
 

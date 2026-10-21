@@ -1,0 +1,20 @@
+/* A row just saved lights once in the agent's colour, then settles into the list. */
+.vault-fresh {
+  animation: vault-fresh 1400ms var(--ease-out) both;
+}
+
+@keyframes vault-fresh {
+  0%,
+  30% {
+    background-color: var(--accent-soft);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vault-fresh {
+    animation-duration: 1ms;
+  }
+}

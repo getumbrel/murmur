@@ -1,9 +1,9 @@
-import { memo, useRef, useState, type FormEvent, type InputHTMLAttributes } from 'react'
+import { memo, useRef, useState, type FormEvent } from 'react'
 import { motion } from 'motion/react'
-import { Check, Clock, Eye, EyeOff, LockKeyhole, Minus } from 'lucide-react'
+import { Check, Clock, LockKeyhole, Minus } from 'lucide-react'
 import { Orb } from '@/ui/orb'
-import { Button, IconButton } from '@/ui/button'
-import { TextField } from '@/ui/field'
+import { Button } from '@/ui/button'
+import { SecretField, TextField } from '@/ui/field'
 import { cn } from '@/lib/cn'
 import type { ChatItem } from './types'
 import { Swap, arrive } from './collapse'
@@ -151,7 +151,8 @@ function Card({
             spellCheck={false}
           />
         ) : (
-          <Masked
+          <SecretField
+            className="h-11"
             aria-label={login ? 'Password' : 'Key'}
             placeholder={login ? 'Password' : 'Paste the key'}
             value={value}
@@ -189,37 +190,6 @@ function Card({
         </div>
       </div>
     </motion.form>
-  )
-}
-
-/** A password field you can peek at: easier to get right on a phone keyboard. */
-function Masked(props: InputHTMLAttributes<HTMLInputElement>) {
-  const [shown, setShown] = useState(false)
-  return (
-    <div className="relative">
-      <TextField
-        {...props}
-        type={shown ? 'text' : 'password'}
-        className="h-11 pr-12"
-        // Not this site's password: no offer to save it for Murmur.
-        autoComplete="new-password"
-        autoCapitalize="off"
-        autoCorrect="off"
-        spellCheck={false}
-        data-1p-ignore
-        data-lpignore="true"
-      />
-      <span className="absolute inset-y-0 right-1.5 flex items-center">
-        <IconButton
-          label={shown ? 'Hide' : 'Show'}
-          size="sm"
-          disabled={props.disabled}
-          onClick={() => setShown((s) => !s)}
-        >
-          {shown ? <EyeOff size={16} strokeWidth={2} /> : <Eye size={16} strokeWidth={2} />}
-        </IconButton>
-      </span>
-    </div>
   )
 }
 

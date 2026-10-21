@@ -1,4 +1,4 @@
-# Murmur ↔ Hermes: apps, WhatsApp, who can message, usage and moving agents
+# Murmur ↔ Hermes: apps, WhatsApp, who can message, usage, moving agents and passwords
 
 Target: Hermes Agent **0.22** (`ghcr.io/getumbrel/hermes-agent-umbrel:v0.22.0-4`). Routes are in
 `hermes_cli/web_routers/*.py`, RPCs in `tui_gateway/methods*.py`. Everything here is per agent (a Hermes
@@ -115,9 +115,48 @@ gets a fresh id and name if taken ("Scout 2"), its name, colour and role back fr
 settled in like any new agent (timezone, toolsets, Umbrel).
 
 **Caveats**
-- **An agent export leaves keys and sign-ins behind** (`.env`, `auth.json`); an imported agent thinks with the
-  main agent's keys. Whether it includes chats is Hermes's call: named agents' do, the main agent's don't.
+- **An agent export leaves keys and sign-ins behind** (`.env`, `auth.json`, and its passwords in `vault/`); an
+  imported agent thinks with the main agent's keys. Whether it includes chats is Hermes's call: named agents' do, the main agent's don't.
 - **No "back up everything".** Backing up is umbrelOS's job (its backups include Murmur and its Hermes) or
   the Hermes host's; a second backup button would only make people wonder which one counts. (Hermes's own
   `POST /api/ops/backup` also fails on a fresh `v0.22.0-4` image until `hermes pm repair`.)
 - Exported archives stay on Hermes's disk after download; nothing cleans them up yet.
+
+## 6. Passwords (the vault)
+
+**Where:** the Passwords tile on the agent page (`src/features/vault/`, state in `src/state/vault.ts`).
+`test/contract/vault.contract.ts` checks all of this, including a login and a card saved from Murmur being
+filled into real pages by the agent's browser.
+
+Each agent has its own encrypted vault (`<profile home>/vault/`, Fernet, 0600). Hermes fills its items into
+pages for the agent through `browser_vault` (deferred behind `tool_search`); the agent sees handles and a
+login's identifier, never a password, card or address.
+
+| RPC | Params | Result |
+|---|---|---|
+| `vault.list` | `{profile}` | `{items:[{id, kind, label, origin, created_at, identifier?, identifier_type?, has_otp?, backend}]}`. Metadata only. Unlocked password managers' items come too (`backend` other than `local`); Murmur shows only `local` |
+| `vault.add` | `{profile, kind: login\|payment\|address, label, origin, secret}` | `{id}` |
+| `vault.remove` | `{profile, id}` | `{removed}` (`false` if already gone) |
+
+**`secret`, by kind** (Hermes's field names are what checkout pages are filled from):
+- `login`: `identifier_type` (`email`, `phone`, `username`), `identifier`, `password`, and optionally `otp_secret`
+  (a base32 seed or an `otpauth://totp` link: Hermes then makes the sign-in codes). The identifier moves into the
+  item's metadata.
+- `payment`: `card_number`, `exp_month`, `exp_year` (Murmur sends four digits; Hermes derives `MM/YY` for a
+  combined field), `cvc`, and optionally `cardholder_name` and `billing_postal_code`.
+- `address`: `address_line1`, `city`, `postal_code`, `country`, and optionally `address_line2` and `state`.
+
+**Caveats**
+- **No edit, and no way back to a secret.** A change is a new item and the old one removed (Murmur adds first,
+  then removes). Its id changes, which is harmless: the agent lists handles each time.
+- **One exact site per item.** Fills are refused on any other origin (`origin_mismatch`), and a card or address
+  without one is never filled (`no_origin`). `github.com` and `www.github.com` are different sites, so a login
+  saved from chat (`vault.save_login`, which takes the page's own origin) is the surest kind.
+- **Errors** are code 5095 with a readable message ("payment items require cvc", "authenticator key must be a
+  base32 secret or an otpauth:// URI"); Murmur retells them.
+- **A card is filled only after an OK**: an `approval` with `pattern_keys: ["mcp_elicitation"]` ("Fill payment
+  card 'Visa •••• 4242' on …"), which Murmur's approval card already shows.
+- **The browser redacts what it echoes**: any saved value that comes back in a tool result (even a card's
+  `12` expiry month) reads as `«redacted-vault-secret»`.
+- 1Password and Bitwarden (`vault.sources`, `vault.unlock`, `vault.lock`, `vault.source.set`) need their CLIs
+  inside Hermes's container, which Umbrel doesn't have; Murmur leaves them out.

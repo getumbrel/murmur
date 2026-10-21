@@ -634,8 +634,13 @@ This version sends the **batch form** even for a single question:
 | `sudo` | `{session_id, command}` (redacted) | `{"value":"<password>"}`, or `{"value":""}` to decline | Timeout 120 s. Render a masked input. |
 | `secret` | `{session_id, env_var, prompt, metadata?}` | `{"value":"…"}`, or `""` to skip | Used by skill and setup flows. Masked input. |
 
-The other server requests in the capability list (`vault.*`, `terminal.read`, `preview.*`, `window.read`,
-`tour`, `display.install.sudo`) are Desktop‑GUI bridges. Answer them with `-32601`.
+`vault.save_login` (`{session_id, origin, site}`, answered with `{"value":"{\"identifier\":…,\"password\":…}"}`)
+and `vault.code` (`{session_id, site?, hint?}`, answered with the code) are masked asks too; Murmur's secret card
+answers both. Saved logins, cards and addresses are managed with `vault.*` RPCs
+([apps-messaging-insights.md](apps-messaging-insights.md) § 6).
+
+The other server requests in the capability list (`vault.unlock_prompt`, `terminal.read`, `preview.*`,
+`window.read`, `tour`, `display.install.sudo`) are Desktop‑GUI bridges. Answer them with `-32601`.
 
 ---
 

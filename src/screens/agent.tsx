@@ -15,6 +15,7 @@ import { MemorySheet, rememberMessage } from '@/features/memory'
 import { TelegramSheet } from '@/features/telegram'
 import { WhatsAppSheet } from '@/features/whatsapp'
 import { AppsSheet } from '@/features/apps'
+import { VaultSheet } from '@/features/vault'
 import { RoutineDetailSheet, RoutineNewsList, RoutinesSheet } from '@/features/routines'
 import { NotFound } from '@/features/chat-screen/not-found'
 import { AgentHero } from '@/features/agent-page/hero'
@@ -27,11 +28,12 @@ import { usePageScroll } from '@/features/agent-page/scroll'
 import { useAgentChatList, useDeleteChat } from '@/features/agent-page/chats'
 
 // An agent's home: who it is, a way to start talking, what it can do besides
-// (routines, memory, apps, Telegram and WhatsApp, its look), and every chat you've had with it.
+// (routines, memory, apps, passwords, Telegram and WhatsApp; its look is Edit,
+// up in the corner), and every chat you've had with it.
 // Phones reach it from a chat's header and go back to that chat; wide screens
 // show it beside the sidebar.
 
-type Sheet = 'model' | 'routines' | 'memory' | 'apps' | 'telegram' | 'whatsapp'
+type Sheet = 'model' | 'routines' | 'memory' | 'apps' | 'passwords' | 'telegram' | 'whatsapp'
 
 export function AgentScreen({ agentId }: { agentId: string }) {
   const agents = useAgents()
@@ -99,20 +101,32 @@ export function AgentScreen({ agentId }: { agentId: string }) {
           scrolled={scrolled}
           under={under}
           back={wide ? undefined : { href: up, label: 'Back' }}
+          wideTrailing
           trailing={
-            <IconButton
-              size="lg"
-              label="New chat"
-              onClick={newChat}
-              tabIndex={under ? 0 : -1}
-              aria-hidden={!under}
-              className={cn(
-                'transition-[opacity,transform] duration-200 ease-[var(--ease-out)]',
-                under ? 'scale-100 opacity-100' : 'pointer-events-none scale-90 opacity-0',
-              )}
-            >
-              <SquarePen size={20} strokeWidth={1.85} />
-            </IconButton>
+            <>
+              {/* New chat joins once the big button has scrolled away; Edit holds the corner. */}
+              <IconButton
+                size="lg"
+                label="New chat"
+                onClick={newChat}
+                tabIndex={under ? 0 : -1}
+                aria-hidden={!under}
+                className={cn(
+                  'transition-[opacity,transform] duration-200 ease-[var(--ease-out)]',
+                  under ? 'scale-100 opacity-100' : 'pointer-events-none scale-90 opacity-0',
+                )}
+              >
+                <SquarePen size={20} strokeWidth={1.85} />
+              </IconButton>
+              <button
+                type="button"
+                onClick={() => actions.edit(agent)}
+                aria-label={`Edit ${agent.name}`}
+                className="pressable touch-target flex h-11 items-center rounded-full px-3.5 text-body text-accent hover:bg-fill-1"
+              >
+                Edit
+              </button>
+            </>
           }
         />
 
@@ -147,9 +161,9 @@ export function AgentScreen({ agentId }: { agentId: string }) {
               onRoutines={open('routines')}
               onMemory={open('memory')}
               onApps={open('apps')}
+              onPasswords={open('passwords')}
               onTelegram={open('telegram')}
               onWhatsApp={open('whatsapp')}
-              onEdit={() => actions.edit(agent)}
             />
 
             <RoutineNewsList agent={agent} onOpen={(id, runId) => setNews({ id, runId })} />
@@ -190,6 +204,7 @@ export function AgentScreen({ agentId }: { agentId: string }) {
         />
         <MemorySheet agent={agent} {...sheetProps('memory')} onRemember={(text) => void remember(text)} />
         <AppsSheet agent={agent} {...sheetProps('apps')} />
+        <VaultSheet agent={agent} {...sheetProps('passwords')} />
         <TelegramSheet agent={agent} {...sheetProps('telegram')} />
         <WhatsAppSheet agent={agent} {...sheetProps('whatsapp')} />
         {actions.sheets}
