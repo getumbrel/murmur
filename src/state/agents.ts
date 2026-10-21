@@ -20,8 +20,8 @@ import { parseUserMessage } from '@/features/media/parse'
 import type { Speaker } from '@/features/chat/types'
 import { scoped } from '@/hermes/instance'
 import { listProfileNames, listProfiles } from '@/hermes/compat'
-import { isQuietExcerpt, isRunBrief, isRunId, runTitle } from '@/features/routines/runs'
-import { fetchRunResult } from '@/state/routines'
+import { isQuietExcerpt, isRunBrief, runTitle } from '@/features/routines/runs'
+import { fetchRunResult, knowRun, runOf } from '@/state/routines'
 
 type LastSession = {
   id: string
@@ -31,6 +31,9 @@ type LastSession = {
   started_at?: number
   last_active?: number
   message_count?: number
+  source?: string
+  /** One of a routine's runs (Murmur's note, from `runOf`). */
+  run?: boolean
 }
 
 export type Profile = {
@@ -197,7 +200,7 @@ function newestChat(p: Profile): Agent['lastChat'] {
     return { id: main.resolved_id || main.id, title: readable(main.preview) || MAIN_CHAT, at: activeAt(main), main: true }
   }
   if (!last) return undefined
-  if (isRunId(last.id)) {
+  if (last.run) {
     // What the routine found, under its name.
     const said = readable(last.preview)
     return { id: last.id, title: [runTitle(last.title ?? '') || 'Routine', said].filter(Boolean).join(' · '), at: activeAt(last), routine: true }
@@ -210,30 +213,32 @@ function newestChat(p: Profile): Agent['lastChat'] {
  * words are then Hermes's brief, which opens "[IMPORTANT: …" (cut short here).
  */
 const quietRun = (s: LastSession) =>
-  isRunId(s.id) &&
-  (!s.preview || s.preview.startsWith('[IMPORTANT:') || isRunBrief(s.preview) || isQuietExcerpt(s.preview))
+  !!s.run && (!s.preview || s.preview.startsWith('[IMPORTANT:') || isRunBrief(s.preview) || isQuietExcerpt(s.preview))
 
 /**
- * Hermes's newest chat can be a routine's run with nothing to say. Then the
- * newest chat that did say something stands in: a conversation, or a run with
- * a result. Asked for only for agents where that's so, and each run read once.
+ * Whether Hermes's newest chat is one of a routine's runs (asked once per
+ * chat). A run with nothing to say gives way to the newest chat that did say
+ * something: a conversation, or a run with a result. Each run is read once.
  */
-async function skipQuietRuns<P extends Profile>(profiles: P[]): Promise<P[]> {
+export async function placeLastChats<P extends Profile>(profiles: P[]): Promise<P[]> {
   return Promise.all(
     profiles.map(async (p) => {
-      if (!p.last_session?.id || !quietRun(p.last_session)) return p
+      if (!p.last_session?.id) return p
+      const last = { ...p.last_session, run: Boolean(await runOf(p.name, p.last_session.id).catch(() => null)) }
+      if (!quietRun(last)) return { ...p, last_session: last }
       try {
         const res = await api.get<{ sessions?: LastSession[] }>(
           `/api/sessions?profile=${encodeURIComponent(p.name)}&limit=8&order=recent&min_messages=1`,
         )
         for (const row of res.sessions ?? []) {
-          if (!isRunId(row.id)) return { ...p, last_session: row }
+          // Only Hermes's scheduler makes chats from "cron".
+          if (row.source !== 'cron') return { ...p, last_session: row }
           const said = await runSaid(p.name, row)
-          if (said) return { ...p, last_session: { ...row, preview: said } }
+          if (said) return { ...p, last_session: { ...row, run: true, preview: said } }
         }
         return { ...p, last_session: null }
       } catch {
-        return p
+        return { ...p, last_session: last }
       }
     }),
   )
@@ -279,7 +284,7 @@ export function useAgents() {
     queryKey: agentsKey,
     queryFn: async () => {
       const res = {
-        profiles: await skipQuietRuns(await listProfiles<Profile & { [key: string]: unknown }>({ include_sessions: true })),
+        profiles: await placeLastChats(await listProfiles<Profile & { [key: string]: unknown }>({ include_sessions: true })),
       }
       const hues = storedHues()
       const pending = pendingLooks()
@@ -508,6 +513,8 @@ export async function fetchAgentChats(profile: string, limit = 60): Promise<Chat
     rpc<{ sessions: SessionRow[] }>('session.list', { profile, limit, include_hidden: true }).catch(() => ({ sessions: [] })),
     rpc<{ sessions: SessionRow[] }>('session.list', { profile, title: BOT_CHAT, include_hidden: true }).catch(() => ({ sessions: [] })),
   ])
+  // These aren't routines' runs, so opening one needn't ask.
+  for (const s of shown.sessions) if (s.source !== 'cron') knowRun(profile, s.id, null)
   const chats = shown.sessions.filter((s) => s.source !== 'cron' && (s.message_count ?? 0) > 0).map(toSummary)
   const row = main.sessions.find((s) => s.title === BOT_CHAT && (s.message_count ?? 0) > 0)
   if (!row) return chats

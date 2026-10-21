@@ -9,23 +9,27 @@ import { api } from '@/hermes/rest'
 import type { Agent } from '@/state/agents'
 import type { ChatItem } from '@/features/chat/types'
 import { useAgentTimezone } from '@/state/timezone'
-import { useRoutineActions, useRoutines, useRunningNow } from '@/state/routines'
+import { useRoutineActions, useRoutines, useRunningNow, type RunOf } from '@/state/routines'
 import { Glyph } from './glyph'
 import { iconFor } from './templates'
 import { capitalize, describeWhen, relativeDate } from './schedule'
 import { RoutineDetailSheet } from './routine-detail'
-import { isQuiet, isRunBrief, isRunId, routineIdOf, runTitle } from './runs'
+import { isQuiet, isRunBrief, runTitle } from './runs'
 
 // A routine's run, opened, reads as a report: what the routine is and when it
 // ran, then what the agent found. Hermes's brief to the agent (which opens
 // every run as if you'd written it) stays out of sight, and an answer of
 // "nothing to report" says so in words.
 
-/** The run's items as they read here, and when it ran. Anything else passes through. */
-export function useRunItems(chatId: string | undefined, items: ChatItem[]) {
-  const run = isRunId(chatId)
+/**
+ * The run's items as they read here, and when it ran. Any other chat passes
+ * through. Until it's known which a chat is, it reads as a run might, so a
+ * run's brief never shows for a moment.
+ */
+export function useRunItems(run: RunOf | undefined, items: ChatItem[]) {
+  const passThrough = run === null
   return useMemo(() => {
-    if (!run) return { items, ranAt: undefined }
+    if (passThrough) return { items, ranAt: undefined }
     let ranAt: number | undefined
     const shown = items.flatMap<ChatItem>((item) => {
       if (item.kind === 'user' && isRunBrief(item.text)) {
@@ -37,13 +41,24 @@ export function useRunItems(chatId: string | undefined, items: ChatItem[]) {
       return [item]
     })
     return { items: shown, ranAt }
-  }, [run, items])
+  }, [passThrough, items])
 }
 
 /** What sits above a run: the routine, when it ran, what it was asked, and a way to run it again. */
-export function RunHeader({ agent, chatId, title, ranAt }: { agent: Agent; chatId: string; title?: string; ranAt?: number }) {
+export function RunHeader({
+  agent,
+  chatId,
+  routineId,
+  title,
+  ranAt,
+}: {
+  agent: Agent
+  chatId: string
+  routineId?: string
+  title?: string
+  ranAt?: number
+}) {
   const [, navigate] = useLocation()
-  const routineId = routineIdOf(chatId)
   const routines = useRoutines(agent.id)
   const routine = routines.data?.find((r) => r.id === routineId)
   const actions = useRoutineActions(agent.id)

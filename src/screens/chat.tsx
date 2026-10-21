@@ -6,7 +6,6 @@ import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { Thread } from '@/features/chat/thread'
 import { RunHeader, useRunItems } from '@/features/routines/run-view'
-import { isRunId } from '@/features/routines/runs'
 import { useChatName } from '@/features/chat-screen/chat-name'
 import { Composer, useKeyboardInset, type ComposerHandle } from '@/features/chat/composer'
 import { DropZone } from '@/features/chat-screen/drop-zone'
@@ -32,6 +31,7 @@ import { useUmbrelKey } from '@/features/chat/umbrel-key'
 import { stopSpeaking, useSpeech } from '@/features/voice/speech'
 import { useConnection } from '@/hermes/gateway'
 import { useChatUsage } from '@/state/insights'
+import { useRunOf } from '@/state/routines'
 import { useFinePointer, useIsWide } from '@/lib/use-media'
 import { useUpFrom } from '@/lib/transitions'
 import {
@@ -115,7 +115,8 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
   const status = chat?.status ?? (starting ? 'thinking' : 'idle')
   const busy = status === 'thinking' || status === 'working' || status === 'waiting'
   // A routine's run reads as a report, under what the routine is.
-  const run = useRunItems(id, useSolo(chat?.items ?? (starting ? [starting] : [])))
+  const runOfChat = useRunOf(agentId, id)
+  const run = useRunItems(runOfChat, useSolo(chat?.items ?? (starting ? [starting] : [])))
   const items = run.items
   const online = useConnection((s) => s.state === 'open' || !s.everOpened)
   const [typing, setTyping] = useState(false)
@@ -426,7 +427,17 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
           items={items}
           busy={busy}
           agent={speaker}
-          lead={id && agent && isRunId(id) ? <RunHeader agent={agent} chatId={id} title={chat?.title} ranAt={run.ranAt} /> : undefined}
+          lead={
+            id && agent && runOfChat ? (
+              <RunHeader
+                agent={agent}
+                chatId={id}
+                routineId={runOfChat.routineId}
+                title={chat?.title}
+                ranAt={run.ranAt}
+              />
+            ) : undefined
+          }
           media={media}
           // The header floats over the messages; they scroll up beneath it.
           className={

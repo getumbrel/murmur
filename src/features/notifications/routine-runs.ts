@@ -7,8 +7,8 @@
 import { gateway } from '@/hermes/gateway'
 import { listProfileNames } from '@/hermes/compat'
 import { api } from '@/hermes/rest'
-import { routineIdOf, runTitle } from '@/features/routines/runs'
-import { fetchRunResult } from '@/state/routines'
+import { runTitle } from '@/features/routines/runs'
+import { fetchRunResult, runOf } from '@/state/routines'
 import { isOn, useNotifications } from './notifications'
 
 export type RunRow = { id: string; startedAt: number; finished: boolean; title: string }
@@ -80,18 +80,23 @@ export function watchRoutineRuns(tell: (found: Found) => void) {
   let again = false
 
   async function lookAt(agentId: string) {
+    // Only Hermes's scheduler makes chats from "cron", so these are all runs.
     const res = await api.get<{ sessions?: SessionRow[] }>(`/api/sessions?${p(agentId)}&source=cron&order=recent&limit=20`)
-    const rows = (res.sessions ?? []).flatMap((s): RunRow[] =>
-      routineIdOf(s.id)
-        ? [{ id: s.id, startedAt: s.started_at ?? 0, finished: Boolean(s.end_reason?.startsWith('cron_')), title: s.title ?? '' }]
-        : [],
+    const rows = (res.sessions ?? []).map(
+      (s): RunRow => ({
+        id: s.id,
+        startedAt: s.started_at ?? 0,
+        finished: Boolean(s.end_reason?.startsWith('cron_')),
+        title: s.title ?? '',
+      }),
     )
     const { memory, landed } = look(rows, memories.get(agentId))
     memories.set(agentId, memory)
     if (!landed.length) return
     const jobs = await api.get<JobRow[]>(`/api/cron/jobs?${p(agentId)}`).catch(() => [])
     for (const run of landed) {
-      const job = (Array.isArray(jobs) ? jobs : []).find((j) => j.id === routineIdOf(run.id))
+      const routineId = (await runOf(agentId, run.id))?.routineId
+      const job = (Array.isArray(jobs) ? jobs : []).find((j) => j.id === routineId)
       if (job && deliversElsewhere(job.deliver)) continue
       const result = await fetchRunResult(agentId, run.id)
       // Nothing to report, or a run you've replied in (a conversation, which tells you itself).

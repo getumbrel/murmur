@@ -97,7 +97,8 @@ export type Blueprint = {
 export type RoutineRun = {
   /** The run's chat id (open it like any chat). */
   id: string
-  routineId: string
+  /** Unknown for some runs of a routine that's gone. */
+  routineId?: string
   /** The routine's name, or the run's own title if the routine is gone. */
   routineName: string
   at: number
@@ -202,6 +203,9 @@ export function useDeliveryTargets(agentId: string | undefined) {
 type SessionRow = {
   id: string
   title?: string | null
+  source?: string | null
+  /** The routine a run belongs to, from Hermes 0.22.3 on (a run's own row, and its routine's runs). */
+  cron_job_id?: string | null
   started_at?: number
   ended_at?: number | null
   end_reason?: string | null
@@ -219,36 +223,110 @@ export function useRoutineRuns(agentId: string | undefined) {
   const runs = useQuery({
     queryKey: routineRunsKey(agentId ?? ''),
     enabled: Boolean(agentId),
-    queryFn: async () => {
-      const res = await api.get<{ sessions?: SessionRow[] }>(
-        `/api/sessions?${p(agentId!)}&source=cron&order=recent&limit=100`,
-      )
-      return (res.sessions ?? []).flatMap((s) => {
-        const routineId = routineIdOf(s.id)
-        if (!routineId) return []
-        const at = (s.started_at ?? 0) * 1000
-        return [
-          {
-            id: s.id,
-            routineId,
-            title: runTitle(s.title ?? ''),
-            at,
-            lastAt: s.last_active ? s.last_active * 1000 : at,
-            // Hermes ends a run "cron_complete" (or "cron_incomplete_no_output"); opening it reopens it.
-            finished: Boolean(s.end_reason?.startsWith('cron_')),
-            messageCount: s.message_count ?? 0,
-          },
-        ]
-      })
-    },
+    queryFn: () => fetchRoutineRuns(agentId!),
     staleTime: 15_000,
   })
   const names = new Map(routines.data?.map((r) => [r.id, r.name]))
   const data: RoutineRun[] | undefined = runs.data?.map(({ title, ...r }) => ({
     ...r,
-    routineName: names.get(r.routineId) ?? (title || 'Routine'),
+    routineName: (r.routineId && names.get(r.routineId)) ?? (title || 'Routine'),
   }))
   return { ...runs, data }
+}
+
+/** An agent's runs as `useRoutineRuns` reads them, with each one's own title for the name. */
+export async function fetchRoutineRuns(agentId: string) {
+  // Only Hermes's scheduler makes chats from "cron", so these are all runs.
+  const res = await api.get<{ sessions?: SessionRow[] }>(
+    `/api/sessions?${p(agentId)}&source=cron&order=recent&limit=100`,
+  )
+  const rows = res.sessions ?? []
+  await placeRuns(agentId, rows)
+  return rows.map((s) => {
+    const at = (s.started_at ?? 0) * 1000
+    return {
+      id: s.id,
+      routineId: knownRun(agentId, s.id)?.routineId,
+      title: runTitle(s.title ?? ''),
+      at,
+      lastAt: s.last_active ? s.last_active * 1000 : at,
+      // Hermes ends a run "cron_complete" (or "cron_incomplete_no_output"); opening it reopens it.
+      finished: Boolean(s.end_reason?.startsWith('cron_')),
+      messageCount: s.message_count ?? 0,
+    }
+  })
+}
+
+// ── Which chats are runs ────────────────────────────────────────────────────
+// Up to Hermes 0.22.2 a run's id names its routine. From 0.22.3 a run is named
+// for its own execution (`local-…`, like Hermes Desktop's chats), so Hermes is
+// asked: only its scheduler makes chats from "cron", and it says whose they
+// are. A chat never stops being what it is, so each answer is kept.
+
+/** A chat that's one of a routine's runs, and that routine; null for any other chat. */
+export type RunOf = { routineId?: string } | null
+
+const placed = new Map<string, RunOf>()
+const placedKey = (agentId: string, chatId: string) => `${agentId}\n${chatId}`
+
+/** What's known of a chat without asking: its id, or an earlier answer. */
+function knownRun(agentId: string, chatId: string): RunOf | undefined {
+  const routineId = routineIdOf(chatId)
+  return routineId ? { routineId } : placed.get(placedKey(agentId, chatId))
+}
+
+/** What a list already said of a chat, so opening it needn't ask. */
+export function knowRun(agentId: string, chatId: string, run: RunOf) {
+  placed.set(placedKey(agentId, chatId), run)
+}
+
+/** Whether a chat is one of a routine's runs, and whose. */
+export async function runOf(agentId: string, chatId: string): Promise<RunOf> {
+  const known = knownRun(agentId, chatId)
+  if (known !== undefined) return known
+  try {
+    const row = await api.get<SessionRow>(`/api/sessions/${encodeURIComponent(chatId)}?${p(agentId)}`)
+    const run = row.source === 'cron' ? { routineId: row.cron_job_id || undefined } : null
+    knowRun(agentId, chatId, run)
+    return run
+  } catch (err) {
+    // Not kept by Hermes yet: a chat that's only just started.
+    if (err instanceof HermesError && err.status === 404) return null
+    throw err
+  }
+}
+
+/** `runOf` for a screen: undefined until it's known. */
+export function useRunOf(agentId: string | undefined, chatId: string | undefined) {
+  return useQuery({
+    queryKey: ['run-of', agentId, chatId],
+    enabled: Boolean(agentId && chatId),
+    queryFn: () => runOf(agentId!, chatId!),
+    initialData: () => (agentId && chatId ? knownRun(agentId, chatId) : undefined),
+    staleTime: Infinity,
+  }).data
+}
+
+/** Beyond this many runs to place at once, each routine's list of runs is read instead. */
+const FEW = 3
+
+/** Learns whose each of these runs is, asking Hermes only about the ones that don't say. */
+async function placeRuns(agentId: string, rows: SessionRow[]) {
+  for (const s of rows) if (s.cron_job_id) knowRun(agentId, s.id, { routineId: s.cron_job_id })
+  let unplaced = rows.filter((s) => knownRun(agentId, s.id) === undefined)
+  if (unplaced.length > FEW) {
+    // A first look: each routine says which runs are its own.
+    const jobs = await api.get<RawJob[]>(`/api/cron/jobs?${p(agentId)}`).catch(() => [])
+    await Promise.all(
+      (Array.isArray(jobs) ? jobs : []).map(async (j) => {
+        const res = await api.get<{ runs?: SessionRow[] }>(`${job(j.id, agentId, 'runs')}&limit=100`).catch(() => null)
+        for (const r of res?.runs ?? []) if (r.source === 'cron') knowRun(agentId, r.id, { routineId: j.id })
+      }),
+    )
+    unplaced = unplaced.filter((s) => knownRun(agentId, s.id) === undefined)
+  }
+  // A new run, or one of a routine that's gone: it says itself. One that can't goes by its title.
+  await Promise.all(unplaced.map((s) => runOf(agentId, s.id).catch(() => null)))
 }
 
 /** One routine's runs, newest first. */
@@ -259,6 +337,7 @@ export function useJobRuns(agentId: string, routineId: string | undefined) {
     queryFn: async () => {
       const res = await api.get<{ runs: SessionRow[] }>(`${job(routineId!, agentId, 'runs')}&limit=30`)
       return (res.runs ?? []).map<JobRun>((r) => {
+        if (r.source === 'cron') knowRun(agentId, r.id, { routineId: routineId! })
         const at = (r.started_at ?? 0) * 1000
         return {
           id: r.id,
@@ -323,6 +402,7 @@ export function useRoutineNews(agentId: string | undefined) {
   const runs = useRoutineRuns(agentId)
   const byRoutine = new Map<string, RoutineRun[]>()
   for (const run of runs.data ?? []) {
+    if (!run.routineId) continue
     const list = byRoutine.get(run.routineId) ?? []
     if (list.length < LOOK_BACK) byRoutine.set(run.routineId, [...list, run])
   }

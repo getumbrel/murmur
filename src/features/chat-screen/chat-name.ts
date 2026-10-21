@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import { BOT_CHAT, MAIN_CHAT, readable, useAgentChats } from '@/state/agents'
 import type { Chat } from '@/state/chats'
-import { useRoutines } from '@/state/routines'
-import { isRunId, routineIdOf, runTitle } from '@/features/routines/runs'
+import { useRoutines, useRunOf } from '@/state/routines'
+import { runTitle } from '@/features/routines/runs'
 
 /** How long a chat started here waits for its proper title once the first reply is in. */
 const TITLE_WAIT = 6000
@@ -24,9 +24,9 @@ const isOpening = (title: string, opening: string) => {
  * so its name arrives once rather than as your opening words first.
  */
 export function useChatName(agentId: string, id: string | undefined, chat: Chat | undefined, { fresh = false } = {}) {
-  const run = isRunId(id)
+  const run = useRunOf(agentId, id)
   const listed = useAgentChats(id && !run ? agentId : undefined).data?.find((c) => c.id === id)
-  const routine = useRoutines(run ? agentId : undefined).data?.find((r) => r.id === routineIdOf(id!))
+  const routine = useRoutines(run ? agentId : undefined).data?.find((r) => r.id === run?.routineId)
   // Said live (a rename, or Hermes titling it as you watch), it's newer than the list.
   const live = chat?.title === BOT_CHAT ? MAIN_CHAT : readable(chat?.title, { files: false })
   const first = chat?.items.find((i) => i.kind === 'user')
@@ -45,5 +45,7 @@ export function useChatName(agentId: string, id: string | undefined, chat: Chat 
   if (!id) return ''
   if (run) return routine?.name ?? runTitle(chat?.title ?? '')
   if (fresh && !waited && (!live || isOpening(live, opening))) return 'New chat'
+  // Until it's known not to be a run, a run's dated title could show.
+  if (run === undefined) return ''
   return live || listed?.title || opening
 }

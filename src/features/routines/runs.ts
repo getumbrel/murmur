@@ -1,12 +1,16 @@
-// Reading a routine's runs the way Hermes does. A run is a chat Hermes keeps
-// (`cron_<routine>_<yyyymmdd>_<hhmmss>`); when the agent finds nothing worth
-// saying it answers with a silence marker, and Hermes delivers nothing. Murmur
-// follows the same rule, so what's quiet here is what never reached Telegram.
+// Reading a routine's runs the way Hermes does. A run is a chat Hermes keeps;
+// when the agent finds nothing worth saying it answers with a silence marker,
+// and Hermes delivers nothing. Murmur follows the same rule, so what's quiet
+// here is what never reached Telegram.
 
-/** A run's chat id, and the routine it belongs to. */
-export const RUN_ID = /^cron_([0-9a-z]+)_\d{8}_\d{6}$/i
+/**
+ * A run's chat id up to Hermes 0.22.2 (`cron_<routine>_<yyyymmdd>_<hhmmss>`),
+ * which names the routine it belongs to. From 0.22.3 a run is named for its
+ * own execution (`local-…`), and only Hermes can say whose it is (`runOf`).
+ */
+const RUN_ID = /^cron_([0-9a-z]+)_\d{8}_\d{6}$/i
 
-export const isRunId = (id: string | undefined) => !!id && RUN_ID.test(id)
+/** The routine a run belongs to, when its id says so. */
 export const routineIdOf = (runId: string) => RUN_ID.exec(runId)?.[1]
 
 /** Hermes titles a run "<routine> · Oct 19 08:00", plus " #2" when that's taken. */
@@ -87,7 +91,7 @@ export function foldQuiet<R>(runs: R[], quiet: (run: R) => boolean): RunGroup<R>
  * Which routines' newest results stand among the chats: one line per routine,
  * unless you've since replied in a newer run of it, which stands for it there.
  */
-export function standingResults<R extends { routineId: string; at: number }>(latest: R[], continued: R[]): R[] {
+export function standingResults<R extends { routineId?: string; at: number }>(latest: R[], continued: R[]): R[] {
   return latest.filter((run) => !continued.some((c) => c.routineId === run.routineId && c.at > run.at))
 }
 

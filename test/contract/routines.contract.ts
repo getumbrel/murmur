@@ -1,14 +1,16 @@
 // Routines are Hermes's scheduled jobs, and every run is a chat Hermes keeps
-// (src/state/routines.ts, src/features/routines/). Murmur reads a run's id,
-// title, brief and answer to tell results from quiet runs, so those are
-// checked here against real runs, with Murmur's own readers.
+// (src/state/routines.ts, src/features/routines/). Murmur reads whose a run
+// is, and its title, brief and answer to tell results from quiet runs, so
+// those are checked here against real runs, with Murmur's own readers.
 
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest'
-import { isQuiet, isRunBrief, routineIdOf, runTitle } from '@/features/routines/runs'
+import { isQuiet, isRunBrief, runTitle } from '@/features/routines/runs'
 import { parseSchedule, toSchedule, WEEKDAYS, type When } from '@/features/routines/schedule'
-import { agentName, api, connect, q, sleep, turn, type Socket } from './client'
+import { fetchRoutineRuns, runOf } from '@/state/routines'
+import { placeLastChats, toAgent, type Profile } from '@/state/agents'
+import { agentName, api, connect, newChat, q, sleep, turn, type Socket } from './client'
 
 const agent = agentName('routines')
 const p = q(agent)
@@ -122,18 +124,21 @@ describe('a run', () => {
   beforeAll(async () => {
     chatty = await create('Flight watch', 'Check my flight [[say: Your flight to Lisbon moved to 14:10]]')
     expect(await trigger(chatty.id)).toMatchObject({ last_status: 'ok' })
-    // A run is named to the second, and two runs that start in the same second share one chat.
+    // Up to Hermes 0.22.2 a run is named to the second, and two that start in the same second share one chat.
     await sleep(1100)
     await trigger(chatty.id)
     ;[second, first] = await runs(chatty.id)
   })
 
-  it('is a chat named after the routine and the time it ran', () => {
+  it('is a chat named after the routine and the time it ran, which says whose it is', async () => {
     for (const run of [first, second]) {
-      expect(routineIdOf(run.id)).toBe(chatty.id)
-      expect(run.id).toMatch(/^cron_[0-9a-z]+_\d{8}_\d{6}$/)
       expect(run.source).toBe('cron')
       expect(runTitle(run.title)).toBe('Flight watch')
+      // Up to Hermes 0.22.2 its id says (`cron_<routine>_<when>`); after that, its own row.
+      const row = await api.get<Run & { cron_job_id?: string }>(`/api/sessions/${run.id}?${p}`)
+      expect(row.source).toBe('cron')
+      if (!run.id.startsWith('cron_')) expect(row.cron_job_id).toBe(chatty.id)
+      expect(await runOf(agent, run.id)).toEqual({ routineId: chatty.id })
     }
     expect(first.title).toMatch(/^Flight watch · [A-Z][a-z]{2} \d{1,2} \d{1,2}:\d{2}$/)
     // Two runs in one minute: the second title is taken, so Hermes numbers it.
@@ -162,8 +167,9 @@ describe('a run', () => {
     expect(sessions.map((s) => s.id)).toEqual(expect.arrayContaining([first.id, second.id]))
     expect(sessions.find((s) => s.id === first.id)).toMatchObject({ end_reason: 'cron_complete', is_active: false, message_count: 2, last_active: expect.any(Number) })
 
+    // The chat list leaves runs out by their source.
     const { sessions: chats } = await socket.request<{ sessions: { id: string; source: string }[] }>('session.list', { profile: agent, limit: 100 })
-    for (const s of chats.filter((c) => c.id.startsWith('cron_'))) expect(s.source).toBe('cron')
+    for (const s of chats.filter((c) => c.id === first.id || c.id === second.id)) expect(s.source).toBe('cron')
 
     const { results } = await api.get(`/api/sessions/search?q=Lisbon&${p}&limit=15&exclude_sources=cron,bot_room`)
     expect(results.map((r: { session_id?: string; id?: string }) => r.session_id ?? r.id)).not.toContain(first.id)
@@ -173,6 +179,18 @@ describe('a run', () => {
     const { profiles } = await socket.request('profiles.list', { include_sessions: true })
     const row = profiles.find((r: { name: string }) => r.name === agent)
     expect(row.last_session).toMatchObject({ id: second.id, preview: 'Your flight to Lisbon moved to 14:10' })
+    const [placed] = await placeLastChats([row as Profile])
+    expect(toAgent(placed).lastChat).toMatchObject({
+      id: second.id,
+      routine: true,
+      title: 'Flight watch · Your flight to Lisbon moved to 14:10',
+    })
+  })
+
+  it('isn’t mistaken for one by any other chat', async () => {
+    const { runtime, stored } = await newChat(socket, agent)
+    await turn(socket, runtime, 'Hello [[say: Hi]]', agent)
+    expect(await runOf(agent, stored)).toBeNull()
   })
 
   it('stays finished when opened, and reopens when replied to', async () => {
@@ -218,5 +236,22 @@ describe('a quiet run', () => {
     const { stdout } = await promisify(execFile)('docker', ['exec', '-w', '/opt/hermes', inject('hermes').container, 'python', '-c', script, JSON.stringify(answers)])
     const hermes: boolean[] = JSON.parse(stdout)
     expect(Object.fromEntries(answers.map((a) => [a, isQuiet(a)]))).toEqual(Object.fromEntries(answers.map((a, i) => [a, hermes[i]])))
+  })
+})
+
+describe('an agent’s runs', () => {
+  it('are each placed with their routine, many new ones at once, and ones whose routine is gone', async () => {
+    const tides = await create('Tide watch', 'Check the tides [[say: High tide at 6]]')
+    for (let i = 0; i < 4; i++) {
+      expect(await trigger(tides.id)).toMatchObject({ last_status: 'ok' })
+      await sleep(1100)
+    }
+    const theirs = (await runs(tides.id)).map((r) => r.id)
+    expect(theirs).toHaveLength(4)
+
+    const listed = await fetchRoutineRuns(agent)
+    expect(listed.filter((r) => r.routineId === tides.id).map((r) => r.id)).toEqual(theirs)
+    // The quiet run's routine was deleted; its run still says whose it was.
+    expect(listed.find((r) => r.title === 'Inbox watch')?.routineId).toEqual(expect.any(String))
   })
 })
