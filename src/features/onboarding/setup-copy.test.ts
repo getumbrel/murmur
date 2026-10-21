@@ -43,6 +43,11 @@ describe('whereBody', () => {
       'There’s a Hermes on this computer with your agents in it.',
     )
   })
+  it('away: updating after it needed an update, else just quiet', () => {
+    expect(whereBody(app({ outdated: true, away: true }))).toBe('Hermes Agent is on this Umbrel, and it’s updating.')
+    expect(whereBody(studio({ outdated: true, away: true }))).toBe('There’s a Hermes on studio.local, and it’s updating.')
+    expect(whereBody(app({ away: true }))).toBe('Hermes Agent is on this Umbrel, but it isn’t answering right now.')
+  })
   it('out of date, or behind a password', () => {
     expect(whereBody(app({ outdated: true }))).toBe('Hermes Agent is on this Umbrel, but it needs an update first.')
     expect(whereBody(studio({ needsSignIn: true, agents: undefined }))).toBe(

@@ -10,9 +10,9 @@ import { GettingReady } from './getting-ready'
 import { WhereStep } from './where'
 
 // The setup flow's screens for the onboarding playground, all fake:
-//   ?screen=where&case=looking | found | found-many | found-fresh | found-network | outdated | signin
-//                    | signin-error | fresh | fresh-down | down-row | none | other | cant-reach
-//                    | connecting | connected
+//   ?screen=where&case=looking | found | found-many | found-fresh | found-network | outdated | updating
+//                    | away | signin | signin-error | fresh | fresh-down | down-row | none | other
+//                    | cant-reach | connecting | connected
 //   ?screen=ready&stage=starting | room | slow | stuck | failed | done
 //   ?screen=here&agents=1..9&chats=0|1|240
 // Every Where case can be played through: "Use…" lands on "Your agents are
@@ -99,6 +99,14 @@ const CASES: Record<string, Setup | undefined> = {
     builtin: ready,
     found: [agentApp({ outdated: true, version: '0.20.1', minVersion: '0.21.4' })],
   },
+  // Being updated: back, and usable, after a moment (unless frozen with &hold=1).
+  updating: {
+    decided: false,
+    umbrel: true,
+    builtin: ready,
+    found: [agentApp({ outdated: true, away: true, version: '0.20.1', minVersion: '0.21.4' })],
+  },
+  away: { decided: false, umbrel: true, builtin: ready, found: [agentApp({ away: true })] },
   signin: { decided: false, umbrel: false, builtin: ready, found: [studio] },
   'signin-error': { decided: false, umbrel: false, builtin: ready, found: [studio] },
   fresh: { decided: false, umbrel: true, builtin: ready, found: [] },
@@ -146,10 +154,10 @@ export function SetupPlayground({ screen }: { screen: 'where' | 'ready' | 'here'
       : { screen },
   )
   const [setup, setSetup] = useState<Setup | undefined>(kase === 'looking' ? undefined : CASES[kase])
-  // Looking: the answer lands after a moment (unless frozen with &hold=1).
+  // Looking, or updating: the answer lands after a moment (unless frozen with &hold=1).
   useEffect(() => {
-    if (kase !== 'looking' || param('hold')) return
-    const t = setTimeout(() => setSetup(CASES.found), 2400)
+    if ((kase !== 'looking' && kase !== 'updating') || param('hold')) return
+    const t = setTimeout(() => setSetup(CASES.found), kase === 'updating' ? 4000 : 2400)
     return () => clearTimeout(t)
   }, [kase])
 

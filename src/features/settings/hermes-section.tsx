@@ -147,7 +147,7 @@ function Suggestions({
   const qc = useQueryClient()
   const [busy, setBusy] = useState<string | null>(null)
   const items: Suggestion[] = [
-    ...setup.found.filter((f) => !hidden.has(f.id) && !added.some((c) => c.url === f.url)).map((hermes) => ({ kind: 'found' as const, hermes })),
+    ...setup.found.filter((f) => !f.away && !hidden.has(f.id) && !added.some((c) => c.url === f.url)).map((hermes) => ({ kind: 'found' as const, hermes })),
     ...(setup.builtin && !setup.builtin.added && !hidden.has(BUILTIN_ID) && !added.some(isBuiltinHermes) ? [{ kind: 'builtin' as const }] : []),
   ]
   if (!items.length) return null

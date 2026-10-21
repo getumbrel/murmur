@@ -8,7 +8,8 @@
 // with the token that same host hands out in its own page (as connecting to it
 // would): its agents, how many chats, whether a model is set up. A Hermes that
 // needs a password is sent nothing at all. Credentials Murmur holds only ever
-// go to the address they were set up for.
+// go to the address they were set up for. One that answered and then goes
+// quiet is still offered for a while, marked away: most often it's updating.
 //
 // The built-in: its public /api/health says when it's up (a first start takes
 // a while), then Murmur signs in as it always will.
@@ -209,6 +210,8 @@ export type Found = Contents & {
   outdated?: boolean
   minVersion?: string
   needsSignIn?: boolean
+  /** It answered a while ago and doesn't now: what it showed then (see remembered()). */
+  away?: boolean
   /** Which Hermes this is (its data folder), to tell the same one at two addresses apart. Never sent to the app. */
   installId?: string
 }
@@ -271,15 +274,37 @@ export function offer(found: (Found | null)[], known: Known): Found[] {
 /** For the app: everything but how Murmur tells installs apart. */
 export const forApp = ({ installId: _, ...rest }: Found) => rest
 
+/**
+ * How long a Hermes that answered is still offered once it goes quiet.
+ * Updating the Hermes Agent app stops it while the new Hermes downloads (a few
+ * gigabytes), then starts it again; it answers a while after that.
+ */
+export const AWAY_MS = 30 * 60_000
+
+export type Seen = { at: number; found: Found }
+
+/** What a place offers: what answers there now, else what answered there within AWAY_MS, marked away. */
+export function remembered(found: Found | null, last: Seen | undefined, now: number): Found | null {
+  if (found) return found
+  return last && now - last.at < AWAY_MS ? { ...last.found, away: true } : null
+}
+
 const FOUND_FRESH_MS = 10_000
 let lastLook: { at: number; found: Promise<(Found | null)[]> } | null = null
+const lastSeen = new Map<string, Seen>()
 
 /** Every place, looked at all at once (and reused for a few seconds). Each one gets about FOUND_MS. */
 export function lookAround(): Promise<(Found | null)[]> {
   if (lastLook && Date.now() - lastLook.at < FOUND_FRESH_MS) return lastLook.found
-  const found = Promise.all(candidates().map((c) => look(c).catch(() => null)))
-  lastLook = { at: Date.now(), found }
-  return found
+  const looked = Promise.all(
+    candidates().map(async (c) => {
+      const found = await look(c).catch(() => null)
+      if (found) lastSeen.set(c.id, { at: Date.now(), found })
+      return remembered(found, lastSeen.get(c.id), Date.now())
+    }),
+  )
+  lastLook = { at: Date.now(), found: looked }
+  return looked
 }
 
 /** Forget the last look, e.g. after "Check again". */

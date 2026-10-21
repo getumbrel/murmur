@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
+  AWAY_MS,
   candidate,
   candidateId,
   offer,
   parseFindList,
   quietState,
+  remembered,
   RESTART_PATIENCE_MS,
   START_PATIENCE_MS,
   toFoundAgents,
@@ -103,6 +105,22 @@ describe('what to offer', () => {
       'http://hermes-agent_web_1:18789',
       'http://studio.local:9119',
     ])
+  })
+})
+
+describe('a found Hermes that goes quiet', () => {
+  const seen: Found = { id: 'x', name: 'Hermes Agent', where: 'umbrel', url: 'http://x', host: 'x', outdated: true }
+  const at = 1_000_000
+  it('is still offered, as it was, while it’s away (most often updating)', () => {
+    expect(remembered(null, { at, found: seen }, at + 5 * 60_000)).toEqual({ ...seen, away: true })
+  })
+  it('until it’s been quiet too long, or was never seen', () => {
+    expect(remembered(null, { at, found: seen }, at + AWAY_MS)).toBeNull()
+    expect(remembered(null, undefined, at)).toBeNull()
+  })
+  it('is what it says now once it answers again', () => {
+    const back = { ...seen, outdated: undefined, version: '0.22.0' }
+    expect(remembered(back, { at, found: seen }, at + 60_000)).toBe(back)
   })
 })
 

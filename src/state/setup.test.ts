@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 vi.mock('@/hermes/instance', () => ({ adoptHermes: () => true, tabHermes: () => null }))
 vi.mock('@/state/connection', () => ({ connectionKey: [], connectionsKey: [], switchHermes: () => {} }))
 
-const { agentNames, countLine, holdsSomething, pickLead, recommended } = await import('./setup')
+const { agentNames, countLine, holdsSomething, pickLead, recommended, waitingOn } = await import('./setup')
 type FoundHermes = import('./setup').FoundHermes
 
 const found = (over: Partial<FoundHermes>): FoundHermes => ({
@@ -29,6 +29,13 @@ describe('the lead', () => {
     expect(pickLead([locked, umbrelOld])?.id).toBe('a')
     expect(pickLead([])).toBeUndefined()
   })
+
+  it('is one that’s away only when nothing else is there', () => {
+    const away = found({ id: 'a', where: 'umbrel', away: true, agentCount: 6 })
+    const locked = found({ id: 'b', where: 'network', needsSignIn: true })
+    expect(pickLead([away, locked])?.id).toBe('b')
+    expect(pickLead([away])?.id).toBe('a')
+  })
 })
 
 describe('recommending', () => {
@@ -39,7 +46,18 @@ describe('recommending', () => {
     expect(holdsSomething(found({ hasModel: true }))).toBe(true)
     expect(recommended(found({ chats: 3, outdated: true }))).toBe(false)
     expect(recommended(found({ chats: 3, needsSignIn: true }))).toBe(false)
+    expect(recommended(found({ chats: 3, away: true }))).toBe(false)
     expect(recommended(found({ chats: 3 }))).toBe(true)
+  })
+})
+
+describe('waiting on an update', () => {
+  it('while it’s out of date or away, not once it’s usable', () => {
+    expect(waitingOn(found({ outdated: true }))).toBe(true)
+    expect(waitingOn(found({ outdated: true, away: true }))).toBe(true)
+    expect(waitingOn(found({ away: true }))).toBe(true)
+    expect(waitingOn(found({ needsSignIn: true }))).toBe(false)
+    expect(waitingOn(found({}))).toBe(false)
   })
 })
 

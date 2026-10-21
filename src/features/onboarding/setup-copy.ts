@@ -20,6 +20,8 @@ export function whereBody(lead: FoundHermes | undefined) {
   if (!lead) return 'Right here in Murmur, or in a Hermes you already run.'
   const umbrel = lead.where === 'umbrel'
   const there = umbrel ? 'Hermes Agent is on this Umbrel' : `There’s a Hermes on ${placeOf(lead)}`
+  // Away after needing an update: someone's updating it.
+  if (lead.away) return lead.outdated ? `${there}, and it’s updating.` : `${there}, but it isn’t answering right now.`
   if (lead.outdated) return `${there}, but it needs an update first.`
   if (lead.needsSignIn) return `${there}. Sign in to use it, or start fresh.`
   if (umbrel) {

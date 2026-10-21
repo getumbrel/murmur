@@ -16,7 +16,8 @@
 // API for the screens:
 //
 //   useSetup({ polling? })     the answer, react-query key ['murmur', 'setup'].
-//                              `polling: true` asks again every 1.5s (Getting ready).
+//                              `polling: true` asks again every 1.5s (Getting ready);
+//                              a function, while it says to (Where, waiting on an update).
 //   useLookAgain()             "Check again": the server looks around afresh (GET ?again=1).
 //   chooseHermes(choice)       POST /murmur/setup. Resolves to a ChoiceResult;
 //                              throws only when Murmur's server can't be reached.
@@ -26,6 +27,7 @@
 //   pickLead(found)            The found Hermes to lead with, or undefined.
 //   holdsSomething(found)      Whether it has agents, chats or a model: worth recommending.
 //   recommended(found)         Usable and holds something: gets the Recommended badge.
+//   waitingOn(found)           Out of date or away: worth looking again by itself.
 //   agentNames(found)          "Juniper, Sage, Otto and 3 more", or '' with no agents.
 //   countLine(found)           "On this Umbrel · 6 agents · 100+ chats".
 //   isBuiltinId(id)            The built-in's connection id is always 'builtin'.
@@ -96,6 +98,12 @@ export type FoundHermes = {
   minVersion?: string
   /** Password-protected: Murmur sent it nothing; choosing it takes a username and password. */
   needsSignIn?: boolean
+  /**
+   * It answered a while ago and doesn't now, most often because it's being
+   * updated: the rest is what it showed then. Shown, but it can't be chosen
+   * until it's back.
+   */
+  away?: boolean
   hasModel?: boolean
   /** Main agent first, then Hermes's order. Left out when unknown (needs a sign-in, or it wouldn't say). */
   agents?: FoundAgent[]
@@ -143,17 +151,26 @@ async function getSetup(path: string): Promise<Setup> {
 /** The answer; the server reuses what it found for a few seconds. */
 export const fetchSetup = () => getSetup('/murmur/setup')
 
-/** The setup answer. Fresh on every mount during onboarding; `polling` asks again every 1.5s. */
-export function useSetup({ polling = false, enabled = true }: { polling?: boolean; enabled?: boolean } = {}) {
+/**
+ * The setup answer. Fresh on every mount during onboarding; `polling` asks
+ * again every 1.5s, always or while the answer it's given says to.
+ */
+export function useSetup({
+  polling = false,
+  enabled = true,
+}: { polling?: boolean | ((setup: Setup | undefined) => boolean); enabled?: boolean } = {}) {
   return useQuery({
     queryKey: setupKey,
     queryFn: fetchSetup,
     staleTime: 0,
     enabled,
-    refetchInterval: polling ? 1500 : false,
+    refetchInterval: (q) => ((typeof polling === 'function' ? polling(q.state.data) : polling) ? 1500 : false),
     retry: 1,
   })
 }
+
+/** Out of date or away: Murmur keeps looking, so it shows up updated without anyone asking. */
+export const waitingOn = (f: FoundHermes) => Boolean(f.outdated || f.away)
 
 /**
  * Look again now, past the server's few seconds of reuse: "Check again" after
@@ -242,11 +259,11 @@ export function useCarryOn() {
 
 const WHERE_ORDER: Record<FoundWhere, number> = { umbrel: 0, computer: 1, network: 2 }
 
-const usability = (f: FoundHermes) => (f.outdated ? 1 : f.needsSignIn ? 2 : 0)
+const usability = (f: FoundHermes) => (f.away ? 3 : f.outdated ? 1 : f.needsSignIn ? 2 : 0)
 
 const agentsIn = (f: FoundHermes) => f.agentCount ?? f.agents?.length ?? 0
 
-/** The found Hermes to lead with: usable before outdated before needs a password, then on this Umbrel, then the most agents. */
+/** The found Hermes to lead with: usable before outdated before needs a password before away, then on this Umbrel, then the most agents. */
 export function pickLead(found: readonly FoundHermes[]): FoundHermes | undefined {
   return [...found].sort(
     (a, b) => usability(a) - usability(b) || WHERE_ORDER[a.where] - WHERE_ORDER[b.where] || agentsIn(b) - agentsIn(a),
@@ -257,7 +274,7 @@ export function pickLead(found: readonly FoundHermes[]): FoundHermes | undefined
 export const holdsSomething = (f: FoundHermes) => agentsIn(f) >= 2 || (f.chats ?? 0) > 0 || f.hasModel === true
 
 /** Gets the Recommended badge: usable now, and it holds something. */
-export const recommended = (f: FoundHermes) => !f.outdated && !f.needsSignIn && holdsSomething(f)
+export const recommended = (f: FoundHermes) => !f.outdated && !f.needsSignIn && !f.away && holdsSomething(f)
 
 /** The main agent first, then the order Hermes gives. */
 export const orderedAgents = (f: Pick<FoundHermes, 'agents'>) =>

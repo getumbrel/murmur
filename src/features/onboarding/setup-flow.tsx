@@ -20,6 +20,7 @@ import {
   setupKey,
   useLookAgain,
   useSetup,
+  waitingOn,
   type Choice,
   type ChoiceResult,
   type FoundHermes,
@@ -53,9 +54,10 @@ export function SetupFlow({ again = false, onHandedOver }: { again?: boolean; on
   const [location, navigate] = useLocation()
   const welcomed = useWelcomed()
   const qc = useQueryClient()
-  const setup = useSetup()
-  const lookAgain = useLookAgain()
   const screen = SCREENS[location]
+  // A Hermes on Where that's out of date or away: keep looking, so it wakes up by itself once updated.
+  const setup = useSetup({ polling: (s) => screen === 'where' && !!s?.found.some(waitingOn) })
+  const lookAgain = useLookAgain()
   // Built-in chosen (here, or before a reload) and now choosing something else: add-and-move, not a first choice.
   const [builtinChosen, setBuiltinChosen] = useState(again)
   const [readying, setReadying] = useState(false)
@@ -148,8 +150,9 @@ export function SetupFlow({ again = false, onHandedOver }: { again?: boolean; on
   const lead = setup.data ? pickLead(setup.data.found) : undefined
   const noBuiltin = setup.data && !setup.data.builtin
   const found = (setup.data?.found ?? [])
-    // From the Where step, the Hermes already offered as its lead card isn't offered again.
-    .filter((f) => noBuiltin || f.id !== lead?.id)
+    // From the Where step, the Hermes already offered as its lead card isn't offered again,
+    // and one that's away can't be chosen until it's back.
+    .filter((f) => (noBuiltin || f.id !== lead?.id) && !f.away)
     .map(fromFound)
 
   const form = (other: boolean) => (

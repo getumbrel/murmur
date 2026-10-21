@@ -232,7 +232,7 @@ export function WhereStep({
             subtitle={
               builtinDown
                 ? 'Not available right now'
-                : shown.outdated
+                : shown.outdated || shown.away
                   ? `Or start fresh now, and add ${shown.where === 'umbrel' ? 'Hermes Agent' : 'this Hermes'} later in Settings`
                   : 'A new home for your agents, built into Murmur'
             }
@@ -355,13 +355,21 @@ function FoundCard({
   const agents = orderedAgents(f)
   const total = Math.max(f.agentCount ?? 0, agents.length)
   const badge = recommended(f)
-  const state: 'ready' | 'outdated' | 'signin' = f.outdated ? 'outdated' : f.needsSignIn ? 'signin' : 'ready'
+  const state: 'ready' | 'outdated' | 'signin' | 'away' = f.away
+    ? 'away'
+    : f.outdated
+      ? 'outdated'
+      : f.needsSignIn
+        ? 'signin'
+        : 'ready'
+  // Away after needing an update: it's updating, and Murmur is waiting for it.
+  const updating = state === 'away' && !!f.outdated
 
-  // Out of date, then updated: the buddies wake with a hop, the badge pops in.
+  // Out of date or away, then back and usable: the buddies wake with a hop, the badge pops in.
   const [waking, setWaking] = useState(false)
   const was = useRef(state)
   useEffect(() => {
-    if (was.current === 'outdated' && state === 'ready') {
+    if ((was.current === 'outdated' || was.current === 'away') && state === 'ready') {
       setWaking(true)
       const t = setTimeout(() => setWaking(false), 1200)
       was.current = state
@@ -387,11 +395,12 @@ function FoundCard({
     if (checking) checked.current = true
     else if (checked.current) {
       checked.current = false
-      if (f.outdated) setStillOld(true)
+      if (state === 'outdated') setStillOld(true)
     }
-  }, [checking, f.outdated])
+  }, [checking, state])
 
-  const face: BuddyState = done || waking ? 'done' : state === 'outdated' ? 'offline' : 'idle'
+  const face: BuddyState =
+    done || waking ? 'done' : state === 'outdated' || state === 'away' ? 'offline' : 'idle'
 
   return (
     <section
@@ -433,8 +442,14 @@ function FoundCard({
               exit={{ opacity: 0 }}
               transition={{ duration: 0.15 }}
             >
-              <StatusDot tone="warning" />
-              {state === 'outdated' ? 'Needs an update' : 'Needs a password'}
+              {updating ? <Spinner size={12} className="text-ink-3" /> : <StatusDot tone="warning" />}
+              {updating
+                ? 'Updating'
+                : state === 'away'
+                  ? 'Not answering'
+                  : state === 'outdated'
+                    ? 'Needs an update'
+                    : 'Needs a password'}
             </motion.span>
           ) : null}
         </AnimatePresence>
@@ -462,7 +477,21 @@ function FoundCard({
         </AnimatePresence>
       </div>
 
-      {state === 'outdated' ? (
+      {state === 'away' ? (
+        // Nothing to do but wait, where its button will be: Murmur keeps looking, and the card wakes when it's back.
+        <motion.p
+          className="mt-5 flex h-13 items-center justify-center rounded-full bg-fill-1 px-6 text-center text-subhead"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.2 }}
+        >
+          <span className="text-shimmer">
+            {updating
+              ? 'Waiting for the update to finish…'
+              : `Waiting for ${f.where === 'umbrel' ? 'Hermes Agent' : 'it'} to come back…`}
+          </span>
+        </motion.p>
+      ) : state === 'outdated' ? (
         <div className="mt-5">
           <div className="rounded-xl bg-fill-1 px-4 py-3.5 text-subhead text-pretty text-ink-2">
             {f.where === 'umbrel' ? (
