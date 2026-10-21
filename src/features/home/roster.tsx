@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { Link } from 'wouter'
 import { useQueryClient } from '@tanstack/react-query'
-import { ChevronRight, MoreHorizontal, Pencil, PencilLine, Trash2 } from 'lucide-react'
+import { ChevronRight, MoreHorizontal, Pencil, PencilLine, Plus, Trash2 } from 'lucide-react'
 import { Orb, OrbStack } from '@/ui/orb'
 import { Button } from '@/ui/button'
 import { fetchAgentChats, useAgentChats, useAgents, type Agent } from '@/state/agents'
@@ -289,7 +289,7 @@ function AgentRow({
             subtitleKey={active ? status.activity! : expanded ? 'role' : 'title'}
             subtitle={subtitle}
             last={last}
-            onMore={() => setMenu(true)}
+            newChat={`/chat/${agent.id}/new`}
           />
           {!roomy && <NestedChats id={chatsId} agent={agent} open={expanded} openChatId={openChatId} />}
         </div>
@@ -383,6 +383,18 @@ function GroupRowView({
   )
 }
 
+/**
+ * The button that shows on hover, drawn as the chevron is: a plain glyph on
+ * the row, filling only under the pointer.
+ */
+const quick = (roomy: boolean, disclosure: boolean) =>
+  cn(
+    'pressable absolute top-1/2 hidden -translate-y-1/2 place-items-center rounded-full text-ink-3 hover:bg-fill-2 hover:text-ink',
+    'opacity-0 transition-opacity duration-150 ease-out group-hover/row:opacity-100 group-has-[:focus-visible]/row:opacity-100 group-has-[[data-open]]/row:opacity-100 focus-visible:opacity-100',
+    '[@media(hover:hover)]:grid',
+    roomy ? 'right-5 size-8' : disclosure ? 'right-10 size-7' : 'right-2 size-7',
+  )
+
 // The row's time and unread dot step aside for the More button (pointer screens only).
 const makesWay =
   '[@media(hover:hover)]:group-hover/row:opacity-0 [@media(hover:hover)]:group-has-[:focus-visible]/row:opacity-0 [@media(hover:hover)]:group-has-[[data-open]]/row:opacity-0'
@@ -433,6 +445,7 @@ function RowLink({
   subtitleKey,
   subtitle,
   last,
+  newChat,
   onMore,
   disclosure,
 }: {
@@ -451,8 +464,10 @@ function RowLink({
   subtitleKey: string
   subtitle: ReactNode
   last?: boolean
-  /** The row's menu, for mice and keyboards (touch holds the row). */
-  onMore: () => void
+  /** On hover, beside the chevron: a new chat with the agent (its menu is a right-click or a hold away)… */
+  newChat?: string
+  /** …or a group's menu, for mice and keyboards (touch holds the row). */
+  onMore?: () => void
   disclosure?: Disclosure
 }) {
   const unfolded = disclosure?.open
@@ -580,21 +595,22 @@ function RowLink({
           </span>
         </span>
       </Link>
-      <button
-        type="button"
-        onClick={onMore}
-        aria-label={`More for ${name}`}
-        aria-haspopup="menu"
-        className={cn(
-          'pressable absolute top-1/2 hidden -translate-y-1/2 place-items-center rounded-full bg-elevated text-ink-2 shadow-float ring-1 ring-line',
-          'opacity-0 transition-opacity duration-150 ease-out group-hover/row:opacity-100 group-has-[:focus-visible]/row:opacity-100 hover:text-ink data-open:opacity-100',
-          '[@media(hover:hover)]:grid',
-          roomy ? 'right-5 size-8' : disclosure ? 'right-10 size-7' : 'right-2 size-7',
-        )}
-        data-open={open || undefined}
-      >
-        <MoreHorizontal size={roomy ? 18 : 16} strokeWidth={1.85} />
-      </button>
+      {newChat ? (
+        <Link href={newChat} aria-label={`New chat with ${name}`} title="New chat" className={quick(roomy, !!disclosure)}>
+          <Plus size={roomy ? 18 : 16} strokeWidth={2} aria-hidden />
+        </Link>
+      ) : (
+        <button
+          type="button"
+          onClick={onMore}
+          aria-label={`More for ${name}`}
+          aria-haspopup="menu"
+          className={quick(roomy, !!disclosure)}
+          data-open={open || undefined}
+        >
+          <MoreHorizontal size={roomy ? 18 : 16} strokeWidth={2} aria-hidden />
+        </button>
+      )}
       {disclosure && (
         <button
           type="button"
