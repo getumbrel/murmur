@@ -17,9 +17,8 @@ import { wireNotices } from '@/features/chat/notices'
 import { useUmbrelMcpSync } from '@/state/umbrel-mcp'
 import { ensureTimezone } from '@/state/timezone'
 import { useGroupSummaries } from '@/state/groups'
-import { useChats } from '@/state/chats'
+import { clearUnread, useChats } from '@/state/chats'
 import { markChatSeen, setViewingChat, useUnreadCount } from '@/state/status'
-import { api } from '@/hermes/rest'
 import { SIDEBAR_WIDTH, useIsWide } from '@/lib/use-media'
 import { handoff, setMainAgent, useTransitionLocation, useUpFrom } from '@/lib/transitions'
 import { SwipeBack } from '@/lib/swipe-back'
@@ -309,8 +308,7 @@ function useSeenTracking() {
 
   // Hermes Desktop keeps its own unread flag; clear it there too.
   useEffect(() => {
-    if (chatId && profile && stored)
-      void api.patch(`/api/sessions/${encodeURIComponent(chatId)}`, { unread: false, profile }).catch(() => {})
+    if (chatId && profile && stored) clearUnread(chatId, profile).catch(() => {})
   }, [chatId, profile, stored])
 }
 

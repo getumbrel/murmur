@@ -2,6 +2,7 @@
 // as events, read back over REST, and stopped, edited, reacted to and deleted.
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { clearUnread } from '@/state/chats'
 import { api, connect, modelRequests, newChat, q, sleep, turn, whenIdle, type Socket } from './client'
 
 let socket: Socket
@@ -208,10 +209,29 @@ describe('coming back to a chat', () => {
     expect(hit.snippet ?? hit.preview).toContain('periwinkle')
   })
 
-  it('clears the unread mark and reports a chat’s cost fields', async () => {
+  it('clears the unread mark Hermes Desktop keeps', async () => {
     const { runtime, stored } = await newChat(socket)
     await turn(socket, runtime, 'Hi [[say: Hi]]')
-    await api.patch(`/api/sessions/${stored}`, { unread: false, profile: 'default' })
+    const unread = async () => {
+      const { sessions } = await api.get(`/api/sessions?${q('default')}&limit=20&order=recent`)
+      return sessions.find((s: { id: string }) => s.id === stored)?.unread
+    }
+    // Marked the way Desktop marks it: from Hermes 0.22.3, against the chat's revision.
+    const snapshot = await api.call('GET', `/api/sessions/${stored}/mutation-snapshot?${q('default')}`)
+    const fence =
+      snapshot.status === 200
+        ? { request_id: `unread-${stored}`, expected_revision: snapshot.body.runtime_revision }
+        : {}
+    await api.patch(`/api/sessions/${stored}`, { unread: true, profile: 'default', ...fence })
+    expect(await unread()).toBe(true)
+
+    await clearUnread(stored, 'default')
+    expect(await unread()).toBe(false)
+  })
+
+  it('reports a chat’s cost fields', async () => {
+    const { runtime, stored } = await newChat(socket)
+    await turn(socket, runtime, 'Hi [[say: Hi]]')
     const session = await api.get(`/api/sessions/${stored}?${q('default')}`)
     expect(session).toHaveProperty('estimated_cost_usd')
     expect(session).toHaveProperty('cost_status')

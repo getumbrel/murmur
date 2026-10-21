@@ -960,6 +960,27 @@ export async function renameChat(id: string, title: string) {
   patch(id, () => ({ title }))
 }
 
+/**
+ * Clears the unread mark Hermes Desktop keeps on a stored chat. From Hermes
+ * 0.22.3 such a change carries the chat's revision, and an id of its own so
+ * a retry can't apply it twice; older Hermes has neither and takes it bare.
+ */
+export async function clearUnread(id: string, profile: string) {
+  const path = `/api/sessions/${encodeURIComponent(id)}`
+  const snapshot = await api
+    .get<{ runtime_revision?: number }>(`${path}/mutation-snapshot?profile=${encodeURIComponent(profile)}`)
+    .catch(() => null)
+  const revision = snapshot?.runtime_revision
+  await api.patch(path, {
+    unread: false,
+    profile,
+    ...(revision !== undefined && {
+      request_id: `read-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`,
+      expected_revision: revision,
+    }),
+  })
+}
+
 /** Delete a stored chat, whether or not it is open here. */
 export async function deleteChat(id: string, profile = getChat(id)?.profile ?? 'default') {
   const close = (runtimeId: string) => rpc('session.close', { session_id: runtimeId }).catch(() => {})
