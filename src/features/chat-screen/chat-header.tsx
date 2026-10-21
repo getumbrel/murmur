@@ -12,9 +12,8 @@ import { Hearts } from './hearts'
 type Props = {
   agent?: { id: string; name: string; hue: number }
   orb: OrbState
-  /** Live status words, or the model name when idle. */
+  /** What the chat's called. */
   subtitle: string
-  live: boolean
   showBack: boolean
   /** Messages are scrolled beneath it: frost it and draw the edge. */
   scrolled: boolean
@@ -39,7 +38,6 @@ export function ChatHeader({
   agent,
   orb,
   subtitle,
-  live,
   showBack,
   scrolled,
   onNewChat,
@@ -129,7 +127,7 @@ export function ChatHeader({
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -12, transition: { duration: 0.2, ease: [0.16, 1, 0.3, 1] } }}
                   transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
-                  className={cn('block truncate text-caption', live ? 'text-accent' : 'text-ink-3')}
+                  className="block truncate text-caption text-ink-3"
                 >
                   {subtitle}
                 </motion.span>

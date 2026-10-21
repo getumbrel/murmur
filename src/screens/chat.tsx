@@ -117,10 +117,6 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
   // A routine's run reads as a report, under what the routine is.
   const run = useRunItems(id, useSolo(chat?.items ?? (starting ? [starting] : [])))
   const items = run.items
-  const tail = items.at(-1)
-  const writing = tail?.kind === 'assistant' && tail.streaming
-  // The header says what the thread's live line says: a step running is work; anything else is thinking.
-  const stepping = tail?.kind === 'tool' && tail.status === 'running'
   const online = useConnection((s) => s.state === 'open' || !s.everOpened)
   const [typing, setTyping] = useState(false)
   const speaking = useSpeech((s) => s.profile === agentId && s.phase === 'playing')
@@ -132,23 +128,10 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
     chat?.model && chat.provider ? { model: chat.model, provider: chat.provider } : (draftPick ?? agentPick(agent))
   const effort = chat ? chat.reasoning : draftEffort
 
-  // What this chat's about rests under the name; its model has a chip of its own by the composer.
-  const name = useChatName(agentId, id, chat)
-  // (When offline, the grey orb and the app's connection banner say it.)
-  const subtitle =
-    status === 'waiting'
-      ? 'Needs you'
-      : writing
-        ? 'Writing…'
-        : busy
-          ? stepping
-            ? 'Working…'
-            : 'Thinking…'
-          : speaking
-              ? 'Reading aloud…'
-              : isDraft
-                ? 'New chat'
-                : name
+  // What this chat's about rests under the name, busy or not: the reply's own line says what
+  // the agent's doing, and its face here shows it. The model has a chip of its own by the composer.
+  const name = useChatName(agentId, id, chat, { fresh: !!id && id === born.current })
+  const subtitle = isDraft ? 'New chat' : name
 
   // Stop pressed while the chat is still being made: stop it as soon as it exists.
   const stopEarly = useRef(false)
@@ -425,7 +408,6 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
           agent={agent}
           orb={orb}
           subtitle={subtitle}
-          live={(status !== 'idle' && status !== 'error') || speaking}
           showBack={!wide}
           scrolled={scrolled}
           onNewChat={newChat}
