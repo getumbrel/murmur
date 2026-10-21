@@ -10,7 +10,7 @@ import { GroupSheet } from '@/features/group/group-sheet'
 import { Button } from '@/ui/button'
 import { BuddyStack } from '@/ui/buddy'
 import { Skeleton } from '@/ui/skeleton'
-import { useIsWide } from '@/lib/use-media'
+import { useFinePointer, useIsWide } from '@/lib/use-media'
 import { cn } from '@/lib/cn'
 import { approveInGroup, deleteGroup, renameGroup, retryGroup, sendToGroup, stopGroup, useGroup } from '@/state/groups'
 
@@ -21,6 +21,7 @@ const HUE = 278
 export function GroupScreen({ groupId }: { groupId: string }) {
   const { group, items, loaded, missing, working, stopping, active } = useGroup(groupId)
   const wide = useIsWide()
+  const fine = useFinePointer()
   const inset = useKeyboardInset()
   const [, navigate] = useLocation()
   const root = useRef<HTMLDivElement>(null)
@@ -93,6 +94,7 @@ export function GroupScreen({ groupId }: { groupId: string }) {
               hue={active?.member.hue}
               draftKey={`group:${groupId}`}
               onDraftChange={onDraftChange}
+              autoFocus={fine}
             />
           }
         />

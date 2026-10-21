@@ -31,7 +31,7 @@ import { useUmbrelKey } from '@/features/chat/umbrel-key'
 import { stopSpeaking, useSpeech } from '@/features/voice/speech'
 import { useConnection } from '@/hermes/gateway'
 import { useChatUsage } from '@/state/insights'
-import { useIsWide } from '@/lib/use-media'
+import { useFinePointer, useIsWide } from '@/lib/use-media'
 import { useUpFrom } from '@/lib/transitions'
 import {
   answerApproval,
@@ -77,6 +77,7 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
   const agent = agents.data?.find((a) => a.id === agentId)
   const [, navigate] = useLocation()
   const wide = useIsWide()
+  const fine = useFinePointer()
   const inset = useKeyboardInset()
 
   // No chat in the URL: pick up where you left off, or start fresh.
@@ -491,7 +492,8 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
               disabled={!agent || openError}
               placeholder={agent ? `Message ${clip(agent.name)}` : 'Message'}
               draftKey={id ?? `${agentId}:new`}
-              autoFocus={wide}
+              // Ready to type on arrival, at any window size; on a phone, the keyboard waits for a tap.
+              autoFocus={fine}
               commands={commands}
               extraCommands={id ? catalog.data?.commands : undefined}
               onCommand={onCommand}

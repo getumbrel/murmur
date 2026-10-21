@@ -28,6 +28,8 @@ export function useMedia(query: string) {
 /** Wide layouts get a sidebar and dialogs; narrow ones get stacks and sheets. */
 export const useIsWide = () => useMedia('(min-width: 900px)')
 export const usePrefersReducedMotion = () => useMedia('(prefers-reduced-motion: reduce)')
+/** A mouse or trackpad, so most likely a keyboard: a field can take focus without a keyboard sliding up over the page. */
+export const useFinePointer = () => useMedia('(hover: hover) and (pointer: fine)')
 
 /** The wide layout's sidebar width (src/screens/home.tsx), for things that centre on the pane beside it. */
 export const SIDEBAR_WIDTH = 308

@@ -37,6 +37,8 @@ type Props = {
   onDraftChange?: (draft: { mentioned: string[]; typing: boolean }) => void
   placeholder?: string
   className?: string
+  /** Takes focus as soon as there's a group to type to. */
+  autoFocus?: boolean
 }
 
 type Option = { id: string; name: string; hue?: number; everyone?: boolean }
@@ -52,6 +54,7 @@ export function GroupComposer({
   onDraftChange,
   placeholder = 'Message the group',
   className,
+  autoFocus,
 }: Props) {
   const [text, setText, clearDraft] = useDraft(draftKey)
   const [caret, setCaret] = useState(0)
@@ -76,6 +79,14 @@ export function GroupComposer({
   useEffect(() => {
     report.current?.({ mentioned: mentionKey ? mentionKey.split(',') : [], typing })
   }, [mentionKey, typing])
+
+  // (A group just made arrives a beat after its screen, so not the attribute: it'd find the field disabled.)
+  const focusedOnce = useRef(false)
+  useEffect(() => {
+    if (!autoFocus || disabled || focusedOnce.current) return
+    focusedOnce.current = true
+    area.current?.focus({ preventScroll: true })
+  }, [autoFocus, disabled])
 
   useAutoGrow(area, text)
   // The tinted copy scrolls with the field.

@@ -116,10 +116,12 @@ export function Sheet({
                 opener.current = document.activeElement as HTMLElement | null
                 ;(e.currentTarget as HTMLElement | null)?.focus()
               }}
-              // Radix returns focus to a Dialog.Trigger, which sheets don't use: hand it back to the opener.
+              // Radix returns focus to a Dialog.Trigger, which sheets don't use: hand it back to the opener,
+              // unless something has taken it since (the chat a sheet just opened, ready to type in).
               onCloseAutoFocus={(e) => {
                 e.preventDefault()
-                if (opener.current?.isConnected) opener.current.focus({ preventScroll: true })
+                const taken = document.activeElement && document.activeElement !== document.body
+                if (!taken && opener.current?.isConnected) opener.current.focus({ preventScroll: true })
               }}
               tabIndex={-1}
               // styles.css keys toast placement off an open sheet.
