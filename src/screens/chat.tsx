@@ -7,6 +7,7 @@ import { toast } from 'sonner'
 import { Thread } from '@/features/chat/thread'
 import { RunHeader, useRunItems } from '@/features/routines/run-view'
 import { isRunId } from '@/features/routines/runs'
+import { useChatName } from '@/features/chat-screen/chat-name'
 import { Composer, useKeyboardInset, type ComposerHandle } from '@/features/chat/composer'
 import { DropZone } from '@/features/chat-screen/drop-zone'
 import type { MediaContext } from '@/features/media/context'
@@ -23,7 +24,7 @@ import { ChatMenu, ChatMenuButton, useChatMenu } from '@/features/chat-screen/ch
 import { ChatInfoSheet, ContextRing } from '@/features/chat-screen/chat-info'
 import { transcript } from '@/features/chat-screen/transcript'
 import { ModelChip } from '@/features/model/model-chip'
-import { EFFORT, prettyModel, thinkingOf, type Thinking } from '@/features/model/names'
+import { EFFORT, thinkingOf, type Thinking } from '@/features/model/names'
 import { useThinkingDefault, type ModelPick } from '@/features/model/use-models'
 import { commandList, isCurated, type CommandName } from '@/features/commands/commands'
 import { useCatalog } from '@/features/commands/use-catalog'
@@ -131,6 +132,8 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
     chat?.model && chat.provider ? { model: chat.model, provider: chat.provider } : (draftPick ?? agentPick(agent))
   const effort = chat ? chat.reasoning : draftEffort
 
+  // What this chat's about rests under the name; its model has a chip of its own by the composer.
+  const name = useChatName(agentId, id, chat)
   // (When offline, the grey orb and the app's connection banner say it.)
   const subtitle =
     status === 'waiting'
@@ -143,7 +146,9 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
             : 'Thinking…'
           : speaking
               ? 'Reading aloud…'
-              : prettyModel(pick?.model)
+              : isDraft
+                ? 'New chat'
+                : name
 
   // Stop pressed while the chat is still being made: stop it as soon as it exists.
   const stopEarly = useRef(false)
@@ -382,7 +387,7 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
   const menu = useChatMenu(() => {
     if (!agent || !hasMessages) return
     const all = id ? (getChat(id)?.items ?? items) : items
-    const title = chat?.title?.trim() || `Chat with ${agent.name}`
+    const title = name || `Chat with ${agent.name}`
     return { title, text: transcript(all, { title, agent: agent.name }) }
   }, id ? [{ label: 'Chat info', icon: Gauge, onSelect: () => setInfo(true) }] : [])
 
