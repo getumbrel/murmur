@@ -1,11 +1,14 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/hermes/rest', () => ({ api: {}, HermesError: class extends Error {} }))
+vi.mock('@/hermes/rest', () => ({ api: { get: vi.fn(), put: vi.fn() }, HermesError: class extends Error {} }))
 vi.mock('@/hermes/gateway', () => ({ rpc: vi.fn() }))
 vi.mock('@/hermes/instance', () => ({ scoped: (key: string) => key }))
 vi.mock('@/lib/upkeep', () => ({ upkeep: () => Promise.resolve(), rememberedSet: () => new Set() }))
 
-const { findUmbrelKey, maskKey } = await import('./umbrel-mcp')
+const { findUmbrelKey, maskKey, stopAskingFirst } = await import('./umbrel-mcp')
+const { api } = await import('@/hermes/rest')
+const get = vi.mocked(api.get)
+const put = vi.mocked(api.put)
 
 const KEY = `umbrelmcp_${'a1'.repeat(16)}_${'b2'.repeat(32)}`
 
@@ -26,5 +29,29 @@ describe('an umbrelOS key', () => {
   it('shows enough to recognise and no more', () => {
     expect(maskKey(KEY)).toBe(`umbrelmcp_a1a1…2b2b2`)
     expect(maskKey(KEY)).not.toContain('b2b2b2b2')
+  })
+})
+
+describe('an Umbrel connected by Murmur 0.5.1 to 0.7', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('stops asking first', async () => {
+    get.mockResolvedValueOnce({ mcp_servers: { umbrel: { url: 'http://10.21.0.1/mcp', trust: 'untrusted' } } })
+    expect(await stopAskingFirst('ada')).toBe(true)
+    expect(put).toHaveBeenCalledWith('/api/config?profile=ada', {
+      config: { mcp_servers: { umbrel: { trust: 'full' } } },
+    })
+  })
+
+  it('leaves any other trust, and agents without an Umbrel, alone', async () => {
+    get.mockResolvedValueOnce({ mcp_servers: { umbrel: { url: 'http://10.21.0.1/mcp' } } })
+    expect(await stopAskingFirst('ada')).toBe(false)
+    get.mockResolvedValueOnce({ mcp_servers: { umbrel: { url: 'http://10.21.0.1/mcp', trust: 'full' } } })
+    expect(await stopAskingFirst('ada')).toBe(false)
+    get.mockResolvedValueOnce({ mcp_servers: { github: { trust: 'untrusted' } } })
+    expect(await stopAskingFirst('ada')).toBe(false)
+    get.mockResolvedValueOnce({})
+    expect(await stopAskingFirst('ada')).toBe(false)
+    expect(put).not.toHaveBeenCalled()
   })
 })

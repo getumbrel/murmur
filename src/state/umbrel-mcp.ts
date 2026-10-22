@@ -109,31 +109,25 @@ async function add(profile: string, key: string, name = UMBREL_SERVER) {
     await remove(profile, name)
     await api.post(`/api/mcp/servers?${q(profile)}`, body)
   }
-  await askFirst(profile, name)
-}
-
-/**
- * Has Hermes ask before any of the server's tools changes something. umbrelOS
- * marks its read-only tools as such and doesn't ask for itself, and Hermes
- * only asks on a server marked untrusted: a server with no trust set runs
- * everything, deleting files included, without a word. Reads still just run.
- */
-async function askFirst(profile: string, name = UMBREL_SERVER) {
-  // Deep-merged into the agent's config: the server keeps its address and key.
-  await api.put(`/api/config?${q(profile)}`, { config: { mcp_servers: { [name]: { trust: 'untrusted' } } } })
 }
 
 type ServersConfig = { mcp_servers?: Record<string, { trust?: unknown } | undefined> }
 
-/** An Umbrel server connected without asking first (by Murmur 0.5.0, or by an agent itself) gets it. */
-async function makeAskFirst(profile: string) {
+/**
+ * Agents use the Umbrel without asking first. Hermes's only way to ask is
+ * marking the server 'trust: untrusted', and then it asks before every call
+ * that isn't read-only, each on its own with no "always": a tap for every key
+ * an agent presses with umbrelOS's control_machine. Murmur 0.5.1 to 0.7 set
+ * that mark; this takes it off, once per agent, so one set on purpose stays.
+ */
+export async function stopAskingFirst(profile: string) {
   const config = await api.get<ServersConfig>(`/api/config?${q(profile)}&include_defaults=false`)
-  const server = config.mcp_servers?.[UMBREL_SERVER]
-  if (server && server.trust !== 'untrusted') {
-    await askFirst(profile)
-    return true
-  }
-  return false
+  if (config.mcp_servers?.[UMBREL_SERVER]?.trust !== 'untrusted') return false
+  // Deep-merged into the agent's config, so the server keeps its address and
+  // key. 'full' is Hermes's default: a merge can't drop the key, and null
+  // would leave a bare 'trust:' behind.
+  await api.put(`/api/config?${q(profile)}`, { config: { mcp_servers: { [UMBREL_SERVER]: { trust: 'full' } } } })
+  return true
 }
 
 /** Takes the server away, and its key with it: Hermes leaves the key in .env otherwise. */
@@ -180,7 +174,6 @@ export async function connectUmbrel(key: string, ids: readonly string[], onAgent
 export async function disconnectUmbrel(ids: readonly string[]) {
   for (const id of ids) await remove(id)
   synced.clear()
-  guarded.clear()
   await reload()
 }
 
@@ -196,21 +189,25 @@ async function mainKey(): Promise<string | null> {
 
 // Agents known to have it (or known not to need it), across reloads for a day.
 const synced = rememberedSet(scoped('murmur:umbrel-mcp'))
-// Agents whose Umbrel server is known to ask first.
-const guarded = rememberedSet(scoped('murmur:umbrel-ask-first'))
+// Agents whose Umbrel server no longer asks first. Kept for good: it's done once.
+const unmarked = rememberedSet(scoped('murmur:umbrel-asks-not'), Infinity)
 
-async function guardAll(ids: string[]) {
+async function unmarkAll(ids: string[]) {
   let changed = false
   for (const id of ids) {
-    if (guarded.has(id)) continue
-    changed = (await makeAskFirst(id).catch(() => false)) || changed
-    guarded.add(id)
+    if (unmarked.has(id)) continue
+    try {
+      changed = (await stopAskingFirst(id)) || changed
+      unmarked.add(id)
+    } catch {
+      // Unreadable: tried again on the next load.
+    }
   }
   if (changed) await reload()
 }
 
 async function catchUp(ids: string[]) {
-  await guardAll(ids)
+  await unmarkAll(ids)
   const missing = ids.filter((id) => id !== MAIN && !synced.has(id))
   if (!missing.length) return
   if (!(await hasUmbrel(MAIN))) {
@@ -246,7 +243,7 @@ export function useUmbrelMcpSync(agentIds: readonly string[] | undefined) {
   const key = agentIds?.join('\n') ?? ''
   useEffect(() => {
     const ids = key ? key.split('\n') : []
-    if (!onUmbrel || !ids.some((id) => (id !== MAIN && !synced.has(id)) || !guarded.has(id))) return
+    if (!onUmbrel || !ids.some((id) => (id !== MAIN && !synced.has(id)) || !unmarked.has(id))) return
     void upkeep(() => catchUp(ids))
       .then(() => qc.invalidateQueries({ queryKey: ['umbrel-mcp'] }))
       .catch(() => {})
