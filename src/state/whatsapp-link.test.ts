@@ -29,6 +29,8 @@ vi.mock('@/hermes/compat', () => ({ listProfiles: vi.fn() }))
 const { cancelLink, startLink, useLinks } = await import('./whatsapp')
 
 const ONBOARDING = '/api/messaging/whatsapp/onboarding'
+/** Hermes 0.22.4's answer while an earlier setup holds on. */
+const STILL_ACTIVE = 'Another WhatsApp QR setup is still active. Cancel it or wait for it to stop before re-pairing.'
 const link = (agent: string) => useLinks.getState().byAgent[agent]
 /** One poll of Hermes, and whatever it sets going. */
 const poll = () => vi.advanceTimersByTimeAsync(1600)
@@ -111,6 +113,41 @@ describe('linking WhatsApp', () => {
     await startLink('basil', 'self-chat')
     await vi.advanceTimersByTimeAsync(0)
     expect(link('basil').phase).toBe('waiting')
+  })
+
+  it('waits for an earlier setup to let go, then shows its code', async () => {
+    let busy = 2
+    routes[`POST ${ONBOARDING}/start`] = () => {
+      if (busy-- > 0) throw new HermesError(409, STILL_ACTIVE)
+      return { pairing_id: 'p9', status: 'waiting', qr_payload: 'qr-9' }
+    }
+    await startLink('atlas', 'bot')
+    expect(link('atlas')).toMatchObject({ phase: 'starting' })
+    await poll()
+    expect(link('atlas')).toMatchObject({ phase: 'starting' })
+    await poll()
+    expect(link('atlas')).toMatchObject({ phase: 'waiting', id: 'p9', qr: 'qr-9' })
+  })
+
+  it('stops waiting when it’s put away', async () => {
+    routes[`POST ${ONBOARDING}/start`] = () => {
+      throw new HermesError(409, STILL_ACTIVE)
+    }
+    await startLink('atlas', 'bot')
+    cancelLink('atlas')
+    await poll()
+    expect(calls).toEqual([`POST ${ONBOARDING}/start`])
+  })
+
+  it('gives up waiting once Hermes would have', async () => {
+    routes[`POST ${ONBOARDING}/start`] = () => {
+      throw new HermesError(409, STILL_ACTIVE)
+    }
+    await startLink('ada', 'bot')
+    await vi.advanceTimersByTimeAsync(9 * 60_000)
+    expect(link('ada').phase).toBe('starting')
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(link('ada')).toMatchObject({ phase: 'failed', message: expect.stringMatching(/Try again/) })
   })
 
   it('says why it can’t start, in words a person can act on', async () => {

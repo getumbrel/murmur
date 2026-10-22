@@ -242,14 +242,24 @@ const timers = new Map<string, ReturnType<typeof setTimeout>>()
 const attempts = new Map<string, number>()
 /** Network blips in a row, per agent. */
 const blips = new Map<string, number>()
+/** Since when each agent's setup has waited for an earlier one to let go. */
+const waits = new Map<string, number>()
+/** Hermes gives up on a setup after ten minutes, so an earlier one has let go by then. */
+const SETUP_MS = 10 * 60_000
 
-function schedule(agentId: string, delay = POLL_MS) {
+function schedule(agentId: string, delay = POLL_MS, step: (agentId: string) => Promise<void> = tick) {
   clearTimeout(timers.get(agentId))
   timers.set(
     agentId,
-    setTimeout(() => void tick(agentId), delay),
+    setTimeout(() => void step(agentId), delay),
   )
 }
+
+/**
+ * From Hermes 0.22.4 one setup runs at a time. One put away while its bridge
+ * was still downloading, or still open in another tab, holds on until it's done.
+ */
+const earlierSetup = (e: unknown) => e instanceof HermesError && e.status === 409 && /still active/i.test(e.message)
 
 const current = (agentId: string, id?: string) => {
   const link = useLinks.getState().byAgent[agentId]
@@ -258,10 +268,13 @@ const current = (agentId: string, id?: string) => {
 }
 
 /** Show a QR code for linking `agentId` to WhatsApp, and see it through. */
-export async function startLink(agentId: string, mode: WhatsAppMode, { again = false } = {}) {
+export async function startLink(agentId: string, mode: WhatsAppMode, { again = false } = {}): Promise<void> {
   const prev = current(agentId)
   if (!again && prev?.id && linkActive(prev.phase)) void release(prev.id)
-  if (!again) set(agentId, { phase: 'starting', mode })
+  if (!again) {
+    set(agentId, { phase: 'starting', mode })
+    waits.delete(agentId)
+  }
   const attempt = (attempts.get(agentId) ?? 0) + 1
   attempts.set(agentId, attempt)
   const mine = () => attempts.get(agentId) === attempt && current(agentId)
@@ -274,12 +287,18 @@ export async function startLink(agentId: string, mode: WhatsAppMode, { again = f
     )
   } catch (e) {
     const link = mine()
-    if (link)
-      set(agentId, {
-        ...link,
-        phase: 'failed',
-        message: e instanceof HermesError && e.status ? failure(e.message) : COPY.unreachable,
-      })
+    if (!link) return
+    const since = waits.get(agentId) ?? Date.now()
+    if (earlierSetup(e) && Date.now() - since < SETUP_MS) {
+      // Still getting a code, as far as anyone looking can tell: ask again in a moment.
+      waits.set(agentId, since)
+      return schedule(agentId, POLL_MS, (id) => startLink(id, mode, { again: true }))
+    }
+    set(agentId, {
+      ...link,
+      phase: 'failed',
+      message: e instanceof HermesError && e.status ? failure(e.message) : COPY.unreachable,
+    })
     return
   }
   const link = mine()
@@ -291,6 +310,7 @@ export async function startLink(agentId: string, mode: WhatsAppMode, { again = f
 function advance(agentId: string, next: Link) {
   set(agentId, next)
   blips.delete(agentId)
+  waits.delete(agentId)
   if (next.phase === 'saving') void apply(agentId, next)
   else if (linkActive(next.phase)) schedule(agentId)
 }
@@ -357,6 +377,7 @@ export function cancelLink(agentId: string) {
   clearTimeout(timers.get(agentId))
   timers.delete(agentId)
   blips.delete(agentId)
+  waits.delete(agentId)
   attempts.set(agentId, (attempts.get(agentId) ?? 0) + 1)
   set(agentId, null)
   if (link?.id && linkActive(link.phase)) void release(link.id)

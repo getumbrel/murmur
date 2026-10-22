@@ -63,6 +63,11 @@ Unlike Telegram (driven by Murmur's server), the setup runs in the tab. That's s
 link the moment the phone scans and a fresh start reports it as already linked: a tab that sleeps, or a
 Hermes that forgets the setup (`404`), just starts again and finishes. `410` means the code expired.
 
+From Hermes 0.22.4 one setup runs at a time. A start while an earlier one still holds on (put away while its
+bridge was downloading, or open in another tab) gets `409` "Another WhatsApp QR setup is still active…", so
+Murmur keeps showing "Getting a code" and asks again every 1.5 s, for as long as Hermes keeps a setup (10
+minutes).
+
 **Caveats**
 - Hermes links WhatsApp the way WhatsApp Web does, through an **unofficial bridge** (Baileys, in
   `scripts/whatsapp-bridge/`). WhatsApp doesn't officially support this, so the sheet says a spare number is
@@ -70,7 +75,9 @@ Hermes that forgets the setup (`404`), just starts again and finishes. `410` mea
 - Hermes 0.22 calls WhatsApp "not configured" for every agent but the main one. Murmur treats a saved
   `whatsapp_setup.mode` as set up and reads the agent's own messaging status for how it's doing.
 - Disconnect can't unlink the device (no API): it stays under Linked devices on the phone, and the confirm
-  says so. Removing it there and then setting up again is untested.
+  says so. Removing it there and then setting up again is untested: Hermes keeps the old link and reports it
+  as linked. From 0.22.4, `reset_session: true` on start puts the old link aside and pairs afresh (WhatsApp
+  must be off first); Murmur doesn't use it yet.
 - A phone can't scan its own screen, so in "Your WhatsApp" mode on a phone the sheet suggests a computer.
 
 ## 3. Who can message an agent ("Needs you")
