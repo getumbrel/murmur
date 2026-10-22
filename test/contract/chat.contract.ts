@@ -243,13 +243,15 @@ describe('changing a chat', () => {
     const { runtime, stored } = await newChat(socket)
     const first = await turn(socket, runtime, 'First [[say: One]]')
     await turn(socket, runtime, 'Second [[say: Two]]')
-    await socket.request('prompt.submit', {
-      session_id: runtime,
-      text: 'First, edited [[say: Edited]]',
-      truncate_before_row_id: first.payload!.persisted_turn!.user_row_id,
-      confirm_truncate: true,
-      confirm_empty_truncate: true,
-    })
+    await whenIdle(() =>
+      socket.request('prompt.submit', {
+        session_id: runtime,
+        text: 'First, edited [[say: Edited]]',
+        truncate_before_row_id: first.payload!.persisted_turn!.user_row_id,
+        confirm_truncate: true,
+        confirm_empty_truncate: true,
+      }),
+    )
     await socket.until('the edited turn', () => socket.of(runtime).filter((e) => e.type === 'message.complete').length === 3 || undefined)
     expect((await history(stored)).map((r) => r.content)).toEqual(['First, edited [[say: Edited]]', 'Edited'])
   })

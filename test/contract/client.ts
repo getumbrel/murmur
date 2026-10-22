@@ -141,7 +141,8 @@ export const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve
 
 /**
  * Hermes can still call a chat busy (4009) for a moment after message.complete,
- * while it wraps the turn up. Retries `run` through that, for up to 10s.
+ * while it wraps the turn up: an edit or an undo sent then is refused, where a
+ * new message would just wait its turn. Retries `run` through that, for up to 10s.
  */
 export async function whenIdle<T>(run: () => Promise<T>): Promise<T> {
   for (let tries = 0; ; tries++) {
