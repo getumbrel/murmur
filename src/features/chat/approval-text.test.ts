@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { approvalText, detailOf, isCallTo, summarize, toolAsked } from './approval-text'
+import type { ApprovalChoice } from './types'
 
 // As Hermes v2026.9.24 sends it for a tool on a `trust: untrusted` MCP server.
 const UMBREL = {
@@ -54,6 +55,75 @@ describe('approvalText', () => {
       command: 'Delete 3 files from Downloads?',
       prose: true,
       choices: ['once', 'deny'],
+    })
+  })
+
+  // As Hermes 0.22 sends them: a stand-in where the command goes, and what it's about in the description.
+  const ALL: ApprovalChoice[] = ['once', 'session', 'always', 'deny']
+
+  it("shows a plugin's reason, never its stand-in", () => {
+    const plugin = {
+      command: '<terminal> (plugin approval rule)',
+      description: 'Pushing to main needs a person to sign off',
+      patternKeys: ['plugin_rule:git-push'],
+      choices: ALL,
+    }
+    expect(approvalText({ who: 'Ada', ...plugin })).toEqual({
+      title: 'Ada needs your OK',
+      command: 'Pushing to main needs a person to sign off',
+      prose: true,
+      choices: ALL,
+    })
+  })
+
+  it('says which tool a plugin asked about when it gave no reason', () => {
+    const plugin = { command: '<terminal> (plugin approval rule)', patternKeys: ['plugin_rule:terminal'] }
+    expect(approvalText({ ...plugin, description: 'Plugin requires approval for terminal' }).command).toBe(
+      'Running a command',
+    )
+    expect(
+      approvalText({ ...plugin, description: 'Plugin requires approval for mcp__umbrel__delete_files' }).command,
+    ).toBe('Deleting files')
+  })
+
+  it('names the file for writes Hermes asks about', () => {
+    const ssh = {
+      command: '<write to /opt/data/home/.ssh/config>',
+      description:
+        'Write to SSH client config file(s): /opt/data/home/.ssh/config. The SSH config can carry ProxyCommand / Match exec directives that run commands, so writes require your approval.',
+      patternKeys: ['ssh_config_write'],
+      choices: ALL,
+    }
+    expect(approvalText({ who: 'Ada', ...ssh })).toEqual({
+      title: 'Ada wants to edit SSH settings',
+      command: '/opt/data/home/.ssh/config',
+      choices: ALL,
+    })
+    const instructions = {
+      command: '<write to AGENTS.md>',
+      description:
+        'Write to protected agent-instruction file(s): AGENTS.md. These files steer future agent behavior; approval is always required (not bypassed by auto-approve).',
+      patternKeys: ['protected_instruction_file'],
+      choices: ['once', 'deny'] as ApprovalChoice[],
+    }
+    expect(approvalText({ who: 'Ada', ...instructions })).toEqual({
+      title: 'Ada wants to edit agent instructions',
+      command: 'AGENTS.md',
+      choices: ['once', 'deny'],
+    })
+  })
+
+  it("reads a check it doesn't know by its own words, but keeps commands that start with <", () => {
+    expect(
+      approvalText({ command: '<deploy> (new rule)', description: 'Deploys need your OK', patternKeys: ['new_rule'] }),
+    ).toMatchObject({
+      title: 'Your agent needs your OK',
+      command: 'Deploys need your OK',
+      prose: true,
+    })
+    expect(approvalText({ command: '< /dev/zero > /dev/sda', description: 'disk write' })).toMatchObject({
+      title: 'Your agent wants to run a command',
+      command: '< /dev/zero > /dev/sda',
     })
   })
 })

@@ -3,8 +3,12 @@
 // Hermes asking before it uses a tool on a server it doesn't fully trust, or
 // the tool itself asking you to confirm. Both arrive with pattern_key
 // "mcp_elicitation" and worded for developers ("MCP tool 'delete_files' on
-// UNTRUSTED server 'umbrel' wants to run…"), so they're retold here.
+// UNTRUSTED server 'umbrel' wants to run…"), so they're retold here. Checks
+// that aren't about a command (a plugin's rule, a write to a file that steers
+// SSH or agents) put a stand-in like "<terminal> (plugin approval rule)" where
+// the command goes; that's never shown, only what it stands for.
 
+import { toolLabel } from './tool-labels'
 import type { ApprovalChoice } from './types'
 
 export type ApprovalText = {
@@ -33,6 +37,15 @@ type Request = {
 }
 
 const UNTRUSTED = /^MCP tool '([^']+)' on UNTRUSTED server '([^']+)'/
+// What Hermes says when a plugin asks without giving a reason.
+const NO_REASON = /^Plugin requires approval for (\S+)$/
+// Writes Hermes asks about, by their pattern key.
+const WRITES: Record<string, string> = {
+  ssh_config_write: 'edit SSH settings',
+  protected_instruction_file: 'edit agent instructions',
+}
+// A stand-in, not a command: "<terminal> (plugin approval rule)", "<write to ~/.ssh/config>".
+const STAND_IN = /^<[^<>]+>(?: \([^()]*\))?$/
 // Each of these is for one call: Hermes doesn't remember a yes for later.
 const ONCE: ApprovalChoice[] = ['once', 'deny']
 
@@ -60,6 +73,21 @@ export function approvalText({
   if (patternKeys.includes('mcp_elicitation')) {
     return { title: `${who} needs your OK`, command: command || description, prose: true, choices: ONCE }
   }
+  const asked = choices?.length ? choices : (['once', 'always', 'deny'] as ApprovalChoice[])
+  const write = patternKeys.map((key) => WRITES[key]).find(Boolean)
+  if (write) {
+    return { title: `${who} wants to ${write}`, command: /^<write to (.+)>$/.exec(command ?? '')?.[1], choices: asked }
+  }
+  // A plugin's rule, or any other check that isn't a command: its own words.
+  if (patternKeys.some((key) => key.startsWith('plugin_rule:')) || STAND_IN.test(command ?? '')) {
+    const tool = NO_REASON.exec(description ?? '')?.[1]
+    return {
+      title: `${who} needs your OK`,
+      command: tool ? toolLabel(tool).label : description || undefined,
+      prose: true,
+      choices: asked,
+    }
+  }
   return {
     title: command
       ? `${who} wants to run a command`
@@ -67,7 +95,7 @@ export function approvalText({
         ? `${who} wants to ${description}`
         : `${who} needs your OK`,
     command,
-    choices: choices?.length ? choices : ['once', 'always', 'deny'],
+    choices: asked,
   }
 }
 

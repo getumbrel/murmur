@@ -54,6 +54,52 @@ describe('approval', () => {
   })
 })
 
+describe('approval for something other than a command', () => {
+  // A plugin that asks before one kind of command, the way a user's own guard rails would.
+  const plugin = {
+    'plugin.yaml': 'name: contract-approve\nversion: 1.0.0\ndescription: Asks before contract commands.\nprovides_hooks:\n  - pre_tool_call\n',
+    '__init__.py': [
+      'def register(ctx):',
+      '    def ask(tool_name="", args=None, **_):',
+      '        if tool_name == "terminal" and "contract-plugin" in str((args or {}).get("command", "")):',
+      '            return {"action": "approve", "message": "Contract commands need a person to sign off", "rule_key": "contract"}',
+      '    ctx.register_hook("pre_tool_call", ask)',
+      '',
+    ].join('\n'),
+  }
+
+  it("shows a plugin's reason, not Hermes's stand-in for the command", async () => {
+    const dir = '/opt/data/plugins/contract-approve'
+    for (const [file, text] of Object.entries(plugin))
+      await inHermes('sh', '-c', `mkdir -p ${dir} && printf '%s' "$0" > ${dir}/${file}`, text)
+    await inHermes('chown', '-R', '1000:1000', '/opt/data/plugins')
+    // Through the dashboard, which runs the chats: `hermes plugins enable` only reloads the messaging gateway.
+    await api.post('/api/dashboard/agent-plugins/contract-approve/enable')
+
+    socket = await connect((r) => (r.method === 'approval' ? { choice: 'deny' } : undefined))
+    const { runtime } = await newChat(socket)
+    await turn(socket, runtime, 'Check [[tool: terminal {"command":"echo contract-plugin"}]]')
+    const { params } = await socket.serverRequest('approval')
+    expect(params).toMatchObject({
+      command: '<terminal> (plugin approval rule)',
+      description: 'Contract commands need a person to sign off',
+      pattern_keys: ['plugin_rule:contract'],
+    })
+    const card = approvalText({ command: params.command as string, description: params.description as string, choices: params.choices as ApprovalChoice[], patternKeys: params.pattern_keys as string[] })
+    expect(card).toMatchObject({ title: 'Your agent needs your OK', command: 'Contract commands need a person to sign off', prose: true })
+  })
+
+  it('names the file for a write to the SSH config', async () => {
+    socket = await connect((r) => (r.method === 'approval' ? { choice: 'deny' } : undefined))
+    const { runtime } = await newChat(socket)
+    await turn(socket, runtime, 'Set up [[tool: write_file {"path":"~/.ssh/config","content":"Host contract\\n"}]]')
+    const { params } = await socket.serverRequest('approval')
+    expect(params).toMatchObject({ command: expect.stringMatching(/^<write to .*\.ssh\/config>$/), pattern_keys: ['ssh_config_write'] })
+    const card = approvalText({ command: params.command as string, description: params.description as string, choices: params.choices as ApprovalChoice[], patternKeys: params.pattern_keys as string[] })
+    expect(card).toMatchObject({ title: 'Your agent wants to edit SSH settings', command: expect.stringMatching(/\.ssh\/config$/) })
+  })
+})
+
 describe('clarify', () => {
   it('asks questions with ids, and takes answers by id', async () => {
     socket = await connect((r) => (r.method === 'clarify' ? { answers: { q0: 'Blue', q1: 'Tue' } } : undefined))
