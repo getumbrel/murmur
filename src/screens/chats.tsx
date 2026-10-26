@@ -12,7 +12,7 @@ import { NotFound } from '@/features/chat-screen/not-found'
 import { ChatList } from '@/features/agent-page/chat-list'
 import { PageBar } from '@/features/agent-page/page-bar'
 import { usePageScroll } from '@/features/agent-page/scroll'
-import { useAgentChatList, useDeleteChat } from '@/features/agent-page/chats'
+import { useAgentChatList } from '@/features/agent-page/chats'
 
 // One agent's chats and nothing else, for a phone's Home: tap an agent with
 // more than one chat and pick which, as in Messages. Its name leads to the
@@ -26,7 +26,6 @@ export function ChatsScreen({ agentId }: { agentId: string }) {
   const wide = useIsWide()
   const status = useAgentStatus(agentId)
   const chats = useAgentChatList(agent)
-  const deleteChat = useDeleteChat(agentId)
   const { page, title, scrolled, under, onScroll } = usePageScroll<HTMLHeadingElement>(`chats:${agentId}`)
 
   useEffect(() => {
@@ -103,7 +102,7 @@ export function ChatsScreen({ agentId }: { agentId: string }) {
             pending={chats.isPending}
             failed={chats.isError}
             onRetry={() => void chats.refetch()}
-            onDelete={deleteChat}
+            filing={chats.filing}
             heading={false}
           />
         </div>

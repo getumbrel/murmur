@@ -481,7 +481,7 @@ export type ChatSummary = {
 export const BOT_CHAT = 'Bot Chat'
 export const MAIN_CHAT = 'Main chat'
 
-type SessionRow = {
+export type SessionRow = {
   id: string
   resolved_id?: string
   title?: string
@@ -491,7 +491,7 @@ type SessionRow = {
   source?: string
 }
 
-const toSummary = (s: SessionRow): ChatSummary => ({
+export const toSummary = (s: SessionRow): ChatSummary => ({
   id: s.id,
   // Titles cut off mid-path name a fragment of a file; the preview reads better.
   title: readable(s.title, { files: false }) || readable(s.preview) || 'New chat',

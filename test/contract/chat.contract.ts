@@ -1,8 +1,9 @@
 // A chat, the way src/state/chats.ts holds one: made over the socket, streamed
-// as events, read back over REST, and stopped, edited, reacted to and deleted.
+// as events, read back over REST, and stopped, edited, reacted to, renamed,
+// pinned, archived and deleted.
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { clearUnread } from '@/state/chats'
+import { clearUnread, titleTaken, updateChat } from '@/state/chats'
 import { api, connect, modelRequests, newChat, q, sleep, turn, whenIdle, type Socket } from './client'
 
 let socket: Socket
@@ -297,5 +298,86 @@ describe('changing a chat', () => {
     await socket.request('session.delete', { session_id: stored, profile: 'default' })
     await sleep(200)
     expect((await api.call('GET', `/api/sessions/${stored}/messages?${q('default')}`)).status).toBe(404)
+  })
+})
+
+describe('filing a chat', () => {
+  /** The agent's chats as its page lists them (REST, newest first), or only its archived ones. */
+  const listed = async (extra = '') =>
+    (await api.get(`/api/sessions?${q('default')}&limit=60&order=recent&exclude_sources=cron${extra}`)).sessions as {
+      id: string
+      title: string | null
+      pinned?: boolean
+      archived?: boolean
+    }[]
+  const inSocketList = async (stored: string) => {
+    const { sessions } = await socket.request<{ sessions: { id: string; resolved_id?: string }[] }>('session.list', {
+      profile: 'default',
+      limit: 200,
+    })
+    return sessions.some((s) => s.id === stored || s.resolved_id === stored)
+  }
+
+  it('renames a chat, and refuses a name another of the agent’s chats has', async () => {
+    const a = await newChat(socket)
+    await turn(socket, a.runtime, 'Name me [[say: Sure]]')
+    const b = await newChat(socket)
+    await turn(socket, b.runtime, 'Me too [[say: Sure]]')
+    const name = `Contract name ${Date.now().toString(36)}`
+    await updateChat(a.stored, 'default', { title: name })
+    expect((await api.get(`/api/sessions/${a.stored}?${q('default')}`)).title).toBe(name)
+
+    const taken = await updateChat(b.stored, 'default', { title: name }).catch((e: unknown) => e)
+    expect(titleTaken(taken)).toBe(true)
+  })
+
+  it('says on every row whether it’s pinned, and brings pins along past the list’s window', async () => {
+    const pinned = await newChat(socket)
+    await turn(socket, pinned.runtime, 'Pin me [[say: Pinned]]')
+    for (let i = 0; i < 2; i++) await turn(socket, (await newChat(socket)).runtime, `Newer ${i} [[say: Newer]]`)
+    await updateChat(pinned.stored, 'default', { pinned: true })
+
+    const rows = (await api.get(`/api/sessions?${q('default')}&limit=1&order=recent&exclude_sources=cron`)).sessions
+    expect(rows.every((r: { pinned?: unknown }) => typeof r.pinned === 'boolean')).toBe(true)
+    expect(rows.find((r: { id: string }) => r.id === pinned.stored)).toMatchObject({ pinned: true })
+
+    await updateChat(pinned.stored, 'default', { pinned: false })
+    expect((await listed()).find((r) => r.id === pinned.stored)).toMatchObject({ pinned: false })
+  })
+
+  it('archives a chat out of the lists and into Archived, and back', async () => {
+    const { runtime, stored } = await newChat(socket)
+    await turn(socket, runtime, 'Archive me [[say: Archived]]')
+    await updateChat(stored, 'default', { archived: true })
+
+    expect(await inSocketList(stored)).toBe(false)
+    expect((await listed()).some((r) => r.id === stored)).toBe(false)
+    expect((await listed('&archived=only')).find((r) => r.id === stored)).toMatchObject({ archived: true })
+
+    await updateChat(stored, 'default', { archived: false })
+    expect(await inSocketList(stored)).toBe(true)
+    expect((await listed('&archived=only')).some((r) => r.id === stored)).toBe(false)
+  })
+
+  it('still finds an archived chat by what was said in it', async () => {
+    const { runtime, stored } = await newChat(socket)
+    await turn(socket, runtime, 'The word is marmalade [[say: Noted]]')
+    await updateChat(stored, 'default', { archived: true })
+    const { results } = await api.get(
+      `/api/sessions/search?q=marmalade&${q('default')}&limit=15&exclude_sources=cron,bot_room`,
+    )
+    expect(results.some((r: { session_id?: string; id?: string }) => (r.session_id ?? r.id) === stored)).toBe(true)
+  })
+
+  it('unpins a chat as it archives it, in one change', async () => {
+    const { runtime, stored } = await newChat(socket)
+    await turn(socket, runtime, 'Both [[say: Both]]')
+    await updateChat(stored, 'default', { pinned: true })
+    await updateChat(stored, 'default', { archived: true, pinned: false })
+    expect((await listed('&archived=only')).find((r) => r.id === stored)).toMatchObject({
+      archived: true,
+      pinned: false,
+    })
+    expect((await listed()).some((r) => r.id === stored)).toBe(false)
   })
 })

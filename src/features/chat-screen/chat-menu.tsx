@@ -8,12 +8,21 @@ import { cn } from '@/lib/cn'
 import { useLongPress } from '@/features/chat/message-menu'
 import { copyText } from '@/features/chat/use-copy'
 
-// Copy or share a whole chat, or look into it. On wide screens a quiet "…" sits in the header;
-// anywhere, press and hold (or right-click) the agent's name for the same menu.
+// Copy or share a whole chat, or look into it; below, what you can do to it as
+// one of your chats (pin, rename, archive, delete). On wide screens a quiet "…"
+// sits in the header; anywhere, press and hold (or right-click) the agent's
+// name for the same menu.
 
 const canShare = () => typeof navigator !== 'undefined' && typeof navigator.share === 'function'
 
-type Action = { label: string; icon: typeof Copy; onSelect: () => unknown }
+type Action = {
+  label: string
+  icon: typeof Copy
+  onSelect: () => unknown
+  danger?: boolean
+  /** Starts a group of its own, set off from the items above. */
+  section?: boolean
+}
 
 export function useChatMenu(getText: () => { title: string; text: string } | undefined, more: Action[] = []) {
   const [anchor, setAnchor] = useState<HTMLElement | null>(null)
@@ -139,23 +148,26 @@ export function ChatMenu({ menu }: { menu: Menu }) {
             exit={{ opacity: 0, scale: 0.97, transition: { duration: 0.14, ease: [0.16, 1, 0.3, 1] } }}
           >
             {actions.map((a, i) => (
-              <button
-                key={a.label}
-                type="button"
-                role="menuitem"
-                onClick={() => {
-                  close()
-                  void a.onSelect()
-                }}
-                className={cn(
-                  'flex h-11 w-full items-center justify-between gap-6 px-4 text-left text-body text-ink outline-none select-none',
-                  'transition-colors hover:bg-fill-1 focus-visible:bg-fill-1 active:bg-fill-2',
-                  i > 0 && 'hairline-t',
-                )}
-              >
-                {a.label}
-                <a.icon size={18} strokeWidth={1.85} className="text-ink-2" aria-hidden />
-              </button>
+              <div key={a.label} className="contents">
+                {a.section && i > 0 && <div role="separator" className="h-2 bg-fill-1" />}
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    close()
+                    void a.onSelect()
+                  }}
+                  className={cn(
+                    'flex h-11 w-full items-center justify-between gap-6 px-4 text-left text-body outline-none select-none',
+                    'transition-colors hover:bg-fill-1 focus-visible:bg-fill-1 active:bg-fill-2',
+                    a.danger ? 'text-danger' : 'text-ink',
+                    i > 0 && !a.section && 'hairline-t',
+                  )}
+                >
+                  {a.label}
+                  <a.icon size={18} strokeWidth={1.85} className={cn(!a.danger && 'text-ink-2')} aria-hidden />
+                </button>
+              </div>
             ))}
           </motion.div>
         </div>

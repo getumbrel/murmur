@@ -3,6 +3,7 @@ import { BOT_CHAT, MAIN_CHAT, readable, useAgentChats } from '@/state/agents'
 import type { Chat } from '@/state/chats'
 import { useRoutines, useRunOf } from '@/state/routines'
 import { runTitle } from '@/features/routines/runs'
+import { useArchivedChats } from '@/features/agent-page/chats'
 
 /** How long a chat started here waits for its proper title once the first reply is in. */
 const TITLE_WAIT = 6000
@@ -25,7 +26,12 @@ const isOpening = (title: string, opening: string) => {
  */
 export function useChatName(agentId: string, id: string | undefined, chat: Chat | undefined, { fresh = false } = {}) {
   const run = useRunOf(agentId, id)
-  const listed = useAgentChats(id && !run ? agentId : undefined).data?.find((c) => c.id === id)
+  const chats = useAgentChats(id && !run ? agentId : undefined)
+  const listed = chats.data?.find((c) => c.id === id)
+  // An archived chat isn't among them; it has its own list.
+  const archived = useArchivedChats(chats.isSuccess && !listed && !run ? agentId : undefined).data?.find(
+    (c) => c.id === id,
+  )
   const routine = useRoutines(run ? agentId : undefined).data?.find((r) => r.id === run?.routineId)
   // Said live (a rename, or Hermes titling it as you watch), it's newer than the list.
   const live = chat?.title === BOT_CHAT ? MAIN_CHAT : readable(chat?.title, { files: false })
@@ -47,5 +53,5 @@ export function useChatName(agentId: string, id: string | undefined, chat: Chat 
   if (fresh && !waited && (!live || isOpening(live, opening))) return 'New chat'
   // Until it's known not to be a run, a run's dated title could show.
   if (run === undefined) return ''
-  return live || listed?.title || opening
+  return live || listed?.title || archived?.title || opening
 }

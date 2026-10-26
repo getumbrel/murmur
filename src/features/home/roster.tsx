@@ -1,6 +1,6 @@
 import * as Popover from '@radix-ui/react-popover'
 import { AnimatePresence, motion } from 'motion/react'
-import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { useEffect, useId, useState, type CSSProperties, type ReactNode } from 'react'
 import { Link } from 'wouter'
 import { useQueryClient } from '@tanstack/react-query'
 import { ChevronRight, MoreHorizontal, Pencil, PencilLine, Plus, Trash2 } from 'lucide-react'
@@ -15,7 +15,7 @@ import { cn } from '@/lib/cn'
 import { useGroupRows, type GroupRow } from './groups'
 import { shortTime } from './time'
 import { Bone } from './bone'
-import { menuItem, menuKeys } from './new-menu'
+import { RowMenu, useLongPress } from './row-menu'
 import { setExpanded, useExpanded } from './expanded'
 import { NestedChats, useShowsChat } from './nested-chats'
 
@@ -638,117 +638,6 @@ function RowLink({
       )}
     </div>
   )
-}
-
-// ── Context menu ────────────────────────────────────────────────────────────
-
-type MenuItem = { label: string; icon: ReactNode; onSelect: () => void; danger?: boolean }
-
-function RowMenu({
-  open,
-  name,
-  roomy,
-  items,
-  close,
-}: {
-  open: boolean
-  name: string
-  roomy: boolean
-  items: MenuItem[]
-  close: () => void
-}) {
-  // Where focus was before the menu (the More button, for keyboards): it goes back there,
-  // and a sheet opened from the menu returns it there too.
-  const before = useRef<HTMLElement | null>(null)
-  const restore = () => before.current?.isConnected && before.current.focus()
-  const select = (it: MenuItem) => {
-    close()
-    // After the menu lets go of focus.
-    setTimeout(() => {
-      restore()
-      it.onSelect()
-    })
-  }
-  return (
-    <AnimatePresence>
-      {open && (
-        <Popover.Portal forceMount>
-          <Popover.Content
-            forceMount
-            asChild
-            side="bottom"
-            align="start"
-            sideOffset={roomy ? -6 : 4}
-            alignOffset={roomy ? 20 : 8}
-            collisionPadding={12}
-            aria-label={`${name} options`}
-            onOpenAutoFocus={() => (before.current = document.activeElement as HTMLElement | null)}
-            onCloseAutoFocus={(e) => {
-              e.preventDefault()
-              restore()
-            }}
-          >
-            <motion.div
-              role="menu"
-              onKeyDown={menuKeys}
-              className="z-50 min-w-56 origin-(--radix-popover-content-transform-origin) overflow-hidden rounded-xl bg-elevated shadow-float ring-1 ring-line"
-              initial={{ opacity: 0, scale: 0.92 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.96, transition: { duration: 0.14 } }}
-              transition={{ type: 'spring', stiffness: 520, damping: 34 }}
-            >
-              {items.map((it, i) => (
-                <button
-                  key={it.label}
-                  role="menuitem"
-                  className={cn(menuItem, i > 0 && 'hairline-t', it.danger && 'text-danger')}
-                  onClick={() => select(it)}
-                >
-                  {it.label}
-                  <span className={cn(!it.danger && 'text-ink-2')}>{it.icon}</span>
-                </button>
-              ))}
-            </motion.div>
-          </Popover.Content>
-        </Popover.Portal>
-      )}
-    </AnimatePresence>
-  )
-}
-
-/** Touch-and-hold (or right-click) opens the menu; the tap that ends a hold doesn't navigate. */
-function useLongPress(onLongPress: () => void, ms = 450) {
-  const timer = useRef<ReturnType<typeof setTimeout>>(undefined)
-  const origin = useRef<{ x: number; y: number }>(undefined)
-  const fired = useRef(false)
-  const cancel = () => clearTimeout(timer.current)
-  useEffect(() => cancel, [])
-  return {
-    onPointerDown: (e: React.PointerEvent) => {
-      fired.current = false
-      if (e.pointerType === 'mouse') return
-      origin.current = { x: e.clientX, y: e.clientY }
-      timer.current = setTimeout(() => {
-        fired.current = true
-        navigator.vibrate?.(8)
-        onLongPress()
-      }, ms)
-    },
-    onPointerMove: (e: React.PointerEvent) => {
-      if (origin.current && Math.hypot(e.clientX - origin.current.x, e.clientY - origin.current.y) > 8) cancel()
-    },
-    onPointerUp: cancel,
-    onPointerCancel: cancel,
-    onClick: (e: React.MouseEvent) => {
-      if (fired.current) e.preventDefault()
-      fired.current = false
-    },
-    onContextMenu: (e: React.MouseEvent) => {
-      e.preventDefault()
-      cancel()
-      onLongPress()
-    },
-  }
 }
 
 // ── Needs you ───────────────────────────────────────────────────────────────

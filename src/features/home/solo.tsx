@@ -8,7 +8,7 @@ import { useAgents, type Agent } from '@/state/agents'
 import { useGroupSummaries } from '@/state/groups'
 import { useAgentStatus } from '@/state/status'
 import { ChatList } from '@/features/agent-page/chat-list'
-import { useAgentChatList, useDeleteChat } from '@/features/agent-page/chats'
+import { useAgentChatList } from '@/features/agent-page/chats'
 import { noteArrivals } from './roster'
 
 // Most people have one agent. For them a roster of one is a detour: Home is
@@ -32,7 +32,6 @@ const ease = [0.16, 1, 0.3, 1] as const
 
 export function SoloChats({ agent, title }: { agent: Agent; title: React.ReactNode }) {
   const chats = useAgentChatList(agent)
-  const deleteChat = useDeleteChat(agent.id)
   return (
     <div className="hue-scope px-5" style={{ '--hue': agent.hue } as CSSProperties}>
       <AgentCard agent={agent} />
@@ -43,7 +42,7 @@ export function SoloChats({ agent, title }: { agent: Agent; title: React.ReactNo
         pending={chats.isPending}
         failed={chats.isError}
         onRetry={() => void chats.refetch()}
-        onDelete={deleteChat}
+        filing={chats.filing}
         heading={false}
         plain
       />

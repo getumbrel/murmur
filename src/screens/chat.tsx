@@ -21,6 +21,9 @@ import { useLoved } from '@/features/chat-screen/hearts'
 import { BackBadge, backHint, useElsewhere } from '@/features/chat-screen/elsewhere'
 import { ChatMenu, ChatMenuButton, useChatMenu } from '@/features/chat-screen/chat-menu'
 import { ChatInfoSheet, ContextRing } from '@/features/chat-screen/chat-info'
+import { useAgentChatList, useArchivedChats, useChatActions, type AgentChat } from '@/features/agent-page/chats'
+import { chatOptions } from '@/features/agent-page/chat-list'
+import { RenameChatSheet } from '@/features/agent-page/rename-chat'
 import { transcript } from '@/features/chat-screen/transcript'
 import { ModelChip } from '@/features/model/model-chip'
 import { EFFORT, thinkingOf, type Thinking } from '@/features/model/names'
@@ -59,6 +62,7 @@ import {
   setChatReasoning,
   stop,
   stopHelper,
+  titleTaken,
   undo,
   useChats,
 } from '@/state/chats'
@@ -189,7 +193,18 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
     composer.current?.setText('')
   }
 
-  const post = (text: string, files: File[] = []) => (id ? send(id, text, files) : start(text, files))
+  // This chat as one of the agent's: pinned, archived, or the main one.
+  const listed = useAgentChatList(id ? agentId : undefined)
+  const shelved = useArchivedChats(id && listed.filing ? agentId : undefined).data
+  const stored = id ? (listed.data?.find((c) => c.id === id) ?? shelved?.find((c) => c.id === id)) : undefined
+  const act = useChatActions(agentId)
+  const [renaming, setRenaming] = useState<AgentChat | null>(null)
+
+  const post = (text: string, files: File[] = []) => {
+    // Talking in an archived chat again brings it back among the rest.
+    if (stored?.archived) void act.unarchive(stored)
+    return id ? send(id, text, files) : start(text, files)
+  }
   const onSend = (text: string, files: File[]) => {
     if (rewrite && id && !files.length) {
       setRewrite(null)
@@ -264,10 +279,16 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
             toast('Add a title after /rename.')
             return false
           }
-          return void renameChat(id, arg).then(() => {
-            void qc.invalidateQueries({ queryKey: ['chats', agentId] })
-            toast.success(`Renamed to “${arg}”`)
-          }, oops('Couldn’t rename this chat. Try again.'))
+          return void renameChat(id, arg).then(
+            () => {
+              void qc.invalidateQueries({ queryKey: ['chats', agentId] })
+              toast.success(`Renamed to “${arg}”`)
+            },
+            (e) =>
+              titleTaken(e)
+                ? toast.error(`Another chat is already called “${arg}”.`)
+                : oops('Couldn’t rename this chat. Try again.')(e),
+          )
         case 'btw':
           if (!id) return later()
           if (!arg) {
@@ -363,17 +384,41 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
   // What's going on in the rest of Murmur while you're in here, as far as
   // Back leads: Home, or this agent's page when the chat was opened from it.
   const [location] = useLocation()
-  const backToAgent = useUpFrom(location) !== '/'
+  const up = useUpFrom(location)
+  const backToAgent = up !== '/'
   const elsewhere = useElsewhere(id, backToAgent ? agentId : undefined)
 
   // Copy or share the whole chat.
   const hasMessages = items.some((i) => i.kind === 'user' || i.kind === 'assistant')
-  const menu = useChatMenu(() => {
-    if (!agent || !hasMessages) return
-    const all = id ? (getChat(id)?.items ?? items) : items
-    const title = name || `Chat with ${agent.name}`
-    return { title, text: transcript(all, { title, agent: agent.name }) }
-  }, id ? [{ label: 'Chat info', icon: Gauge, onSelect: () => setInfo(true) }] : [])
+  // Then pin, rename, archive or delete it, as from its line in the lists. Archived or
+  // deleted, it's left for the list it was in (on a wide screen, the agent's main chat).
+  const options = stored
+    ? chatOptions(stored, act, {
+        filing: listed.filing,
+        rename: setRenaming,
+        leave: () => navigate(wide ? act.away(stored) : up),
+      }).menu
+    : []
+  const menu = useChatMenu(
+    () => {
+      if (!agent || !hasMessages) return
+      const all = id ? (getChat(id)?.items ?? items) : items
+      const title = name || `Chat with ${agent.name}`
+      return { title, text: transcript(all, { title, agent: agent.name }) }
+    },
+    id
+      ? [
+          { label: 'Chat info', icon: Gauge, onSelect: () => setInfo(true) },
+          ...options.map((o, i) => ({
+            label: o.label,
+            icon: o.icon,
+            onSelect: o.run,
+            danger: o.danger,
+            section: i === 0,
+          })),
+        ]
+      : [],
+  )
 
   if (agents.isSuccess && !agent)
     return (
@@ -523,6 +568,14 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
         />
 
         <ChatMenu menu={menu} />
+        {agent && (
+          <RenameChatSheet
+            agent={agent}
+            chat={renaming}
+            onClose={() => setRenaming(null)}
+            onRename={(title) => act.rename(renaming!, title)}
+          />
+        )}
         {agent && <ChatInfoSheet open={info} onOpenChange={setInfo} agent={agent} usage={usage} runtimeId={chat?.runtimeId} />}
 
         <DropZone

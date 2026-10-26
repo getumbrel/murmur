@@ -25,7 +25,7 @@ import { AgentModelSheet } from '@/features/agent-page/model-sheet'
 import { PageBar } from '@/features/agent-page/page-bar'
 import { WeekCard } from '@/features/agent-page/week'
 import { usePageScroll } from '@/features/agent-page/scroll'
-import { useAgentChatList, useDeleteChat } from '@/features/agent-page/chats'
+import { useAgentChatList } from '@/features/agent-page/chats'
 
 // An agent's home: who it is, a way to start talking, what it can do besides
 // (routines, memory, apps, passwords, Telegram and WhatsApp; its look is Edit,
@@ -43,7 +43,6 @@ export function AgentScreen({ agentId }: { agentId: string }) {
   const status = useAgentStatus(agentId)
   // What its routines found has its own place here, From routines.
   const chats = useAgentChatList(agent, { results: false })
-  const deleteChat = useDeleteChat(agentId)
   const actions = useAgentActions()
   const { page, title, scrolled, under, onScroll } = usePageScroll<HTMLHeadingElement>(`agent:${agentId}`)
   const [sheet, setSheet] = useState<Sheet | null>(null)
@@ -176,7 +175,7 @@ export function AgentScreen({ agentId }: { agentId: string }) {
               pending={chats.isPending}
               failed={chats.isError}
               onRetry={() => void chats.refetch()}
-              onDelete={deleteChat}
+              filing={chats.filing}
             />
           </div>
         </div>
