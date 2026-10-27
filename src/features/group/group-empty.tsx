@@ -1,7 +1,7 @@
 import { Hand } from 'lucide-react'
 import { motion } from 'motion/react'
 import type { Group } from '@/state/groups'
-import { joinNames } from '@/state/groups'
+import { joinNames } from '@shared/groups.ts'
 import { MemberRow } from './member-row'
 
 type Props = {

@@ -24,7 +24,7 @@ import {
   type RunResult,
 } from '@/state/routines'
 import { markChatSeen } from '@/state/status'
-import { foldQuiet } from './runs'
+import { foldQuiet } from '@shared/routines.ts'
 import { Glyph } from './glyph'
 import { TimeWheel } from './time-wheel'
 import { RepeatPicker } from './day-picker'

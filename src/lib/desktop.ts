@@ -1,6 +1,7 @@
 // Murmur's desktop app (Electron, desktop/) runs this same web app in a window
 // and lends it a few native things through its preload: the platform, the
-// app's version, the dock or taskbar badge, and bringing the window forward.
+// app's version, the dock or taskbar badge, bringing the window forward, and
+// the notifications it shows (clicking one opens what it's about).
 // Before the first paint the preload also sets <html data-desktop="mac|win|linux">,
 // which the titlebar styles in styles.css key off. In a browser none of it exists.
 
@@ -16,6 +17,8 @@ export type MurmurDesktop = Readonly<{
   focus(): void
   /** Matches the window chrome to Murmur's own theme. Missing in older desktop builds. */
   setTheme?(mode: 'system' | 'light' | 'dark'): void
+  /** Called with a clicked notification's {href, hermes}. Returns the stop. */
+  onOpen?(fn: (note: { href: string; hermes: string }) => void): () => void
 }>
 
 declare global {

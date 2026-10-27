@@ -21,6 +21,14 @@ export function browserHermes(): string | null {
 
 let current = browserHermes()
 
+// A notification's link names the Hermes it's from (?hermes=<id>). The server
+// has made that the browser's choice already, so the address needn't say.
+if (typeof location !== 'undefined' && new URLSearchParams(location.search).has(HERMES_PARAM)) {
+  const url = new URL(location.href)
+  url.searchParams.delete(HERMES_PARAM)
+  history.replaceState(history.state, '', url)
+}
+
 /** The Hermes this tab is for: null until the server has named one (a first visit in development). */
 export const tabHermes = () => current
 

@@ -32,7 +32,7 @@ import { HermesGate } from '@/features/connection/gate'
 import { ShortcutsSheet, useShortcuts } from '@/features/commands/shortcuts'
 import { retryUnlessMissing } from '@/hermes/compat'
 import { setDesktopBadge } from '@/lib/desktop'
-import { NotificationOffer, useSystemNotifications } from '@/features/notifications/notify'
+import { NotificationOffer, useNotifier } from '@/features/notifications/notify'
 
 // Screens most visits never open load on the side, so the first open is quick.
 const GroupScreen = lazyComponent(() => import('@/screens/group').then((m) => m.GroupScreen))
@@ -263,8 +263,8 @@ function Background() {
   useEffect(() => setMainAgent(agents?.find((a) => a.isDefault)?.id), [agents])
   useSeenTracking()
   useDocumentTitle()
-  // A system notification when an agent finishes or needs you somewhere you aren't looking.
-  useSystemNotifications()
+  // Notifications on this device: kept signed up, told where you are, opened where they point.
+  useNotifier()
   // ⌘⇧O, ⌥↑/⌥↓, ⌘, and "?" (src/features/commands/shortcuts.tsx); not during the welcome.
   useShortcuts(!useLocation()[0].startsWith('/welcome'))
   // Routines fire on the person's clock, not the server's UTC.

@@ -10,6 +10,7 @@ import { cookieValue, handleAccess, isSignedIn, onSignOut } from './access.ts'
 import { memo, setting, useEnv, type Env } from './config.ts'
 import { handleConnection, hermesFor, onDrop, syncHermesCookie } from './connection.ts'
 import { hostAllowed, originAllowed, requestUrl, sendJson } from './http.ts'
+import { handleNotifications, startNotifications, stopNotifications, type NativeNote } from './notifications.ts'
 import { isOAuthReturn } from './oauth-return.ts'
 import { createProxy, refuse } from './proxy.ts'
 import { handleSetup, setupSettled, startSetup } from './setup.ts'
@@ -175,6 +176,8 @@ export type ServerOptions = {
    * the server through its loopback port. It goes no further than this server.
    */
   requireHeader?: { name: string; value: string }
+  /** Shows a notification on this computer, for an app that embeds the server (notifications.ts). */
+  notify?: (note: NativeNote) => void
 }
 
 export type RunningServer = { url: string; port: number; server: http.Server; close: () => Promise<void> }
@@ -216,6 +219,8 @@ export function startServer(options: ServerOptions = {}): Promise<RunningServer>
   startSetup()
   // Telegram setups a restart interrupted carry on once the Hermes is settled.
   void setupSettled().then(startTelegram)
+  // Notifications, for the devices that asked, from every Hermes Murmur knows.
+  void setupSettled().then(() => startNotifications({ notify: options.notify }))
   const staticDir = resolve(env.STATIC_DIR ?? 'dist')
   const carriesHeader = headerCheck(options.requireHeader)
 
@@ -238,8 +243,10 @@ export function startServer(options: ServerOptions = {}): Promise<RunningServer>
     try {
       // An update's first start may still be settling which Hermes this Murmur uses (setup.ts).
       await setupSettled()
-      syncHermesCookie(req, res)
-      if (!isHermes(path) && !path.startsWith('/murmur/')) return serveStatic(staticDir, req, res, url)
+      const page = !isHermes(path) && !path.startsWith('/murmur/')
+      // A notification's link opens on the Hermes it's from (?hermes=<id>).
+      syncHermesCookie(req, res, page ? url : undefined)
+      if (page) return serveStatic(staticDir, req, res, url)
       const mutating = req.method !== 'GET' && req.method !== 'HEAD'
       if ((isHermes(path) || mutating) && !originAllowed(req)) return sendJson(res, 403, { error: 'cross_origin' })
       if (isHermes(path) && !isHermesApi(path)) return sendJson(res, 404, { error: 'not_found' })
@@ -250,6 +257,7 @@ export function startServer(options: ServerOptions = {}): Promise<RunningServer>
       if (await handleSetup(req, res, path)) return
       if (await handleConnection(req, res, path)) return
       if (await handleTelegram(req, res, path)) return
+      if (await handleNotifications(req, res, path)) return
       if (path === '/murmur/local') return sendJson(res, 200, { servers: await discoverLocal() })
       sendJson(res, 404, { error: 'not_found' })
     } catch (error) {
@@ -284,6 +292,7 @@ export function startServer(options: ServerOptions = {}): Promise<RunningServer>
     new Promise<void>((done) => {
       for (const fn of unsubscribe) fn()
       stopTelegram()
+      stopNotifications()
       proxy.closeWhere(() => true)
       server.close(() => done())
       server.closeAllConnections()

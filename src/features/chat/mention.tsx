@@ -11,7 +11,7 @@ import {
   type ReactNode,
 } from 'react'
 import { useAgents } from '@/state/agents'
-import { mentionRanges, type Mentionable } from '@/features/group/mentions'
+import { mentionRanges, type Mentionable } from '@shared/mentions.ts'
 import { MentionCard } from './mention-card'
 import './mention.css'
 

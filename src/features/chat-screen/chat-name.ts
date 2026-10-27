@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { BOT_CHAT, MAIN_CHAT, readable, useAgentChats } from '@/state/agents'
 import type { Chat } from '@/state/chats'
 import { useRoutines, useRunOf } from '@/state/routines'
-import { runTitle } from '@/features/routines/runs'
+import { runTitle } from '@shared/routines.ts'
 import { useArchivedChats } from '@/features/agent-page/chats'
 
 /** How long a chat started here waits for its proper title once the first reply is in. */

@@ -1,11 +1,5 @@
-import { beforeAll, describe, expect, it } from 'vitest'
-
-// parse.ts reaches the browser's per-Hermes storage on load; a bare stand-in is enough here.
-let splitMessage: typeof import('./parse').splitMessage
-beforeAll(async () => {
-  Object.assign(globalThis, { document: { cookie: '' }, localStorage: { getItem: () => null, setItem() {}, removeItem() {} } })
-  ;({ splitMessage } = await import('./parse'))
-})
+import { describe, expect, it } from 'vitest'
+import { splitMessage } from './message.ts'
 
 const kinds = (text: string) =>
   splitMessage(text).map((s) => (s.kind === 'media' ? `media:${s.path}` : s.kind))

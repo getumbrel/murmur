@@ -17,6 +17,7 @@ import {
   ipcMain,
   nativeImage,
   nativeTheme,
+  Notification,
   screen,
   session,
   shell,
@@ -27,6 +28,7 @@ import {
 import { randomBytes } from 'node:crypto'
 import { join, resolve } from 'node:path'
 import { startServer, type RunningServer, type ServerOptions } from '../server/app.ts'
+import type { NativeNote } from '../server/notifications.ts'
 import { contextMenu } from './menu.ts'
 import { readState, saveState, type Bounds } from './state.ts'
 import { startUpdates } from './updates.ts'
@@ -80,6 +82,7 @@ async function serve() {
     // The app's settings only: a HERMES_URL or MURMUR_PASSWORD in the shell that opened it isn't meant for it.
     env: {},
     requireHeader: ACCESS,
+    notify,
   }
   // The last port again if it's free: the app's local storage belongs to its origin, port included.
   const wanted = DEV_SERVER_PORT ?? readState().port
@@ -132,7 +135,8 @@ function rememberBounds(window: BrowserWindow) {
   })
 }
 
-function createWindow() {
+/** The window, opened at `path` (a clicked notification's chat, say). */
+function createWindow(path = '/') {
   const saved = savedBounds()
   const colors = theme()
   const chrome: BrowserWindowConstructorOptions = isMac
@@ -167,8 +171,8 @@ function createWindow() {
   window.on('closed', () => {
     if (main === window) main = null
   })
-  // A Mac app keeps running with its window closed, and the page is what watches
-  // Hermes, notifies and keeps the Dock badge: closing only hides it.
+  // A Mac app keeps running with its window closed: the server goes on telling
+  // the person what agents do, and the page keeps the Dock badge. Closing only hides it.
   window.on('close', (event) => {
     if (!isMac || quitting) return
     event.preventDefault()
@@ -179,7 +183,7 @@ function createWindow() {
   const fullScreen = (on: boolean) => () => window.webContents.send('murmur:fullscreen', on)
   window.on('enter-full-screen', fullScreen(true))
   window.on('leave-full-screen', fullScreen(false))
-  void window.loadURL(DEV_URL ?? `${server!.url}/`)
+  void window.loadURL(new URL(path, DEV_URL ?? server!.url).href)
   return window
 }
 
@@ -203,6 +207,32 @@ nativeTheme.on('updated', () => {
     if (!isMac) window.setTitleBarOverlay({ ...colors, height: TITLE_BAR_HEIGHT })
   }
 })
+
+// ── Notifications ───────────────────────────────────────────────────────────
+// Murmur's server notices what agents do and hands each note here
+// (server/notifications.ts), so they come from the app, whatever the window
+// is doing: one per chat or group, the newest replacing the one before.
+
+const notes = new Map<string, Notification>()
+
+function notify(note: NativeNote) {
+  if (!Notification.isSupported()) return
+  notes.get(note.tag)?.close()
+  const notice = new Notification({ title: note.title, body: note.body, ...(process.platform === 'linux' && { icon: join(__dirname, 'icon.png') }) })
+  notice.on('click', () => {
+    notes.delete(note.tag)
+    if (!server) return
+    // The page opens it, on the Hermes it's from; with no page yet, the window opens at it.
+    const link = `${note.href}?hermes=${encodeURIComponent(note.hermes)}`
+    if (!main || main.isDestroyed()) return void (main = createWindow(link))
+    if (shown.has(main)) bringForward(main)
+    if (main.webContents.isLoading()) void main.loadURL(new URL(link, origin).href)
+    else main.webContents.send('murmur:open', { href: note.href, hermes: note.hermes })
+  })
+  notice.on('close', () => notes.get(note.tag) === notice && notes.delete(note.tag))
+  notes.set(note.tag, notice)
+  notice.show()
+}
 
 // ── What the page may do ─────────────────────────────────────────────────────
 

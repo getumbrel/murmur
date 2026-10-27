@@ -104,3 +104,60 @@ export function resultLine(markdown: string) {
     .replace(/\s+/g, ' ')
     .trim()
 }
+
+// ── Landing ─────────────────────────────────────────────────────────────────
+// Runs that finish with something to say are told as they land (server/watch.ts).
+
+export type RunRow = { id: string; startedAt: number; finished: boolean; title: string }
+
+/** What's been seen of one agent's runs. */
+export type Memory = {
+  /** Hermes's clock: a run started after this is new. */
+  since: number
+  /** Runs seen going, so their finishing counts even though they started before. */
+  going: Set<string>
+  /** Runs seen finished, with when they started. */
+  done: Map<string, number>
+}
+
+/**
+ * Which runs just landed: finished, and either seen going or started since
+ * watching began. The first look only remembers. `rows` are the newest few.
+ */
+export function look<R extends RunRow>(rows: R[], memory?: Memory): { memory: Memory; landed: R[] } {
+  if (!memory) {
+    return {
+      memory: {
+        since: Math.max(0, ...rows.map((r) => r.startedAt)),
+        going: new Set(rows.filter((r) => !r.finished).map((r) => r.id)),
+        done: new Map(rows.filter((r) => r.finished).map((r) => [r.id, r.startedAt])),
+      },
+      landed: [],
+    }
+  }
+  const landed: R[] = []
+  for (const row of rows) {
+    if (!row.finished) {
+      memory.going.add(row.id)
+      continue
+    }
+    if (memory.done.has(row.id)) continue
+    memory.done.set(row.id, row.startedAt)
+    if (memory.going.delete(row.id) || row.startedAt > memory.since) landed.push(row)
+  }
+  // Runs that have left the newest few are let go, and so is anything as old.
+  const here = new Set(rows.map((r) => r.id))
+  for (const id of memory.going) if (!here.has(id)) memory.going.delete(id)
+  for (const [id, startedAt] of memory.done) {
+    if (here.has(id)) continue
+    memory.done.delete(id)
+    memory.since = Math.max(memory.since, startedAt)
+  }
+  return { memory, landed }
+}
+
+/** A routine whose results Hermes already sends somewhere else (Telegram), which would say it twice. */
+export const deliversElsewhere = (deliver: unknown) => {
+  const to = Array.isArray(deliver) ? deliver.join(',') : String(deliver ?? '')
+  return to.split(',').some((t) => t.trim() && t.trim() !== 'local')
+}

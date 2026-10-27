@@ -6,7 +6,7 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest'
-import { isQuiet, isRunBrief, runTitle } from '@/features/routines/runs'
+import { isQuiet, isRunBrief, runTitle } from '@shared/routines.ts'
 import { parseSchedule, toSchedule, WEEKDAYS, type When } from '@/features/routines/schedule'
 import { fetchRoutineRuns, runOf } from '@/state/routines'
 import { placeLastChats, toAgent, type Profile } from '@/state/agents'

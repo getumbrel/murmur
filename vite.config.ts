@@ -15,6 +15,8 @@ const server = process.env.MURMUR_SERVER ?? 'http://localhost:3000'
 const { version } = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as { version: string }
 
 const src = (path = '') => fileURLToPath(new URL(`./src${path && '/' + path}`, import.meta.url))
+// Code the server runs too (shared/): plain TypeScript, no browser or Node APIs.
+const shared = fileURLToPath(new URL('./shared', import.meta.url))
 
 /**
  * Writes `.br` and `.gz` beside every text asset in the build, compressed once
@@ -61,6 +63,7 @@ export default defineConfig({
   resolve: {
     alias: [
       { find: '@', replacement: src() },
+      { find: '@shared', replacement: shared },
       // @streamdown/code's `shiki` becomes Murmur's cut-down bundle: ~28 common
       // languages and the JavaScript regex engine, no WASM (src/features/chat/shiki.ts).
       { find: /^shiki$/, replacement: src('features/chat/shiki.ts') },

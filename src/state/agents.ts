@@ -20,7 +20,8 @@ import { parseUserMessage } from '@/features/media/parse'
 import type { Speaker } from '@/features/chat/types'
 import { scoped } from '@/hermes/instance'
 import { listProfileNames, listProfiles } from '@/hermes/compat'
-import { isQuietExcerpt, isRunBrief, runTitle } from '@/features/routines/runs'
+import { isQuietExcerpt, isRunBrief, runTitle } from '@shared/routines.ts'
+import { agentName, botTitle } from '@shared/agents.ts'
 import { fetchRunResult, knowRun, runOf } from '@/state/routines'
 
 type LastSession = {
@@ -144,7 +145,6 @@ function hueHex(hue: number): string {
 
 // ── Reading ─────────────────────────────────────────────────────────────────
 
-const titleCase = (s: string) => s.replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 const record = (v: unknown) => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined)
 const text = (v: unknown) => (typeof v === 'string' ? v.trim() : '')
 
@@ -168,8 +168,8 @@ export function toAgent(p: Profile, hues = storedHues(), pending = pendingLooks(
   const meta = { ...pending[p.name], ...p.ui_meta }
   const bots = record(meta['hermes-bots'])
   const murmur = record(meta.murmur)
-  const title = text(bots?.title) || text(p.bot_title)
-  const name = title || text(p.display_name) || (p.is_default ? 'Hermes' : titleCase(p.name))
+  const title = botTitle({ ...p, ui_meta: meta })
+  const name = agentName({ ...p, ui_meta: meta })
   // Bot Mode writes "Title — description"; the role is what follows.
   const description = text(p.description)
   const role = title && description.startsWith(`${title} — `) ? description.slice(title.length + 3) : description

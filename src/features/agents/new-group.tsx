@@ -6,6 +6,7 @@ import { Label, TextField } from '@/ui/field'
 import { Orb, OrbStack } from '@/ui/orb'
 import { Sheet } from '@/ui/sheet'
 import { cn } from '@/lib/cn'
+import { joinNames } from '@shared/groups.ts'
 
 // Pick a few agents to talk to at once.
 
@@ -134,10 +135,4 @@ export function NewGroupSheet({ open, onOpenChange, agents, onCreate, submitting
       </div>
     </Sheet>
   )
-}
-
-function joinNames(names: string[]) {
-  if (names.length <= 1) return names.join('')
-  if (names.length > 3) return `${names.slice(0, 2).join(', ')} & ${names.length - 2} more`
-  return `${names.slice(0, -1).join(', ')} & ${names.at(-1)}`
 }

@@ -24,7 +24,7 @@ import {
   type RawSchedule,
   type When,
 } from '@/features/routines/schedule'
-import { isQuiet, isRunBrief, routineIdOf, runTitle } from '@/features/routines/runs'
+import { isQuiet, isRunBrief, routineIdOf, runTitle } from '@shared/routines.ts'
 
 // ── Shapes ──────────────────────────────────────────────────────────────────
 

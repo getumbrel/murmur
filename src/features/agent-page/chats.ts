@@ -8,7 +8,7 @@ import { replaceGone } from '@/lib/transitions'
 import { routineRunsKey, useContinuedRuns, useRoutineNews, type RoutineRun } from '@/state/routines'
 import { deleteChat, updateChat, type ChatChange } from '@/state/chats'
 import { useChatUnread } from '@/state/status'
-import { resultLine, standingResults } from '@/features/routines/runs'
+import { resultLine, standingResults } from '@shared/routines.ts'
 
 // One agent's chats as people think of them, most recently active first: its
 // conversations, and a line for each routine that has found something, its

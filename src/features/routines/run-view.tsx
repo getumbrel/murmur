@@ -14,7 +14,7 @@ import { Glyph } from './glyph'
 import { iconFor } from './templates'
 import { capitalize, describeWhen, relativeDate } from './schedule'
 import { RoutineDetailSheet } from './routine-detail'
-import { isQuiet, isRunBrief, runTitle } from './runs'
+import { isQuiet, isRunBrief, runTitle } from '@shared/routines.ts'
 
 // A routine's run, opened, reads as a report: what the routine is and when it
 // ran, then what the agent found. Hermes's brief to the agent (which opens

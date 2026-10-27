@@ -1,7 +1,7 @@
 import { lazy, memo, Suspense, useMemo } from 'react'
 import { Markdown } from '@/features/chat/lazy-markdown'
 import { MediaBlock } from './blocks'
-import { splitMessage } from './parse'
+import { splitMessage } from '@shared/message.ts'
 import './media.css'
 
 const PreviewFrame = lazy(() => import('./preview-frame').then((m) => ({ default: m.PreviewFrame })))

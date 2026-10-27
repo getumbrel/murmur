@@ -1,5 +1,5 @@
 import type { Element, ElementContent, Root, RootContent } from 'hast'
-import { mentionRanges, type Mentionable } from '@/features/group/mentions'
+import { mentionRanges, type Mentionable } from '@shared/mentions.ts'
 
 // @mentions in prose become <mention> elements that markdown.tsx renders as
 // chips, each spelled the way its agent is named. It runs after sanitising, on

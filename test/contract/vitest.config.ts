@@ -5,7 +5,12 @@ import { defineConfig } from 'vitest/config'
 // Hermes, checked against a real one. Not part of `npm test`, which needs no Docker.
 export default defineConfig({
   root: fileURLToPath(new URL('../..', import.meta.url)),
-  resolve: { alias: { '@': fileURLToPath(new URL('../../src', import.meta.url)) } },
+  resolve: {
+    alias: {
+      '@': fileURLToPath(new URL('../../src', import.meta.url)),
+      '@shared': fileURLToPath(new URL('../../shared', import.meta.url)),
+    },
+  },
   test: {
     include: ['test/contract/**/*.contract.ts'],
     globalSetup: ['test/contract/setup.ts'],

@@ -22,15 +22,16 @@ FROM node:22-alpine3.24@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a
 # ── Runtime ─────────────────────────────────────────────────────────────────
 # The server has no dependencies and Node 22.18+ runs TypeScript natively, so
 # the image is plain Alpine with the node binary (and the two C++ runtime
-# libraries it links), the server's .ts files and the static build. No npm,
-# npx, corepack or yarn: nothing installs at runtime. The stage only copies
-# files, so cross-building it needs no emulation.
+# libraries it links), the server's .ts files, the shared/ ones it imports and
+# the static build. No npm, npx, corepack or yarn: nothing installs at runtime.
+# The stage only copies files, so cross-building it needs no emulation.
 FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
 COPY --from=node /usr/lib/libstdc++.so.6 /usr/lib/libgcc_s.so.1 /usr/lib/
 COPY --from=node /usr/local/bin/node /usr/local/bin/node
 WORKDIR /app
 COPY --from=build /app/dist ./dist
 COPY server ./server
+COPY shared ./shared
 # MIT asks for these notices to travel with every copy, and the bundle in
 # dist/ contains the vendored Hermes client.
 COPY LICENSE ./LICENSE

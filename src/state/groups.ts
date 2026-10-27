@@ -15,7 +15,8 @@ import { toAgent, useAgents, type Agent, type Profile } from '@/state/agents'
 import { friendlyError, resumeHolding } from '@/state/chats'
 import { toolLabel } from '@/features/chat/tool-labels'
 import type { ApprovalChoice, ChatItem, Speaker } from '@/features/chat/types'
-import { mentionedIds, toHandles, toNames } from '@/features/group/mentions'
+import { mentionedIds, toHandles, toNames } from '@shared/mentions.ts'
+import { joinNames, lastLine, liveFromLog, memberOf, TERMINAL, visibleText, type RoomEvent } from '@shared/groups.ts'
 import { scoped } from '@/hermes/instance'
 import { isMissingMethod } from '@/hermes/compat'
 import { approvalText } from '@/features/chat/approval-text'
@@ -30,15 +31,6 @@ type WireRoom = {
   created_at: number
   updated_at: number
   latest_seq?: number
-}
-type Actor = { kind: string; id: string; profile?: string; display_name?: string }
-type RoomEvent = {
-  seq: number
-  event_id: string
-  kind: string
-  actor: Actor
-  payload: Record<string, unknown>
-  created_at: number
 }
 type PendingAction = {
   kind: string
@@ -110,12 +102,6 @@ function toMember(m: WireMember, agents?: Agent[]): GroupMember {
     hue: agent?.hue ?? (m.profile === 'default' ? 278 : hueFor(m.profile)),
     role: agent?.role ?? '',
   }
-}
-
-export function joinNames(names: string[]) {
-  if (names.length <= 1) return names.join('')
-  if (names.length > 3) return `${names.slice(0, 2).join(', ')} & ${names.length - 2} more`
-  return `${names.slice(0, -1).join(', ')} & ${names.at(-1)}`
 }
 
 function toGroup(room: WireRoom, agents?: Agent[]): Group {
@@ -485,7 +471,6 @@ function poll(id: string): Promise<void> {
   return task
 }
 
-const memberOf = (ev: RoomEvent) => String(ev.payload.member_id ?? ev.actor.id ?? '')
 const ENDS_TURN = new Set(['message.member', 'turn.settled', 'turn.failed', 'turn.cancelled'])
 
 function apply(id: string, state: StateResult, fresh: RoomEvent[], cursor: number, startedAt: number) {
@@ -939,16 +924,7 @@ function putAside(live: Live) {
 
 // ── From the log to the screen ──────────────────────────────────────────────
 
-const TERMINAL = new Set(['room.activity', 'room.stop_requested', 'room.disbanded'])
 const SETTLES = new Set(['turn.settled', 'turn.failed', 'turn.cancelled'])
-
-/** Hide a reply while it's still on its way to being "(pass)". */
-function visibleText(text: string) {
-  const t = text.trim()
-  if (!t) return ''
-  if ('(pass)'.startsWith(t.toLowerCase()) || /^\(pass\)\.?$/i.test(t)) return ''
-  return t
-}
 
 /**
  * Who Hermes will hand the floor to next, when we can tell from the log alone:
@@ -1325,38 +1301,8 @@ async function fetchTail(room: WireRoom) {
   return res.events
 }
 
-const plain = (md: string) =>
-  md
-    .replace(/```[\s\S]*?```/g, ' ')
-    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
-    .replace(/[*_`#>~|]+/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-
-/** A round is running if the latest message hasn't been wrapped up yet. */
-function liveFromLog(events: RoomEvent[]) {
-  const last = events.at(-1)
-  // Hermes gives up on a turn after ~30 minutes; anything older is stale.
-  if (!last || Date.now() - last.created_at * 1000 > 35 * 60_000) return false
-  for (let i = events.length - 1; i >= 0; i--) {
-    if (TERMINAL.has(events[i].kind)) return false
-    if (events[i].kind === 'message.user') return true
-  }
-  return false
-}
-
 function summarize(room: WireRoom, events: RoomEvent[], agents: Agent[] | undefined, working?: boolean): GroupSummary {
   const group = toGroup(room, agents)
-  const roster = group.members.map((m) => ({ id: m.id, name: m.name, handle: m.handle }))
-  const said = events.findLast(
-    (e) => e.kind === 'message.user' || (e.kind === 'message.member' && visibleText(String(e.payload.text ?? ''))),
-  )
-  let lastLine = ''
-  if (said) {
-    const who =
-      said.kind === 'message.user' ? 'You' : (group.members.find((m) => m.id === memberOf(said))?.name ?? 'Someone')
-    lastLine = `${who}: ${plain(toNames(String(said.payload.text ?? ''), roster))}`.slice(0, 140)
-  }
   const seen = seenMap()[room.room_id]
   const lastMember = events.findLast((e) => e.kind === 'message.member')
   return {
@@ -1366,7 +1312,7 @@ function summarize(room: WireRoom, events: RoomEvent[], agents: Agent[] | undefi
     memberHues: group.members.map((m) => m.hue),
     lastActivityAt: Math.max(group.updatedAt, (events.at(-1)?.created_at ?? 0) * 1000),
     live: working ?? liveFromLog(events),
-    lastLine,
+    lastLine: lastLine(events, group.members),
     unread: Boolean(lastMember && lastMember.seq > (seen ?? 0) && !watchers.has(room.room_id)),
   }
 }

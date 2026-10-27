@@ -1,5 +1,17 @@
 import { describe, expect, it } from 'vitest'
-import { foldQuiet, isQuiet, isQuietExcerpt, isRunBrief, resultLine, routineIdOf, runTitle, standingResults } from './runs'
+import {
+  deliversElsewhere,
+  foldQuiet,
+  isQuiet,
+  isQuietExcerpt,
+  isRunBrief,
+  look,
+  resultLine,
+  routineIdOf,
+  runTitle,
+  standingResults,
+  type RunRow,
+} from './routines.ts'
 
 describe('quiet runs, as Hermes reads them', () => {
   it('are a marker as the whole answer', () => {
@@ -81,5 +93,63 @@ describe('results among the chats', () => {
   it('read as one line of words', () => {
     expect(resultLine('## Two new emails\n\n- **Sam**: the venue moved to [Hall B](https://x.y)')).toBe('Two new emails - Sam: the venue moved to Hall B')
     expect(resultLine('```\nraw\n```\nDone.')).toBe('Done.')
+  })
+})
+
+const run = (id: string, startedAt: number, finished = true): RunRow => ({ id: `cron_abc123_${id}`, startedAt, finished, title: '' })
+
+describe('which runs just landed', () => {
+  it('none on the first look, whatever is there', () => {
+    const { landed, memory } = look([run('20261020_080000', 100), run('20261020_090000', 200, false)])
+    expect(landed).toEqual([])
+    expect(memory.since).toBe(200)
+  })
+
+  it('a run seen going, once it finishes', () => {
+    const { memory } = look([run('20261020_090000', 200, false)])
+    expect(look([run('20261020_090000', 200, false)], memory).landed).toEqual([])
+    expect(look([run('20261020_090000', 200)], memory).landed.map((r) => r.id)).toEqual(['cron_abc123_20261020_090000'])
+  })
+
+  it('a newer run that started and finished between looks', () => {
+    const { memory } = look([run('20261020_080000', 100)])
+    expect(look([run('20261020_100000', 300), run('20261020_080000', 100)], memory).landed).toHaveLength(1)
+  })
+
+  it('each run once', () => {
+    const { memory } = look([])
+    expect(look([run('20261020_100000', 300)], memory).landed).toHaveLength(1)
+    expect(look([run('20261020_100000', 300)], memory).landed).toHaveLength(0)
+  })
+
+  it('never an older run that moves up the list', () => {
+    const { memory } = look([run('20261020_100000', 300)])
+    expect(look([run('20261019_080000', 50), run('20261020_100000', 300)], memory).landed).toEqual([])
+  })
+
+  it('with nothing there at first, anything that lands', () => {
+    const { memory } = look([])
+    expect(look([run('20260101_000000', 1)], memory).landed).toHaveLength(1)
+  })
+
+  it('lets go of runs that leave the newest few, and never tells one again', () => {
+    const { memory } = look([])
+    expect(look([run('20261020_080000', 100)], memory).landed).toHaveLength(1)
+    expect(look([run('20261020_100000', 300), run('20261020_090000', 200)], memory).landed).toHaveLength(2)
+    expect(memory.done.size).toBe(2)
+    // The two newer runs deleted: the first is back on the list, and was told already.
+    expect(look([run('20261020_080000', 100)], memory).landed).toEqual([])
+  })
+})
+
+describe('routines Hermes already delivers elsewhere', () => {
+  it('are any target but saved here', () => {
+    expect(deliversElsewhere('local')).toBe(false)
+    expect(deliversElsewhere(undefined)).toBe(false)
+    expect(deliversElsewhere('')).toBe(false)
+    expect(deliversElsewhere('telegram')).toBe(true)
+    expect(deliversElsewhere('origin')).toBe(true)
+    expect(deliversElsewhere('local,telegram:123')).toBe(true)
+    expect(deliversElsewhere(['local'])).toBe(false)
   })
 })

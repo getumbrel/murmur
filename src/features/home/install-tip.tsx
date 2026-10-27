@@ -3,8 +3,10 @@ import { useEffect, useState, useSyncExternalStore } from 'react'
 import { Share, SquarePlus, X } from 'lucide-react'
 import { MurmurMark } from '@/ui/brand'
 import { Button } from '@/ui/button'
+import { cn } from '@/lib/cn'
 import { useChats } from '@/state/chats'
 import { useMedia } from '@/lib/use-media'
+import { ios, standalone } from '@/lib/device'
 
 // "Put Murmur on your Home Screen": once, on a phone, after the first chat
 // that got a reply. iOS can't be asked, so it shows the two taps (Share, then
@@ -30,15 +32,6 @@ const write = (key: string) => {
     // Private mode: it lasts the visit.
   }
 }
-
-const ios =
-  typeof navigator !== 'undefined' &&
-  (/iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1))
-
-const standalone = () =>
-  matchMedia('(display-mode: standalone)').matches ||
-  matchMedia('(display-mode: fullscreen)').matches ||
-  (navigator as { standalone?: boolean }).standalone === true
 
 // ── What we know, outside React (the browser's prompt can come before Home does) ─
 
@@ -148,22 +141,7 @@ export function InstallTip({ kind }: { kind: 'ios' | 'prompt' | null }) {
             </div>
             {/* The steps may run under the ✕'s column; it sits up by the title. */}
             {kind === 'ios' ? (
-              <ol className="mt-3.5 -mr-8 space-y-2 pl-[62px] text-footnote text-ink">
-                <Step n={1}>
-                  Tap
-                  <Glyph>
-                    <Share size={14} strokeWidth={2} />
-                  </Glyph>
-                  <span className="font-medium">Share</span>
-                </Step>
-                <Step n={2}>
-                  Choose
-                  <Glyph>
-                    <SquarePlus size={14} strokeWidth={2} />
-                  </Glyph>
-                  <span className="font-medium">Add to Home Screen</span>
-                </Step>
-              </ol>
+              <HomeScreenSteps className="mt-3.5 -mr-8 pl-[62px]" />
             ) : (
               <div className="mt-3 pl-[62px]">
                 <Button variant="accent" size="sm" loading={installing} onClick={() => void install()}>
@@ -183,6 +161,28 @@ export function InstallTip({ kind }: { kind: 'ios' | 'prompt' | null }) {
         </motion.div>
       )}
     </AnimatePresence>
+  )
+}
+
+/** Safari's two taps to put Murmur on the Home Screen, drawn the way Safari draws them. */
+export function HomeScreenSteps({ className }: { className?: string }) {
+  return (
+    <ol className={cn('space-y-2 text-footnote text-ink', className)}>
+      <Step n={1}>
+        Tap
+        <Glyph>
+          <Share size={14} strokeWidth={2} />
+        </Glyph>
+        <span className="font-medium">Share</span>
+      </Step>
+      <Step n={2}>
+        Choose
+        <Glyph>
+          <SquarePlus size={14} strokeWidth={2} />
+        </Glyph>
+        <span className="font-medium">Add to Home Screen</span>
+      </Step>
+    </ol>
   )
 }
 

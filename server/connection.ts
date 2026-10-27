@@ -124,10 +124,13 @@ export const cookieFor = (req: http.IncomingMessage, id: string) =>
  * Keep the cookie naming a Hermes that exists. Sent with the page itself, so
  * the app knows which Hermes it's for (and whose things in local storage are
  * its own) before it asks anything. Not HttpOnly for that reason: it's an id,
- * not a credential.
+ * not a credential. A page's address can name the Hermes to open on
+ * (`?hermes=<id>`, a notification's link), which becomes the browser's choice.
  */
-export function syncHermesCookie(req: http.IncomingMessage, res: http.ServerResponse) {
-  if (!find(readCookie(req, HERMES_COOKIE))) appendCookie(res, cookieFor(req, targets()[0].id))
+export function syncHermesCookie(req: http.IncomingMessage, res: http.ServerResponse, page?: URL) {
+  const named = find(page?.searchParams.get(HERMES_PARAM))
+  if (named && named.source !== 'default' && named.id !== readCookie(req, HERMES_COOKIE)) appendCookie(res, cookieFor(req, named.id))
+  else if (!find(readCookie(req, HERMES_COOKIE))) appendCookie(res, cookieFor(req, targets()[0].id))
 }
 
 // ── Describing ────────────────────────────────────────────────────────────

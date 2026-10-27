@@ -1,5 +1,5 @@
 import type { ChatItem } from '@/features/chat/types'
-import { proseOf } from '@/features/media/parse'
+import { proseOf } from '@shared/message.ts'
 
 // A chat as plain markdown, for pasting into Notes or a message: who said
 // what, with the agent's steps folded to one line each.

@@ -232,6 +232,15 @@ export function createHermes(target: Target) {
     return { param: ['token', value], credential: value }
   }
 
+  /** The socket's address, with what admits one upgrade on it (a single-use ticket, or the session token). */
+  async function socketUrl(): Promise<URL> {
+    const auth = await socketAuth()
+    const url = new URL(endpoint('/api/ws'))
+    url.protocol = base.protocol === 'https:' ? 'wss:' : 'ws:'
+    url.searchParams.set(...auth.param)
+    return url
+  }
+
   /** Hermes turned this credential away: forget it so the next call gets a fresh one. */
   function reject(credential: string) {
     if (session?.access === credential) session.expiresAt = 0
@@ -346,15 +355,12 @@ export function createHermes(target: Target) {
   async function peek(calls: [method: string, params?: Record<string, unknown>][], timeout = 3000): Promise<unknown[]> {
     const results: unknown[] = calls.map(() => null)
     const deadline = Date.now() + timeout
-    let auth: Awaited<ReturnType<typeof socketAuth>>
+    let url: URL
     try {
-      auth = await Promise.race([socketAuth(), new Promise<never>((_, fail) => setTimeout(fail, timeout))])
+      url = await Promise.race([socketUrl(), new Promise<never>((_, fail) => setTimeout(fail, timeout))])
     } catch {
       return results
     }
-    const url = new URL(endpoint('/api/ws'))
-    url.protocol = base.protocol === 'https:' ? 'wss:' : 'ws:'
-    url.searchParams.set(...auth.param)
     return new Promise((done) => {
       const answered = new Set<number>()
       let socket: WebSocket | undefined
@@ -395,7 +401,7 @@ export function createHermes(target: Target) {
     })
   }
 
-  return { url: base, prefix, target, check: () => once('check', check), status, restAuth, socketAuth, reject, read, write, send, peek }
+  return { url: base, prefix, target, check: () => once('check', check), status, restAuth, socketAuth, socketUrl, reject, read, write, send, peek }
 }
 
 /** Set-Cookie lines by name, without any __Host-/__Secure- prefix or quotes. */

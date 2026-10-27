@@ -1,7 +1,7 @@
 // The only bridge between the web app and the desktop shell. The page runs
 // sandboxed with context isolation, so this is all it can ask of the app.
 //
-//   window.murmurDesktop = { platform, version, setBadge(count), focus(), setTheme(mode) }
+//   window.murmurDesktop = { platform, version, setBadge(count), focus(), setTheme(mode), onOpen(fn) }
 //   <html data-desktop="mac" | "win" | "linux">, before the first paint
 //   <html data-fullscreen>, while the window is full screen
 
@@ -31,6 +31,15 @@ ipcRenderer.on('murmur:fullscreen', (_event, on: unknown) => {
   mark()
 })
 
+// A clicked notification, held until the app is ready to open it.
+type Opened = { href: string; hermes: string }
+let open: ((note: Opened) => void) | null = null
+let waiting: Opened | null = null
+ipcRenderer.on('murmur:open', (_event, note: Opened) => {
+  if (open) open(note)
+  else waiting = note
+})
+
 contextBridge.exposeInMainWorld(
   'murmurDesktop',
   Object.freeze({
@@ -39,5 +48,13 @@ contextBridge.exposeInMainWorld(
     setBadge: (count: number) => ipcRenderer.send('murmur:badge', count),
     focus: () => ipcRenderer.send('murmur:focus'),
     setTheme: (mode: 'system' | 'light' | 'dark') => ipcRenderer.send('murmur:theme', mode),
+    onOpen: (fn: (note: Opened) => void) => {
+      open = fn
+      if (waiting) fn(waiting)
+      waiting = null
+      return () => {
+        if (open === fn) open = null
+      }
+    },
   }),
 )

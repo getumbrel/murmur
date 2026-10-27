@@ -5,7 +5,7 @@ import { useChatUnread } from '@/state/status'
 import { useRoutineNews, useRoutines, type RoutineNews } from '@/state/routines'
 import { shortTime } from '@/features/home/time'
 import { Glyph } from './glyph'
-import { resultLine } from './runs'
+import { resultLine } from '@shared/routines.ts'
 import { iconFor } from './templates'
 
 // What an agent's routines have found lately, on its page above its chats:
