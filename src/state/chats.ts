@@ -1018,13 +1018,42 @@ export type ChatChange = { title?: string; archived?: boolean; pinned?: boolean 
  * name: a title another one has is refused (see `titleTaken`).
  */
 export async function updateChat(id: string, profile: string, change: ChatChange) {
-  await patchSession(id, profile, change, 'edit')
-  if (change.title !== undefined) patch(id, () => ({ title: change.title }))
+  const { title } = change
+  try {
+    await patchSession(id, profile, change, 'edit')
+  } catch (e) {
+    if (title !== undefined && (saysTitleTaken(e) || (await titleHolder(id, profile, title)))) throw new TitleTaken()
+    throw e
+  }
+  if (title !== undefined) patch(id, () => ({ title }))
 }
 
+class TitleTaken extends Error {}
+
 /** Hermes refused a title because another of the agent's chats has it. */
-export const titleTaken = (e: unknown) =>
-  e instanceof HermesError && e.status === 400 && /already in use/i.test(e.message)
+export const titleTaken = (e: unknown) => e instanceof TitleTaken
+
+/** Older Hermes refuses a taken title in so many words. */
+const saysTitleTaken = (e: unknown) => e instanceof HermesError && e.status === 400 && /already in use/i.test(e.message)
+
+/**
+ * Newer Hermes (0.22.5 here) refuses it with a bare 409 `request_failed`, so,
+ * like Hermes's own CLI, this asks whether another of the agent's chats,
+ * archived ones too, already has it.
+ */
+async function titleHolder(id: string, profile: string, title: string) {
+  type Page = { sessions?: { id: string; title?: string | null }[]; total?: number }
+  for (let offset = 0; offset < 1000; offset += 100) {
+    const page = await api
+      .get<Page>(`/api/sessions?profile=${encodeURIComponent(profile)}&archived=include&limit=100&offset=${offset}`)
+      .catch(() => null)
+    const rows = page?.sessions ?? []
+    const holder = rows.find((r) => r.title === title && r.id !== id)
+    if (holder) return holder.id
+    if (rows.length < 100 || offset + 100 >= (page?.total ?? 0)) return null
+  }
+  return null
+}
 
 /** Clears the unread mark Hermes Desktop keeps on a stored chat. */
 export function clearUnread(id: string, profile: string) {
