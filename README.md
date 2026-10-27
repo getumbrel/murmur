@@ -188,7 +188,7 @@ Or run Murmur alone and point it at your Hermes. [`docs/STANDALONE.md`](docs/STA
 docker run -d -p 3000:3000 -v murmur:/data ghcr.io/getumbrel/murmur:0.8
 ```
 
-Murmur comes with **Hermes 0.22.0**, and works with any **Hermes Agent 0.21.4 or newer**. If yours is older, Murmur shows you how to update it.
+Murmur comes with **Hermes 0.22.5**, and works with any **Hermes Agent 0.21.4 or newer**. If yours is older, Murmur shows you how to update it.
 
 ## How it works
 

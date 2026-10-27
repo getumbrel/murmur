@@ -311,7 +311,7 @@ function HermesRow({ hermes: c, inUse, starting, onDetails }: { hermes: KnownHer
         </span>
         <span className="min-w-0 flex-1">
           <span className="block truncate text-body">{c.name}</span>
-          {/* Two lines before it clips, so "Comes with Murmur · Hermes 0.22.0" keeps its version on a phone. */}
+          {/* Two lines before it clips, so "Comes with Murmur · Hermes 0.22.5" keeps its version on a phone. */}
           <span className="line-clamp-2 block text-footnote text-pretty text-ink-2">{hermesDetail(c, { starting })}</span>
         </span>
         <span className="flex w-6 flex-none justify-end">

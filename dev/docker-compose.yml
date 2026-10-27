@@ -7,7 +7,7 @@
 name: murmur-dev
 services:
   hermes:
-    image: ghcr.io/getumbrel/hermes-agent-umbrel:v0.22.0-4@sha256:a1c54b5f291d41a15a956cc7d635cda13206b2c6279ea8f9b67affc0764f82b9
+    image: ghcr.io/getumbrel/hermes-agent-umbrel:v0.22.5@sha256:141f26fa26b58292516dd3a5ce1e096212b15dc0ddcf8dc893b3eb2996f404db
     container_name: hermes-agent_web_1
     restart: on-failure
     stop_grace_period: 1m
@@ -31,7 +31,7 @@ services:
   # then run the server without HERMES_URL (docs/DEVELOPMENT.md).
   builtin:
     profiles: [builtin]
-    image: ghcr.io/getumbrel/hermes-agent-umbrel:v0.22.0-4@sha256:a1c54b5f291d41a15a956cc7d635cda13206b2c6279ea8f9b67affc0764f82b9
+    image: ghcr.io/getumbrel/hermes-agent-umbrel:v0.22.5@sha256:141f26fa26b58292516dd3a5ce1e096212b15dc0ddcf8dc893b3eb2996f404db
     container_name: murmur-dev-builtin
     restart: on-failure
     stop_grace_period: 1m

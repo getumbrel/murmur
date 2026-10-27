@@ -104,7 +104,7 @@ When the suite finds something new about Hermes, add a test for it here, rather 
 1. Find the new tag, and the digest of `ghcr.io/getumbrel/hermes-agent-umbrel` at that tag (the image the Hermes Agent app on umbrelOS uses, [`hermes-agent/docker-compose.yml`](https://github.com/getumbrel/umbrel-apps/blob/master/hermes-agent/docker-compose.yml) in umbrel-apps).
 2. Copy the files in, with Hermes's MIT license (its notice has to ship with the copy; the Docker image carries it as `licenses/hermes-agent.LICENSE`):
    ```sh
-   TAG=v0.22.0
+   TAG=v0.22.5
    for f in gateway-contract.generated.ts gateway-events.ts json-rpc-channel.ts json-rpc-gateway.ts; do
      curl -fsSL "https://raw.githubusercontent.com/NousResearch/hermes-agent/$TAG/apps/shared/src/$f" -o "src/hermes/vendor/$f"
    done
