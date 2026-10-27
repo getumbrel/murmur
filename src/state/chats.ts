@@ -249,7 +249,8 @@ function rowsToItems(rows: Row[], speaker?: Speaker): ChatItem[] {
   return items
 }
 
-async function loadHistory(id: string, profile: string, speaker?: Speaker) {
+/** A chat's saved rows, oldest first. */
+async function readRows(id: string, profile: string) {
   type Res = { messages?: Row[]; data?: Row[] }
   const res = await api.get<Res>(
     `/api/sessions/${encodeURIComponent(id)}/messages?profile=${encodeURIComponent(profile)}&order=latest&limit=500`,
@@ -257,7 +258,47 @@ async function loadHistory(id: string, profile: string, speaker?: Speaker) {
   const rows = res.messages ?? res.data ?? []
   // "latest" pages from the end; put them back in reading order.
   if (rows.length > 1 && (rows[0].id ?? 0) > (rows.at(-1)!.id ?? 0)) rows.reverse()
-  return rowsToItems(rows, speaker)
+  return rows
+}
+
+async function loadHistory(id: string, profile: string, speaker?: Speaker) {
+  return rowsToItems(await readRows(id, profile), speaker)
+}
+
+const rowOf = (i: ChatItem) => (i.kind === 'user' || i.kind === 'assistant' ? i.rowId : undefined)
+
+/**
+ * A turn this page didn't start: sent from another device, or an edit, retry
+ * or queued turn begun elsewhere. Its message never came through here, but
+ * Hermes saved it before the turn began, so take the chat as saved up to that
+ * message and keep what has streamed in since. With `live` false the turn is
+ * over (we were away for it) and the whole saved chat is taken. Messages
+ * already on screen stay as they are. Says whether anything was missing.
+ */
+async function catchUp(id: string, live: boolean) {
+  const chat = getChat(id)
+  if (!chat?.ready) return false
+  const before = new Set(chat.items.map((i) => i.id))
+  const shown = new Map(chat.items.flatMap((i) => (rowOf(i) != null ? [[rowOf(i)!, i] as const] : [])))
+  const rows = await readRows(id, chat.profile).catch(() => [] as Row[])
+  // The turn's own message, hidden ones included. Rows after it are the turn's
+  // steps so far, which are already streaming in.
+  const at = rows.findLastIndex((r) => r.role === 'user')
+  if (at < 0 || (rows[at].id ?? 0) <= Math.max(0, ...shown.keys())) return false
+  const earlier = rowsToItems(rows.slice(0, live ? at : rows.length), chat.speaker).map(
+    (i) => shown.get(rowOf(i) ?? -1) ?? i,
+  )
+  const prompt = live ? rowsToItems([rows[at]], chat.speaker) : []
+  patch(id, (c) => ({
+    items: [
+      ...earlier,
+      // Side questions and commands live only on this page.
+      ...c.items.filter((i) => before.has(i.id) && isSide(i)),
+      ...prompt,
+      ...c.items.filter((i) => !before.has(i.id)),
+    ],
+  }))
+  return true
 }
 
 // ── Opening and creating chats ──────────────────────────────────────────────
@@ -369,8 +410,17 @@ async function resume(id: string, first: boolean) {
       reasoning: res.info?.reasoning_effort ?? c.reasoning,
     }
   })
-  // Finished while we were away: give any replay a moment, then settle what's still live.
-  if (!busy && !fresher && !first) window.setTimeout(() => void settleStale(id, since), 1500)
+  // Finished while we were away: give any replay a moment, then catch up on
+  // turns it couldn't bring back, or settle what's still live.
+  if (!busy && !fresher && !first) {
+    window.setTimeout(() => {
+      const c = getChat(id)
+      if (!c || isBusy(c) || (asked.get(id) ?? 0) >= since) return
+      void catchUp(id, false).then((caught) => {
+        if (!caught) return settleStale(id, since)
+      })
+    }, 1500)
+  }
   if (first) void restorePick(id, res.info)
   void readGoal(id)
 }
@@ -1201,8 +1251,13 @@ function onEvent(ev: GatewayEvent) {
   const text = typeof payload.text === 'string' ? payload.text : ''
 
   switch (ev.type) {
-    case 'message.start':
-      return patch(id, (c) => ({ status: c.status === 'waiting' ? 'waiting' : 'thinking' }))
+    case 'message.start': {
+      // Everything sent from here shows as busy first, so an idle chat means it came from elsewhere.
+      const elsewhere = !isBusy(getChat(id))
+      patch(id, (c) => ({ status: c.status === 'waiting' ? 'waiting' : 'thinking' }))
+      if (elsewhere) void catchUp(id, true)
+      return
+    }
 
     case 'message.delta':
       return patch(id, (c) => {

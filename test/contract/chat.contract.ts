@@ -170,6 +170,28 @@ describe('a running turn', () => {
   })
 })
 
+describe('a chat open in two places', () => {
+  it('tells the other one a turn began, by when its message is saved', async () => {
+    const { runtime, stored } = await newChat(socket)
+    await turn(socket, runtime, 'First [[say: One]]')
+    const other = await connect()
+    try {
+      // How chats.ts attaches to a chat it opens.
+      const resumed = await other.request('session.resume', { session_id: stored, profile: 'default', source: 'desktop', omit_messages: true, lazy: true })
+      expect(resumed.session_id).toBe(runtime)
+
+      await socket.request('prompt.submit', { session_id: runtime, text: 'Sent from here [[slow: 50]] [[say: Two]]', profile: 'default' })
+      await other.event('message.start', runtime)
+      // The event says nothing of the message; the saved chat already has it.
+      expect((await history(stored)).at(-1)).toMatchObject({ role: 'user', content: 'Sent from here [[slow: 50]] [[say: Two]]' })
+      const done = await other.event('message.complete', runtime)
+      expect(done.payload).toMatchObject({ text: 'Two', persisted_turn: { user_row_id: expect.any(Number) } })
+    } finally {
+      other.close()
+    }
+  })
+})
+
 describe('coming back to a chat', () => {
   it('resumes a stored chat lazily under a new runtime id', async () => {
     const { runtime, stored } = await newChat(socket)
