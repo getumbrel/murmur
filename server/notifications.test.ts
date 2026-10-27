@@ -114,7 +114,8 @@ describe('devices', () => {
     await start()
     expect(await (await fetch(`${base}/murmur/notifications?device=${id}`)).json()).toMatchObject({ key, known: true })
     expect(watching).toBe(1)
-    expect(statSync(join(dir, 'notifications.json')).mode & 0o777).toBe(0o600)
+    // Windows keeps no owner-only permissions for a file, only whether it's read-only.
+    if (process.platform !== 'win32') expect(statSync(join(dir, 'notifications.json')).mode & 0o777).toBe(0o600)
     expect(JSON.parse(readFileSync(join(dir, 'notifications.json'), 'utf8')).devices[0]).toMatchObject({ id, origin: 'https://umbrel.local' })
   })
 
