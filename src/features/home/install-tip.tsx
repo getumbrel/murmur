@@ -1,22 +1,26 @@
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useState, useSyncExternalStore } from 'react'
-import { Share, SquarePlus, X } from 'lucide-react'
+import { Compass, Ellipsis, Share, SquarePlus, X } from 'lucide-react'
 import { MurmurMark } from '@/ui/brand'
 import { Button } from '@/ui/button'
 import { cn } from '@/lib/cn'
 import { useChats } from '@/state/chats'
 import { useMedia } from '@/lib/use-media'
-import { ios, standalone } from '@/lib/device'
+import { compactSafari, ios, standalone, umbrelApp } from '@/lib/device'
 
 // "Put Murmur on your Home Screen": once, on a phone, after the first chat
 // that got a reply. iOS can't be asked, so it shows the two taps (Share, then
-// Add to Home Screen). Android and other Chromium browsers offer their own
-// install prompt; the tip's button opens it, and with no prompt there's no tip.
-// Never once installed, never on a computer. Kept beside the other tips'
-// flags (murmur:tip-dismissed:*), shared by every Hermes.
+// Add to Home Screen). The umbrelOS app's browser has no Share button, so
+// there the tip hands Murmur to Safari, which opens with the two taps showing.
+// Android and other Chromium browsers offer their own install prompt; the
+// tip's button opens it, and with no prompt there's no tip. Never once
+// installed, never on a computer. Kept beside the other tips' flags
+// (murmur:tip-dismissed:*), shared by every Hermes.
 
 const SEEN = 'murmur:tip-dismissed:install'
 const CHATTED = 'murmur:chatted'
+/** On the address Safari is handed: show the two taps now. */
+const ASK = 'add-to-home-screen'
 
 const read = (key: string) => {
   try {
@@ -57,6 +61,16 @@ if (typeof window !== 'undefined') {
     prompt = undefined
     dismiss()
   })
+  // Handed over from the umbrelOS app (OpenInSafari): the tip is why Safari
+  // opened, so it shows straight away, and the address goes back to Murmur's
+  // own before it can end up on the Home Screen.
+  const url = new URL(location.href)
+  if (url.searchParams.has(ASK)) {
+    url.searchParams.delete(ASK)
+    history.replaceState(history.state, '', url)
+    seen = showing = true
+    write(SEEN)
+  }
   // The first reply that comes back in full, anywhere.
   if (!chatted) {
     const stop = useChats.subscribe((s) => {
@@ -82,7 +96,7 @@ const snapshot = () => `${seen}:${chatted}:${showing}:${!!prompt}`
 export function useInstallTip() {
   useSyncExternalStore(subscribe, snapshot, snapshot)
   const phone = useMedia('(pointer: coarse) and (max-width: 899px)')
-  const kind = ios ? 'ios' : prompt ? 'prompt' : null
+  const kind = umbrelApp ? 'umbrel' : ios ? 'ios' : prompt ? 'prompt' : null
   const eligible = phone && !!kind && !standalone() && (showing || (!seen && chatted))
   // The first time it's shown counts as seen; it stays for the rest of this visit.
   useEffect(() => {
@@ -95,7 +109,7 @@ export function useInstallTip() {
 
 const spring = { type: 'spring', duration: 0.5, bounce: 0.15 } as const
 
-export function InstallTip({ kind }: { kind: 'ios' | 'prompt' | null }) {
+export function InstallTip({ kind }: { kind: ReturnType<typeof useInstallTip> }) {
   const [installing, setInstalling] = useState(false)
   const install = async () => {
     if (!prompt) return dismiss()
@@ -132,7 +146,7 @@ export function InstallTip({ kind }: { kind: 'ios' | 'prompt' | null }) {
               </span>
               <div className="min-w-0 pt-0.5">
                 <h2 id="install-tip" className="text-body font-semibold tracking-[-0.015em]">
-                  {kind === 'ios' ? 'Add to Home Screen' : 'Install Murmur'}
+                  {kind === 'prompt' ? 'Install Murmur' : 'Add to Home Screen'}
                 </h2>
                 <p className="mt-0.5 text-footnote text-balance text-ink-2">
                   Open Murmur like an app, full screen, in one tap.
@@ -142,6 +156,8 @@ export function InstallTip({ kind }: { kind: 'ios' | 'prompt' | null }) {
             {/* The steps may run under the ✕'s column; it sits up by the title. */}
             {kind === 'ios' ? (
               <HomeScreenSteps className="mt-3.5 -mr-8 pl-[62px]" />
+            ) : kind === 'umbrel' ? (
+              <OpenInSafari className="mt-3 -mr-8 pl-[62px]" />
             ) : (
               <div className="mt-3 pl-[62px]">
                 <Button variant="accent" size="sm" loading={installing} onClick={() => void install()}>
@@ -164,12 +180,52 @@ export function InstallTip({ kind }: { kind: 'ios' | 'prompt' | null }) {
   )
 }
 
+/**
+ * Hands Murmur to Safari, which can put it on the Home Screen. iOS opens
+ * x-safari-https: addresses in Safari; it's the one way out of another app's
+ * browser (a new window stays in the umbrelOS app). It has to be a link that's
+ * tapped: the app passes those straight to iOS, and asks first when a page
+ * leaves for another app by itself. Safari opens Home at the address the app
+ * reached Murmur by, with the steps showing.
+ *
+ * Safari trusts that address only if the Umbrel's certificate is installed,
+ * which umbrelOS advises most people against, so it usually warns first (and
+ * the Home Screen app once more, the first time). The note names the two
+ * taps past it the way Safari words them.
+ */
+export function OpenInSafari({ className }: { className?: string }) {
+  return (
+    <div className={className}>
+      <a
+        href={`x-safari-https://${location.host}/?${ASK}`}
+        className="pressable touch-target relative inline-flex h-8 items-center gap-1.5 rounded-full bg-accent pr-3.5 pl-3 text-footnote font-medium tracking-[-0.01em] text-accent-ink select-none hover:brightness-105 active:brightness-95"
+      >
+        <Compass size={15} strokeWidth={2} aria-hidden />
+        Open in Safari
+      </a>
+      <p className="mt-2.5 text-caption text-pretty text-ink-3">
+        If Safari says the connection isn’t private, tap <span className="font-medium text-ink-2">Show Details</span>,
+        then <span className="font-medium text-ink-2">visit this website</span>.
+      </p>
+    </div>
+  )
+}
+
 /** Safari's two taps to put Murmur on the Home Screen, drawn the way Safari draws them. */
 export function HomeScreenSteps({ className }: { className?: string }) {
   return (
     <ol className={cn('space-y-2 text-footnote text-ink', className)}>
       <Step n={1}>
         Tap
+        {compactSafari && (
+          <>
+            <Glyph>
+              <Ellipsis size={14} strokeWidth={2.25} />
+            </Glyph>
+            <span className="sr-only">More</span>
+            then
+          </>
+        )}
         <Glyph>
           <Share size={14} strokeWidth={2} />
         </Glyph>

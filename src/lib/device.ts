@@ -10,3 +10,15 @@ export const standalone = () =>
   matchMedia('(display-mode: standalone)').matches ||
   matchMedia('(display-mode: fullscreen)').matches ||
   (navigator as { standalone?: boolean }).standalone === true
+
+// The umbrelOS iPhone app opens Murmur in a browser of its own, which signs its
+// user agent "UmbrelApp/<version>" (umbrelOS tells the app apart the same way).
+// It has no Share button, so Murmur can't be put on the Home Screen from there.
+export const umbrelApp = ios && /\bUmbrelApp\//.test(navigator.userAgent)
+
+// Safari 26 on an iPhone starts with its compact tab bar, where Share sits in
+// the ⋯ menu. (Its user agent keeps saying iOS 18; Version/ is Safari's own.)
+export const compactSafari =
+  typeof navigator !== 'undefined' &&
+  /iPhone|iPod/.test(navigator.userAgent) &&
+  Number(/Version\/(\d+)/.exec(navigator.userAgent)?.[1]) >= 26

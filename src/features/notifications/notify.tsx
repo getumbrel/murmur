@@ -8,11 +8,12 @@ import { Button } from '@/ui/button'
 import { ListGroup, ListRow } from '@/ui/list'
 import { Toggle } from '@/ui/toggle'
 import { desktop, focusWindow } from '@/lib/desktop'
+import { umbrelApp } from '@/lib/device'
 import { tabHermes, HERMES_PARAM } from '@/hermes/instance'
 import { useAgents } from '@/state/agents'
 import { onChatMoment } from '@/state/status'
 import { Tile } from '@/features/settings/page'
-import { HomeScreenSteps } from '@/features/home/install-tip'
+import { HomeScreenSteps, OpenInSafari } from '@/features/home/install-tip'
 import { BellIcon } from '@/ui/icons'
 import { chatTag, groupTag } from '@shared/notes.ts'
 import { isOn, setNotifications, shouldOffer, support, syncNotifications, useNotifications, type Problem } from './notifications'
@@ -225,7 +226,10 @@ export function NotificationsSetting() {
   )
 }
 
-/** Safari on an iPhone or iPad notifies only for apps on the Home Screen: the two taps, then the switch. */
+/**
+ * Safari on an iPhone or iPad notifies only for apps on the Home Screen: the
+ * two taps, then the switch. From the umbrelOS app, Safari first.
+ */
 function HomeScreenFirst() {
   const device = /iPhone|iPod/.test(navigator.userAgent) ? 'iPhone' : 'iPad'
   return (
@@ -237,7 +241,11 @@ function HomeScreenFirst() {
           <p className="mt-0.5 text-footnote text-pretty text-ink-2">
             To get them on this {device}, add Murmur to your Home Screen.
           </p>
-          <HomeScreenSteps className="mt-3" />
+          {umbrelApp ? (
+            <OpenInSafari className="mt-3" />
+          ) : (
+            <HomeScreenSteps className="mt-3" />
+          )}
         </div>
       </div>
     </ListGroup>
