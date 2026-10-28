@@ -5,15 +5,12 @@ import {
   Check,
   ChevronDown,
   Copy,
-  Cpu,
   Eye,
   EyeOff,
-  HardDrive,
-  KeyRound,
-  Sparkles,
   ArrowUpRight,
 } from 'lucide-react'
 import { Button } from '@/ui/button'
+import { ChipIcon, KeyIcon, ModelServerIcon, SparkIcon } from '@/ui/icons'
 import { TextField } from '@/ui/field'
 import { Orb } from '@/ui/orb'
 import { Spinner } from '@/ui/spinner'
@@ -176,7 +173,7 @@ export function ConnectModel({
           state.chatgpt.status === 'success' ? (
             <Check key="ok" size={20} strokeWidth={2.25} className="animate-pop" />
           ) : (
-            <Sparkles size={20} strokeWidth={1.75} />
+            <SparkIcon size={26} />
           )
         }
         title="Continue with ChatGPT"
@@ -190,7 +187,7 @@ export function ConnectModel({
     local: (
       <OptionCard
         key="local"
-        glyph={<HardDrive size={20} strokeWidth={1.75} />}
+        glyph={<ModelServerIcon size={26} />}
         title="Use a model server"
         subtitle={
           loading ? (
@@ -231,7 +228,7 @@ export function ConnectModel({
     device: device && (
       <OptionCard
         key="device"
-        glyph={setup ? <ProgressGlyph setup={setup} /> : <Cpu size={20} strokeWidth={1.75} />}
+        glyph={setup ? <ProgressGlyph setup={setup} /> : <ChipIcon size={26} />}
         // While a model sets up, the tile wears its colour.
         hue={setup ? [...device.models, device.custom?.model].find((m) => m?.id === setup.id)?.hue : undefined}
         title={`Run a model on ${device.place}`}
@@ -267,7 +264,7 @@ export function ConnectModel({
     'api-key': (
       <OptionCard
         key="api-key"
-        glyph={<KeyRound size={20} strokeWidth={1.75} />}
+        glyph={<KeyIcon size={26} />}
         title="Use an API key"
         subtitle="OpenRouter, OpenAI, Anthropic…"
         open={open === 'api-key'}
@@ -344,14 +341,18 @@ function OptionCard({
       >
         <span
           className={cn(
-            // Settings' row tile, at card size: soft accent at rest, solid once chosen.
-            'grid size-11 flex-none place-items-center rounded-md transition-colors duration-300',
+            // Settings' row tile, at card size: soft accent at rest, lit once chosen.
+            'relative grid size-11 flex-none place-items-center rounded-md transition-colors duration-300',
             hue !== undefined && 'hue-scope',
-            open ? 'bg-accent text-accent-ink' : disabled ? 'bg-fill-2 text-ink-3' : 'bg-accent-soft text-accent',
+            open ? 'text-white [--mi-tint:0.4]' : disabled ? 'bg-fill-2 text-ink-3' : 'bg-accent-soft text-accent',
           )}
           style={hue !== undefined ? ({ '--hue': hue } as React.CSSProperties) : undefined}
         >
-          {glyph}
+          <span
+            aria-hidden
+            className={cn('mi-chip absolute inset-0 rounded-[inherit] transition-opacity duration-300', !open && 'opacity-0')}
+          />
+          <span className="relative">{glyph}</span>
         </span>
         <span className="min-w-0 flex-1">
           <span className={cn('block text-body font-semibold tracking-[-0.01em] text-pretty', disabled && 'text-ink-2')}>

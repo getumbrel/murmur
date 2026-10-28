@@ -18,7 +18,7 @@ import { ServerSheet } from './server-sheet'
 import { Tile } from './page'
 import { PicturesRow } from './pictures-row'
 import { Swap } from './swap'
-import { KeyIcon, ModelsIcon, ServerIcon } from '@/ui/icons'
+import { KeyIcon, ModelServerIcon, ModelsIcon, SparkIcon } from '@/ui/icons'
 
 // Settings → Models: what the main agent thinks with, and the services that
 // make models available.
@@ -191,7 +191,16 @@ function PlanLine({ service }: { service: Service }) {
 
 function ServiceTile({ service }: { service: Service }) {
   const icon: ReactNode =
-    service.remove?.kind === 'endpoint' ? <ServerIcon size={19} /> : service.remove?.kind === 'key' ? <KeyIcon size={19} /> : <ModelsIcon size={19} />
+    // As each was connected (connect.tsx): a ChatGPT plan's spark, a model server, a key.
+    service.slug === 'openai-codex' ? (
+      <SparkIcon size={19} />
+    ) : service.server ? (
+      <ModelServerIcon size={19} />
+    ) : service.remove?.kind === 'key' ? (
+      <KeyIcon size={19} />
+    ) : (
+      <ModelsIcon size={19} />
+    )
   return <Tile>{icon}</Tile>
 }
 

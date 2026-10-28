@@ -262,6 +262,64 @@ export function ModelsIcon(props: IconProps) {
   )
 }
 
+/**
+ * A four-point spark on the 24 grid. Each side curves in from one point to the
+ * next, arriving straight along its axis, so the points end soft and round in
+ * the stroke rather than sharp. `pinch` is how far in the sides curve (0–1).
+ */
+const spark = (cx: number, cy: number, r: number, pinch = 0.5) => {
+  const k = r * (1 - pinch)
+  const f = (v: number) => Math.round(v * 100) / 100
+  const pts: [number, number][] = [
+    [0, -1],
+    [1, 0],
+    [0, 1],
+    [-1, 0],
+  ]
+  let d = `M${f(cx)} ${f(cy - r)}`
+  for (let i = 0; i < 4; i++) {
+    const [ax, ay] = pts[i]
+    const [bx, by] = pts[(i + 1) % 4]
+    d += `C${f(cx + ax * k)} ${f(cy + ay * k)} ${f(cx + bx * k)} ${f(cy + by * k)} ${f(cx + bx * r)} ${f(cy + by * r)}`
+  }
+  return d + 'Z'
+}
+
+/** A ChatGPT plan: a plump spark, and a small one lit beside it. */
+export function SparkIcon(props: IconProps) {
+  const big = spark(10.5, 13.25, 8, 0.46)
+  return (
+    <Icon {...props}>
+      <path className="mi-tint" d={big} />
+      <path d={big} />
+      <path className="mi-solid" d={spark(18.5, 5.25, 3.25, 0.5)} stroke="currentColor" strokeWidth="1" />
+    </Icon>
+  )
+}
+
+/** A model server, at home or online: a server, and the crystal ball it serves resting at its corner. */
+export function ModelServerIcon(props: IconProps) {
+  const id = useCut()
+  return (
+    <Icon {...props}>
+      <mask id={id} maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24">
+        <rect width="24" height="24" fill="#fff" />
+        <circle cx="17" cy="17" r="6.6" fill="#000" />
+      </mask>
+      <g mask={`url(#${id})`}>
+        <rect className="mi-tint" x="2.75" y="3.25" width="16.5" height="13.5" rx="4.25" />
+        <rect x="2.75" y="3.25" width="16.5" height="13.5" rx="4.25" />
+        <path d="M3 10h16" />
+        <circle className="mi-solid" cx="6.9" cy="6.65" r="1.1" />
+        <circle className="mi-solid" cx="6.9" cy="13.35" r="1.1" />
+      </g>
+      <circle className="mi-tint" cx="17" cy="17" r="4.75" />
+      <circle cx="17" cy="17" r="4.75" />
+      <path d="M14.75 16.6a2.5 2.5 0 0 1 1.85-1.85" />
+    </Icon>
+  )
+}
+
 /** Where Hermes runs: a small, soft home server with its light on. */
 export function ServerIcon(props: IconProps) {
   return (
