@@ -79,7 +79,7 @@ MURMUR_FIND_HERMES='Hermes Agent=http://localhost:18789' \
   - `chats.ts` is a zustand store that folds streamed events into chat items.
   - `agents.ts` and `readiness.ts` are React Query hooks. Agents are Hermes profiles, and readiness reports whether a model is set up.
   - `sync.ts` keeps chat lists fresh when they change anywhere.
-  - `apps.ts` (MCP apps and their sign-ins), `vault.ts` (an agent's saved logins, cards and addresses), `whatsapp.ts` (linking, run from the tab), `access.ts` (who can message an agent), `limits.ts` and `insights.ts` (plan gauges, a chat's room and spend, the week), `backups.ts` (export and import an agent) and `toolsets.ts` (keeps desktop-only tools off every agent).
+  - `apps.ts` (MCP apps and their sign-ins), `mail.ts` and `mail-chat.ts` (an agent's email, through the `murmur-mail` plugin), `hosted-apps.ts`, `hosted-apps-consent.ts` and `hosted-apps-chat.ts` (apps through Nous Research, asked once), `vault.ts` (an agent's saved logins, cards and addresses), `whatsapp.ts` (linking, run from the tab), `access.ts` (who can message an agent), `limits.ts` and `insights.ts` (plan gauges, a chat's room and spend, the week), `backups.ts` (export and import an agent) and `toolsets.ts` (keeps desktop-only tools off every agent, and Nous's `connections` until the person agrees).
   - The live moments inside a turn (plan, helpers, reactions, previews) are pure reducers in `src/features/chat/live.ts`, which `chats.ts` routes events to.
 - **`src/features/`** holds the pieces each screen is built from: `chat/` (thread, composer, tool and approval cards), `group/`, `agents/` (the agent editor and new-group sheets), `agent-page/` with its `routines/`, `memory/`, `telegram/`, `whatsapp/`, `apps/`, `vault/` and `access/` sections, `voice/`, `media/`, `settings/`, `connection/` and `onboarding/`. **`src/screens/`** assembles them into routes (wouter, with screen transitions in `src/lib/transitions.ts`), and **`src/ui/`** has the primitives (Button, Sheet, ListRow, Buddy and others).
 - **Dev-only pages** (`playground.html`, `onboarding.html`, `connection.html`, `routines.html`, `ui.html`, `buddy.html`) work under `npm run dev:web` and are never part of `vite build`.
@@ -87,14 +87,23 @@ MURMUR_FIND_HERMES='Hermes Agent=http://localhost:18789' \
 
 ## Hermes contract tests
 
-Murmur depends on a lot of Hermes behaviour that no type can describe, such as how a routine's run is named, that a quiet run ends in `[SILENT]`, or which fields a chat's rows carry. `npm run test:contract` checks that behaviour against a real Hermes. It needs Docker and nothing else, and takes about a minute once the image is pulled.
+Murmur depends on a lot of Hermes behaviour that no type can describe, such as how a routine's run is named, that a quiet run ends in `[SILENT]`, or which fields a chat's rows carry. `npm run test:contract` checks that behaviour against a real Hermes. It needs Docker and nothing else, and takes about four minutes once the images are pulled.
 
 - **What runs.** `test/contract/setup.ts` starts the Hermes image that `umbrel/murmur/docker-compose.yml` pins, set up like Murmur's built-in Hermes (password sign-in, the gateway running). It also starts a scripted fake model (`test/contract/fake-model.ts`) and connects it the way onboarding does, then starts Murmur's own server pinned to that Hermes. Each run starts from a fresh Hermes with no saved data, and leaves the Hermes and Murmur logs in `test-results/contract/`.
 - **How tests talk to it.** Tests go through Murmur's server, so the proxy, the sign-in and the socket ticket are covered too. They also call Murmur's own data layer, such as `createAgent`, `connectLocal`, `isQuiet` and `fetchAgentChats`, through a small browser stand-in (`test/contract/browser.ts`).
 - **Steering the model.** A test steers the fake model with tags in its message: `[[say: text]]`, `[[silent]]`, `[[tool: terminal {"command":"…"}]]`, several tools in one turn with `toolsTag(…)`, `[[slow: 200]]` and `[[fail]]`. Anything else gets "pong".
-- **Apps through Nous.** `hosted-apps.contract.ts` never makes a Nous account: it calls nothing that could, except where Hermes refuses it first. One test reads Nous Research's public app catalog over the internet; offline, it checks that Hermes answers "unavailable" the way Murmur expects and skips the rest.
+- **Apps through Nous.** `hosted-apps.contract.ts` never makes a Nous account: it calls nothing that could, except where Hermes refuses it first, and checks on disk afterwards that there's still none. One test reads Nous Research's public app catalog over the internet; offline, it checks that Hermes answers "unavailable" the way Murmur expects and skips the rest. On a Hermes bump, read what changed in `tui_gateway/methods_connectors.py` before running it: a refusal that moved after the account is made would make one.
+- **Email.** `mail.contract.ts` runs Murmur's own `connectMail`, `checkMail`, `changeMailPassword`, `setMailEnabled` and `disconnectMail`, and chats that search, read, draft and send, against the `murmur-mail` plugin in Umbrel's Hermes image and a fake mail server: GreenMail (`greenmail/standalone:2.1.5`, `test/contract/greenmail.ts`) with made-up accounts, on a Docker network of its own that the Hermes container joins as `mail`. The sending tests hold the approval the way the card does and check the mail server has nothing until the person says yes, and nothing at all when they say no or nobody is asked. The test reads what landed through GreenMail's REST API.
+- **A Hermes without the plugin.** The email tests need an image that bundles `murmur-mail`, and fail at once, saying so, against one that doesn't. To test a build of [getumbrel/hermes-agent-umbrel](https://github.com/getumbrel/hermes-agent-umbrel) before it's released and pinned, build it and point the suite at it:
+  ```sh
+  # in a hermes-agent-umbrel checkout
+  docker build -t murmur-local/hermes-agent-umbrel:v0.22.5-mail .
+  # here
+  HERMES_IMAGE=murmur-local/hermes-agent-umbrel:v0.22.5-mail npm run test:contract
+  ```
+  Or put the plugin into any image as it starts: `MURMUR_MAIL_PLUGIN=<hermes-agent-umbrel>/umbrel-context/plugins/murmur-mail` tests a working copy without building (into the pinned image, say), and `MURMUR_MAIL_PLUGIN=pinned` takes the one in the pinned Umbrel image. The plugin's own unit tests live with it, in that repo's `tests/`.
 - **Another Hermes.** Set `HERMES_IMAGE` to test against a different image, for example `HERMES_IMAGE=nousresearch/hermes-agent:latest npm run test:contract`.
-- **In CI.** `ci.yml` runs the suite on every pull request against the pinned Hermes. `hermes-nightly.yml` runs it every night against Hermes's newest release. It can also be started by hand with any image, such as an Umbrel build you're about to pin.
+- **In CI.** `ci.yml` runs the suite on every pull request against the pinned Hermes. `hermes-nightly.yml` runs it every night against Hermes's newest release, with the pinned image's `murmur-mail` put into it (`MURMUR_MAIL_PLUGIN=pinned`), so the email tests check that plugin against Hermes's next release too. It can also be started by hand with any image, such as an Umbrel build you're about to pin.
 
 When the suite finds something new about Hermes, add a test for it here, rather than another probe script in `docs/hermes/scripts/`. Those scripts remain for exploring.
 
@@ -113,7 +122,7 @@ When the suite finds something new about Hermes, add a test for it here, rather 
    ```
 3. Update the tag in `src/hermes/vendor/README.md`, and the image in `umbrel/murmur/docker-compose.yml`, `docker-compose.yml` and `dev/docker-compose.yml` (which upgrades `dev/hermes-data` in place on its next start).
 4. Run `npm run typecheck`. Contract drift shows up as type errors.
-5. Run `npm run test:contract`. It tests the image you just pinned, and any behaviour Murmur relies on that changed fails there.
+5. Run `npm run test:contract`. It tests the image you just pinned, and any behaviour Murmur relies on that changed fails there, the `murmur-mail` plugin's included (the Umbrel image must bundle it; see above).
 
 ## Desktop
 

@@ -1,4 +1,4 @@
-# Murmur ↔ Hermes: apps, WhatsApp, who can message, usage, moving agents and passwords
+# Murmur ↔ Hermes: apps, email, WhatsApp, who can message, usage, moving agents and passwords
 
 Target: Hermes Agent **0.22** (`ghcr.io/getumbrel/hermes-agent-umbrel:v0.22.5`). Routes are in
 `hermes_cli/web_routers/*.py`, RPCs in `tui_gateway/methods*.py`. Everything here is per agent (a Hermes
@@ -11,7 +11,9 @@ against a throwaway Hermes; what couldn't be (a real app sign-in, a linked phone
 
 **Where:** the Apps tile on the agent page (`src/features/apps/`, state in `src/state/apps.ts`). Connected
 apps first, each with an on/off switch and a quiet status; below, an icon wall with search, everyday apps
-first and "For developers" after. Umbrel opens Settings → Umbrel instead.
+first and "For developers" after. Umbrel opens Settings → Umbrel instead. The same sheet holds the agent's
+email (§7) and the apps that connect through Nous Research (§8): `apps-sheet.tsx` is a router, with a file per
+kind of app (`home.tsx` the list and wall, `direct.tsx` these, `email.tsx`, `hosted.tsx`).
 
 | Step | Hermes |
 |---|---|
@@ -167,3 +169,134 @@ login's identifier, never a password, card or address.
   `12` expiry month) reads as `«redacted-vault-secret»`.
 - 1Password and Bitwarden (`vault.sources`, `vault.unlock`, `vault.lock`, `vault.source.set`) need their CLIs
   inside Hermes's container, which Umbrel doesn't have; Murmur leaves them out.
+
+## 7. Email (`murmur-mail`)
+
+**Where:** Email leads the Apps wall; once connected it's a row (provider mark, address, switch) with a Manage
+page (`src/features/apps/email.tsx`, state in `src/state/mail.ts` and, for chats, `src/state/mail-chat.ts`).
+`test/contract/mail.contract.ts` checks all of this against a fake mail server (GreenMail).
+
+Email isn't Hermes's own: it's the `murmur-mail` plugin that Umbrel's image bundles
+([getumbrel/hermes-agent-umbrel](https://github.com/getumbrel/hermes-agent-umbrel), `umbrel-context/plugins/murmur-mail`).
+One account per agent, from Gmail, iCloud Mail, Fastmail, Yahoo Mail or anywhere else, signed in with an app
+password over IMAP and SMTP. Mail goes straight between the provider and Hermes. The agent can search, read and
+draft; every send waits for the person to approve that exact message. A Hermes without the plugin answers `404`
+to its status route, and Murmur shows no Email tile.
+
+| Step | Hermes |
+|---|---|
+| Is there email, and whose | `GET /api/plugins/murmur-mail/status?profile=` → `{plugin, version, enabled, configured, account, missing, inherited}`. `account` is everything but the password; `404` means no plugin |
+| On or off (the row's switch) | `GET /api/config?profile=&include_defaults=false` → `agent.disabled_toolsets`; `PUT /api/config {config:{agent:{disabled_toolsets}}}` adds or removes `email` |
+| Sign in, before saving anything | `POST /api/plugins/murmur-mail/check?profile=` with the whole account (`address`, `password`, `imap_host`/`_port`/`_security`, `smtp_…`, `provider`, `save_sent`) → `{ok:true, account, newest}` (the three newest messages, the proof) or `{ok:false, error:{kind, where, detail}}` |
+| Save | `PUT /api/env {key, value, profile}` for each `MURMUR_MAIL_*` key: `AGENT` first, `PASSWORD` last; an earlier account's extras are `DELETE /api/env {key, profile}` |
+| Switch the plugin on for an agent made since Hermes started | RPC `plugins.manage {action:'toggle', key:'murmur-mail', enable:true, profile}` |
+| Bring the tools to the agent's next chat | `PUT /api/config {config:{plugins:{entries:{'murmur-mail':{settings:{account}}}}}}` |
+| A new password | `POST …/check {password}` (laid over the saved account), then `PUT /api/env` `MURMUR_MAIL_PASSWORD` |
+| Remove | `DELETE /api/env` for every `MURMUR_MAIL_*` key, then `account: ''` in the plugin's settings |
+| A new agent | `GET …/status` → `inherited: true` → delete the copied keys (`createAgent` calls `forgetInheritedMail`) |
+
+**In a chat.** The tools are `email_search`, `email_read`, `email_draft` and `email_send` (toolset `email`).
+Hermes loads plugin tools on demand, so the model reaches them through `tool_search` and `tool_call`, but
+`tool.start` and `tool.complete` carry the real `email_*` name and arguments (Hermes unwraps a single call).
+Search and read results arrive inside `<untrusted_tool_result source="email_…">`, the boundary Hermes puts around
+web pages; `readMailResult` takes the JSON out. `tool-labels.ts` turns them into "Searched your email · unread,
+last 2 days", "Reading ‘Re: Thursday’s offsite plan’", "Drafting a reply", "Sending an email to Priya Raman".
+
+**Sending.** The plugin's `pre_tool_call` hook returns `{action:'approve', message, rule_key}` for every
+`email_send`, so Hermes asks through its usual `approval` request:
+`command: '<email_send> (plugin approval rule)'`, `pattern_keys: ['plugin_rule:murmur-mail-send:<32 hex>']`,
+and a `description` that is the whole message (`Send an email from …`, then `To:`, `Cc:`, `Bcc:`, `Subject:`, a
+blank line and every word). `approval-text.ts` reads it back (`readSendApproval`), and the card shows it with
+**Send** (`once`) and **Don't send** (`deny`) only: `session` and `always` would write allowlist entries for one
+message into config.yaml, and each message needs its own yes anyway. The plugin's `post_approval_response`
+hook records a person's yes for that exact message (a digest of from, to, cc, bcc, subject, body and reply), and
+`email_send` only sends a message it holds a yes for.
+
+**Caveats**
+- **Nothing goes out without a person's yes.** Where Hermes would let a call through unasked (approvals switched
+  off, `/yolo`, a routine with nobody to answer, a smart-approvals yes), there's no person's yes to spend: the tool answers
+  `kind: not_approved` and tells the agent to save a draft. A denied or invalid send never runs at all (no
+  `tool.start`); the model only sees the refusal.
+- **Switching off is the agent's `email` toolset, not the plugin's switch.** Hermes 0.22.5 refuses a plugin's
+  `/api/plugins/<name>/…` routes for an agent that has it in `plugins.disabled`, so status would answer `404` and
+  Murmur would read it as "no email on this Hermes".
+- **Hermes keeps an agent's tool list until its config.yaml changes**, so `.env` writes alone don't add or remove
+  tools; the account setting above is what refreshes it. Chats already open keep the tools they started with.
+- **The account is read from the agent's own `.env`** through Hermes's profile secret scope
+  (`agent.secret_scope.build_profile_secret_scope`), not `get_secret`: with several agents, Hermes's frozen launch
+  environment keeps returning deleted keys for the main agent until a restart.
+- **`profiles.create` copies the main agent's `.env`** (its mail password included) into every new agent.
+  `MURMUR_MAIL_AGENT` names the owner, so the plugin ignores a copy and reports it as `inherited`, and Murmur
+  deletes it.
+- **Agents made while Hermes runs have no `plugins.enabled`.** Umbrel's image enables the plugin for every agent
+  at start; `connectMail` switches it on for the rest.
+- **Failures** come back as `kind`: `wrong_password`, `app_password` (the provider said it wants one),
+  `unreachable`, `tls`, `incomplete` or `unknown`, with `where` (`imap`/`smtp`, shown as incoming/outgoing).
+  Telling `app_password` from `wrong_password` relies on the provider's wording; iCloud, Fastmail and Yahoo
+  usually just say "authentication failed", so their wrong-password copy says to use an app password.
+- **A health check is a real sign-in**, so it runs at most every ten minutes, only while the sheet is open, and
+  never retries: providers lock out bursts of failed sign-ins.
+- **A copy in Sent:** Gmail and Yahoo file sent mail themselves; for the rest the plugin appends a copy (it makes
+  a Sent folder if there's none). A reply marks the original `\Answered`. Drafts go to the `\Drafts` folder.
+- **Not yet:** attachments (listed, never fetched or sent), HTML mail, moving or deleting mail, and a name for
+  sent mail (`MURMUR_MAIL_NAME`; the sheet doesn't ask). Opening the account's mail on the web opens Gmail's
+  Drafts or the provider's inbox, not the draft itself.
+- **Untested against the real providers** (no real accounts in tests): the four providers' servers, app-password
+  pages and steps come from their help pages.
+
+## 8. Apps through Nous
+
+**Where:** among the everyday apps on the Apps wall (Slack, Asana, Box, Shopify, Granola, Discord and the rest of
+Nous's catalog that Hermes can't connect itself), connected rows with "· via Nous", and a card above the composer
+when an agent asks to connect one mid-chat (`src/features/apps/hosted.tsx`, `src/features/chat/connect-card.tsx`;
+state in `src/state/hosted-apps.ts`, `hosted-apps-consent.ts`, `hosted-apps-chat.ts`).
+`test/contract/hosted-apps.contract.ts` checks what can be checked without making a Nous account.
+
+These are Hermes's built-in hosted connectors: Nous Research runs each app's sign-in and calls the app for the
+agent (Composio behind it), so the app's data passes through their servers. An app Hermes's own catalog has
+(§1) keeps connecting directly, and shows once; Jira and Confluence count as Atlassian. Gmail, Calendar and
+Drive will appear here by themselves when Nous carries them.
+
+| Step | Hermes |
+|---|---|
+| Catalog | RPC `connectors.catalog {profile:'default'}` → `{connectors:[{slug, name, description, …}]}`. With no Nous identity it's Nous's public catalog; offline, `5034 CATALOG_UNAVAILABLE` |
+| Connected accounts | `connectors.accounts {profile:'default'}` → `{accounts:[{connection_id, connector, status, label, …}]}` (empty, without asking Nous, when there's no identity) |
+| Asked yet? | `profiles.list` → the main agent's `ui_meta['murmur-nous'] = {since}`; or `free_tier.status {profile:'default'}` → `has_guest` (an identity made before Murmur asked) |
+| Agree (once per Hermes) | `profiles.configure {name:'default', ui_meta:{'murmur-nous':{since}}}`, which must answer `applied.ui_meta: true`; then every agent's `agent.disabled_toolsets` loses `connections` |
+| Connect | `connectors.connect {profile:'default', owner:{type:'account'}, connectors:[slug]}` → `{op_id, seq, deadline_at, settled, targets:[{name, state, connect_url, connection_id}]}`. The link opens in the tab opened in the tap |
+| Follow it | `connection.update` events (owner `account`, without the link), `connectors.operation.status {owner, op_id}` for the whole snapshot, `connectors.operation.wake` when the person comes back. States: `initiated` → `connected`, `failed`, `expired`; Hermes gives up after 300 s |
+| Cancel | `connection.respond {owner, op_id, result:{settled_by:'continue'}}`, then `connectors.accounts.remove` of the half-made account |
+| Sign in again | `connectors.connect {…, reconnect:true, connection_id}` |
+| Disconnect | `connectors.accounts.remove {profile:'default', connection_id}` (`CONNECTION_NOT_FOUND` counts as done) |
+| An agent asks in a chat | `connection.request` / `connection.update` with owner `{type:'session'}` → the card; `connectors.connect {owner:{type:'session', session_id}, connectors:[name]}` for a fresh link, `connection.respond` for Not now and Done; `session.resume` → `pending_connection` |
+| In chat steps | `manage_connections` ("Connecting Slack", "Checking your apps"); a Nous app's own tools arrive as `tool_call` with `args.calls[].name = connectors__<slug>__<ACTION>` ("Using Slack", with its mark) |
+
+**The first connect makes an account at Nous** (a guest identity for this Hermes, made without a sign-in), so
+Murmur asks first: the path (the app → Nous Research → the agent), one sentence, "How Nous handles your data"
+(`portal.nousresearch.com/privacy`), **Continue** and **Not now**. Not now calls nothing. The answer is kept on the
+main agent, so every browser and device sees it, and it's asked once per Hermes.
+
+**What makes one.** `connectors.connect`, `connectors.tools`, `connectors.accounts.rename`,
+`connectors.accounts.remove`, `connectors.policy.set`, and every action of the agent's `manage_connections` tool
+(its `status` included). Never `connectors.list`, `connectors.catalog`, `connectors.accounts`,
+`connectors.operation.*`, `connection.respond` or `free_tier.status`. So until the person agrees, every agent has
+the `connections` toolset switched off: the app does it (`src/state/toolsets.ts`, on load, for new agents and
+imports), and so does Murmur's server for the built-in Hermes's agents when it comes up (`server/discovery.ts`),
+so an agent reached over Telegram or a routine first can't make one either.
+
+**Caveats**
+- **Per Hermes, not per agent.** The identity lives in the main agent's `auth.json` (and `<root>/shared/nous_auth.json`),
+  and agents Murmur makes share it (`share_auth`), so every call names `profile: 'default'`. A connected app
+  serves every agent, and Disconnect removes it for all of them and at Nous. Hermes has no per-agent or
+  per-app switch, so a Nous app's row has a chevron, not a toggle.
+- **Agreeing turns `connections` back on for every agent**, because Hermes only lets an agent reach Nous's apps
+  (through `tool_search` and `tool_call`) while `manage_connections` is among its tools. A Hermes that already has
+  an identity counts as agreed for the toolset; the question still shows on the first connect from Murmur.
+- **In a desktop-source chat Hermes holds the turn up to 300 s for an answer** to an agent's connect: the card
+  above the composer answers it. A card for one of Hermes's own apps (`kind: 'mcp'`) points to the Apps sheet.
+- **Unverified without a Nous account** (making one is off limits in tests): the real sign-in, what an account's
+  `label` holds, and Nous's finished page, which may try to open `hermes-desktop://` because Hermes marks these
+  requests as from a desktop app (Murmur closes the tab as soon as Hermes sees the account).
+- **A sign-in left half-way** (the tab or Murmur closed) isn't cleaned up: Nous lets it expire, and it lists as
+  "Sign in again".
+- Murmur never loads Nous's `logo_url`; the marks are its own (`features/apps/marks.ts`).
