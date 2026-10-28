@@ -394,17 +394,46 @@ async function report(hermes: Hermes): Promise<BuiltinReport> {
 // `project` and `catalog` toolsets, which only Hermes Desktop can show. Murmur
 // is the only app using the built-in, so its agents have them switched off.
 // (Agents Murmur makes elsewhere get the same in the app: src/state/toolsets.ts.)
+//
+// The `connections` toolset (Hermes's manage_connections) is off too until the
+// person agrees to apps through Nous Research: an agent using it would make a
+// Nous account for this Hermes without asking. The app keeps it in step as well,
+// but only once it's opened; this covers an agent reached over Telegram or a
+// routine before then. The answer is read the way the app reads it
+// (src/state/hosted-apps-consent.ts); when Hermes doesn't say, it's left alone.
 const HIDDEN_TOOLSETS = ['catalog', 'project']
+const HOSTED_TOOLSET = 'connections'
+const CONSENT_KEY = 'murmur-nous'
 
-/** The disabled toolsets with Murmur's added, or null when they're there already. */
-export function withHiddenToolsets(current: unknown): string[] | null {
+/**
+ * The disabled toolsets the way Murmur wants them, or null when they're in step
+ * already: Murmur's added, and `connections` off while apps through Nous aren't
+ * allowed (`hosted` false), back on once they are (true), untouched when unknown.
+ */
+export function withHiddenToolsets(current: unknown, hosted: boolean | null = null): string[] | null {
   const list = Array.isArray(current)
     ? current.map(String)
     : typeof current === 'string' && current.trim()
       ? [current.trim()]
       : []
-  const missing = HIDDEN_TOOLSETS.filter((t) => !list.includes(t))
-  return missing.length ? [...list, ...missing] : null
+  const kept = hosted === true ? list.filter((t) => t !== HOSTED_TOOLSET) : list
+  const wanted = hosted === false ? [...HIDDEN_TOOLSETS, HOSTED_TOOLSET] : HIDDEN_TOOLSETS
+  const missing = wanted.filter((t) => !kept.includes(t))
+  return missing.length || kept.length !== list.length ? [...kept, ...missing] : null
+}
+
+/**
+ * Whether agents may reach apps through Nous: the person agreed (the main
+ * agent's ui_meta), or this Hermes already has a Nous identity. Null when
+ * Hermes didn't answer.
+ */
+export function hostedAllowed(listed: unknown, freeTier: unknown): boolean | null {
+  const profiles = record(listed)?.profiles
+  if (!Array.isArray(profiles)) return null
+  const main = profiles.map(record).find((p) => p?.is_default === true) ?? profiles.map(record).find((p) => p?.name === 'default')
+  if (typeof record(record(main?.ui_meta)?.[CONSENT_KEY])?.since === 'number') return true
+  const guest = record(freeTier)?.has_guest
+  return typeof guest === 'boolean' ? guest : null
 }
 
 let tidied = false
@@ -413,7 +442,14 @@ let tidied = false
 async function tidyBuiltin(hermes: Hermes) {
   if (tidied) return
   tidied = true
-  const profiles = await hermes.read<{ profiles?: { name?: unknown }[] }>('/api/profiles')
+  const [profiles, [listed, freeTier]] = await Promise.all([
+    hermes.read<{ profiles?: { name?: unknown }[] }>('/api/profiles'),
+    hermes.peek([
+      ['profiles.list', {}],
+      ['free_tier.status', { profile: 'default' }],
+    ]),
+  ])
+  const hosted = hostedAllowed(listed, freeTier)
   for (const p of profiles?.profiles ?? []) {
     if (typeof p.name !== 'string') continue
     const q = `profile=${encodeURIComponent(p.name)}`
@@ -421,7 +457,7 @@ async function tidyBuiltin(hermes: Hermes) {
       `/api/config?${q}&include_defaults=false`,
     )
     if (!config) continue
-    const next = withHiddenToolsets(config.agent?.disabled_toolsets)
+    const next = withHiddenToolsets(config.agent?.disabled_toolsets, hosted)
     if (next) await hermes.write('PUT', `/api/config?${q}`, { config: { agent: { disabled_toolsets: next } } })
   }
 }

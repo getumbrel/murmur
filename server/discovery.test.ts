@@ -3,6 +3,7 @@ import {
   AWAY_MS,
   candidate,
   candidateId,
+  hostedAllowed,
   offer,
   parseFindList,
   quietState,
@@ -144,5 +145,23 @@ describe('the built-in’s toolsets', () => {
     expect(withHiddenToolsets(null)).toEqual(['catalog', 'project'])
     expect(withHiddenToolsets('browser')).toEqual(['browser', 'catalog', 'project'])
     expect(withHiddenToolsets(['catalog', 'project'])).toBeNull()
+  })
+
+  it('keep apps through Nous off until the person agrees, and leave them be when Hermes can’t say', () => {
+    expect(withHiddenToolsets(['catalog', 'project'], false)).toEqual(['catalog', 'project', 'connections'])
+    expect(withHiddenToolsets(['catalog', 'project', 'connections'], false)).toBeNull()
+    expect(withHiddenToolsets(['browser', 'catalog', 'project', 'connections'], true)).toEqual(['browser', 'catalog', 'project'])
+    expect(withHiddenToolsets(['catalog', 'project'], true)).toBeNull()
+    expect(withHiddenToolsets(['catalog', 'project', 'connections'], null)).toBeNull()
+    expect(withHiddenToolsets(['catalog', 'project'], null)).toBeNull()
+  })
+
+  it('read the person’s answer as the app does: the main agent’s ui_meta, or a Nous identity already there', () => {
+    const list = (meta?: unknown) => ({ profiles: [{ name: 'default', is_default: true, ui_meta: meta }, { name: 'scout' }] })
+    expect(hostedAllowed(list({ 'murmur-nous': { since: 1761600000000 } }), { has_guest: false })).toBe(true)
+    expect(hostedAllowed(list(), { has_guest: true })).toBe(true)
+    expect(hostedAllowed(list({ 'murmur-nous': null }), { has_guest: false })).toBe(false)
+    expect(hostedAllowed(list(), null)).toBeNull()
+    expect(hostedAllowed(null, { has_guest: false })).toBeNull()
   })
 })
