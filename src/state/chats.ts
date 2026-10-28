@@ -23,6 +23,7 @@ import {
   reactionsOf,
   settleHelpers,
   startsTurn,
+  errandOf,
   todosOf,
   toggled,
   withErrand,
@@ -31,7 +32,7 @@ import {
   withPreview,
   withReactions,
 } from '@/features/chat/live'
-import { errandsOf, isYours, wakeItems, withSeenHelpers, type Errand } from '@/features/chat/wake'
+import { errandsOf, isYours, sentItems, wakeItems, withSeenHelpers, type Errand } from '@/features/chat/wake'
 
 export type Chat = {
   id: string
@@ -251,7 +252,15 @@ function rowsToItems(rows: Row[], speaker?: Speaker, errands: Map<string, Errand
       const plan = planFromResult(row.content)
       if (plan) items.splice(0, items.length, ...withPlan(items, plan.todos, plan.revision, `${key}-plan`))
     } else if (row.role === 'tool' && row.tool_call_id) {
-      for (const tool of tools.get(row.tool_call_id) ?? []) {
+      const steps = tools.get(row.tool_call_id) ?? []
+      // Helpers sent off to work in the background: their card takes the place of the step that sent them.
+      const sent = sentItems(row, errands)
+      if (sent.length) {
+        const gone = new Set<ChatItem>(steps)
+        items.splice(0, items.length, ...items.filter((i) => !gone.has(i)), ...sent)
+        continue
+      }
+      for (const tool of steps) {
         tool.status = /"exit_code":\s*-1|BLOCKED:|"error":\s*"/.test(row.content ?? '') ? 'error' : 'done'
         tool.endedAt = (row.timestamp ?? 0) * 1000
         const media = toolMedia(tool.name, row.content)
@@ -1464,11 +1473,13 @@ function onEvent(ev: GatewayEvent) {
       const media = failed ? [] : toolMedia(String(payload.name ?? ''), payload.result)
       const name = String(payload.name ?? '')
       return patch(id, (c) => {
-        // Helpers sent off to work in the background stay live after this turn.
-        const sent = name === 'delegate_task' ? withErrand(c.items, payload.result, Date.now()) : c.items
+        // Helpers sent off to work in the background stay live after this turn,
+        // and their card takes the place of the step that sent them.
+        const handedOff = name === 'delegate_task' && !!errandOf(payload.result)
+        const sent = handedOff ? withErrand(c.items, payload.result, Date.now()) : c.items
         const items = sent.flatMap((i): ChatItem[] => {
           if (i.kind === 'tool' && isIt(i))
-            return [
+            return handedOff ? [] : [
               {
                 ...i,
                 status: failed ? 'error' : 'done',

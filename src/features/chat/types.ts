@@ -145,6 +145,8 @@ export type ChatItem =
       failed?: number
       /** How long they were away (ms), as Hermes timed them. */
       took?: number
+      /** Who went, by Hermes's ids: their cards are in the turn that sent them. */
+      subagentIds?: string[]
     }
   /** A slash command you ran, and what it printed. */
   | { kind: 'command'; id: string; command: string; output?: string; status: 'running' | 'done' | 'error' }
@@ -158,7 +160,8 @@ export type ChatItem =
       id: string
       subagentId: string
       goal: string
-      status: 'running' | 'done' | 'error' | 'stopped'
+      /** `back`: home, but how it went isn't known (read back later, one of several that didn't all finish). */
+      status: 'running' | 'done' | 'error' | 'stopped' | 'back'
       /** What it's doing right now, in a few words. */
       line?: string
       tools: number

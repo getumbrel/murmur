@@ -79,13 +79,18 @@ export function withPlan(items: ChatItem[], todos: Todo[], revision: number, id:
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-const ENDED: Record<string, Of<'helper'>['status']> = {
+/** How a helper ended, from Hermes's word for it. */
+export const ENDED: Record<string, Of<'helper'>['status']> = {
   completed: 'done',
+  success: 'done',
   interrupted: 'stopped',
   failed: 'error',
   error: 'error',
   timeout: 'error',
 }
+
+/** Why one didn't finish, when Hermes says more than that it failed. */
+export const WHY: Record<string, string> = { timeout: 'Ran out of time' }
 
 /** Which helper an event is about: Hermes's id, or (older Hermes) its place in the batch. */
 export function helperKey(p: P) {
@@ -124,7 +129,7 @@ export function withHelper(items: ChatItem[], type: string, p: P, now: number): 
     goal,
     tools,
     status: ended ?? 'running',
-    line: ended ? undefined : (lineOf(type, p) ?? was?.line),
+    line: ended ? WHY[String(p.status)] : (lineOf(type, p) ?? was?.line),
     ...(ended && { endedAt: now }),
     ...(ended && typeof p.summary === 'string' && p.summary.trim() && { summary: p.summary.trim() }),
     ...(delegationId && { delegationId }),
@@ -132,16 +137,24 @@ export function withHelper(items: ChatItem[], type: string, p: P, now: number): 
   return was ? items.map((i, n) => (n === at ? next : i)) : [...items, next]
 }
 
+/** What delegate_task answers a background call with: `{status: "dispatched", delegation_id, goals, subagent_ids}`. */
+export function errandOf(result: unknown) {
+  const r = parse(result)
+  return r?.status === 'dispatched' && typeof r.delegation_id === 'string'
+    ? (r as P & { delegation_id: string })
+    : undefined
+}
+
 /**
  * delegate_task sent its helpers off to work in the background (every call
  * the agent itself makes, since Hermes 0.22): they carry on after this turn,
  * and Hermes wakes the agent when they're back. Their cards stay live, and
  * any helper not heard from yet gets its card now, from what the call says it
- * sent (`{status: "dispatched", delegation_id, goals, subagent_ids}`).
+ * sent.
  */
 export function withErrand(items: ChatItem[], result: unknown, now: number): ChatItem[] {
-  const r = parse(result)
-  if (r?.status !== 'dispatched' || typeof r.delegation_id !== 'string') return items
+  const r = errandOf(result)
+  if (!r) return items
   const errand = r.delegation_id
   const goals = Array.isArray(r.goals) ? r.goals : []
   const ids = Array.isArray(r.subagent_ids) && r.subagent_ids.length === goals.length ? r.subagent_ids : []

@@ -33,7 +33,7 @@ import { useCopy } from './use-copy'
 import { AsideCard, CommandCard } from './side-cards'
 import { ERROR_ACTION_LABEL, errorActionOf, type ErrorAction } from './errors'
 import { Plan } from './plan'
-import { Helpers } from './helpers'
+import { HelperPill, Helpers, HelpersBack, useCardInSight } from './helpers'
 import { WakeLine } from './wake-line'
 import { ReactionBadge, ReactionPills, Tapback, useHoldToReact } from './reactions'
 
@@ -62,6 +62,10 @@ type Row =
   | { kind: 'turn'; id: string; sections: Section[]; woken?: boolean }
 
 const DEFAULT_HUE = 278
+/** How the buttons over the composer come and go. */
+const FLOAT = { type: 'spring', stiffness: 420, damping: 32 } as const
+/** The helpers' pill, and the gap under it. */
+const PILL_ROOM = 36 + 12
 /** How the thread follows a growing reply. */
 const SPRING = { damping: 0.75, stiffness: 0.08, mass: 1 }
 /** How long a chat that just opened keeps jumping to its end, while late layout (markdown, code, images) settles. */
@@ -79,8 +83,11 @@ function toRows(items: ChatItem[], busy: boolean, live: Set<string>): Row[] {
   let turn: Extract<Row, { kind: 'turn' }> | null = null
   let prev = 'start'
   let aside: Row[] = []
+  // Helpers so far, by who they are: a wake that brings them back shows their faces.
+  const sentOff = new Map<string, Of<'helper'>>()
 
   for (const item of items) {
+    if (item.kind === 'helper') sentOff.set(item.subagentId, item)
     if (item.kind === 'aside' || item.kind === 'command') {
       const row = { kind: item.kind, id: item.id, item } as Row
       if (turn) aside.push(row)
@@ -99,9 +106,10 @@ function toRows(items: ChatItem[], busy: boolean, live: Set<string>): Row[] {
       // Hermes woke the agent: a turn of its own, opened by what came back.
       rows.push(...aside)
       aside = []
+      const back = item.reason === 'helpers' ? [...sentOff.values()].filter((h) => cameBack(h, item)) : []
       const block: Block =
         item.reason === 'helpers'
-          ? { kind: 'helpers', id: item.id, items: [], back: item }
+          ? { kind: 'helpers', id: item.id, items: back, back: item }
           : { kind: 'wake', id: item.id, item }
       turn = { kind: 'turn', id: `turn-${item.id}`, sections: [{ id: item.id, blocks: [block] }], woken: true }
       rows.push(turn)
@@ -122,6 +130,8 @@ function toRows(items: ChatItem[], busy: boolean, live: Set<string>): Row[] {
     const last = section.blocks.at(-1)
     // The same failure reported twice (as an event and as the reply's end) reads once.
     if (item.kind === 'error' && last?.kind === 'error' && last.item.message === item.message) continue
+    // Sending helpers off: their card takes the step's place as soon as the call returns (a failed one stays a step).
+    if (item.kind === 'tool' && item.name === 'delegate_task' && item.status === 'running') continue
     if (
       item.kind === 'tool' ||
       item.kind === 'thinking' ||
@@ -131,7 +141,7 @@ function toRows(items: ChatItem[], busy: boolean, live: Set<string>): Row[] {
       else section.blocks.push({ kind: 'work', id: item.id, items: [item] })
     } else if (item.kind === 'helper') {
       // Helpers sent off together stack together.
-      if (last?.kind === 'helpers') last.items.push(item)
+      if (last?.kind === 'helpers' && !last.back) last.items.push(item)
       else section.blocks.push({ kind: 'helpers', id: item.id, items: [item] })
     } else {
       section.blocks.push({ kind: item.kind === 'assistant' ? 'text' : item.kind, id: item.id, item } as Block)
@@ -142,6 +152,12 @@ function toRows(items: ChatItem[], busy: boolean, live: Set<string>): Row[] {
   rows.push(...aside)
   return rows
 }
+
+/** One of the helpers a wake brings back: named by it, or (when it names no one) of its errand. */
+const cameBack = (h: Of<'helper'>, wake: Of<'wake'>) =>
+  wake.subagentIds
+    ? wake.subagentIds.includes(h.subagentId)
+    : !!wake.delegationId && h.delegationId === wake.delegationId
 
 type Handlers = {
   onApprove: (requestId: string, choice: ApprovalChoice) => void
@@ -273,17 +289,67 @@ export function Thread({
   // (Sized straight from the measure, so the room is there before the first paint.)
   const footerRef = useRef<HTMLDivElement>(null)
   const spacerRef = useRef<HTMLDivElement>(null)
+  // Room kept for what floats above the composer while you're at the end (the helpers' pill).
+  const floatRoom = useRef(0)
+  const [under, setUnder] = useState(0)
   useLayoutEffect(() => {
     const el = footerRef.current
     if (!el) return
     const measure = () => {
-      if (spacerRef.current) spacerRef.current.style.height = `${el.offsetHeight}px`
+      if (spacerRef.current) spacerRef.current.style.height = `${el.offsetHeight + floatRoom.current}px`
+      setUnder(Math.round(el.offsetHeight / 8) * 8)
     }
     measure()
     const ro = new ResizeObserver(measure)
     ro.observe(el)
     return () => ro.disconnect()
   }, [])
+
+  // Helpers still out (the newest ones sent), with the ones sent alongside them and whose they are.
+  const errand = useMemo(() => {
+    for (const row of [...rows].reverse()) {
+      if (row.kind !== 'turn') continue
+      for (const section of [...row.sections].reverse())
+        for (const block of section.blocks)
+          if (block.kind === 'helpers' && !block.back && block.items.some((h) => h.status === 'running'))
+            return { items: block.items, speaker: section.speaker ?? agent }
+    }
+  }, [rows, agent])
+  const outIds = errand?.items.flatMap((h) => (h.status === 'running' ? [h.id] : [])) ?? []
+  const cardInSight = useCardInSight(scrollRef, outIds, under)
+  const pill = !!errand && outIds.length > 0 && !cardInSight
+
+  // The pill floats over the end of the thread too, so the log makes room for it
+  // there: it never sits on the last reply. (The room eases in and out.) Once the
+  // last helper is back, the room waits for the turn that wakes the agent, whose
+  // line takes the pill's place, so the thread doesn't dip first and then jump.
+  const lastRow = rows.at(-1)?.id ?? ''
+  const heldAt = useRef<string | null>(null)
+  useLayoutEffect(() => {
+    const spacer = spacerRef.current
+    const footer = footerRef.current
+    if (!spacer || !footer) return
+    const fit = (room: number) => {
+      if (floatRoom.current === room) return
+      floatRoom.current = room
+      const height = `${footer.offsetHeight + room}px`
+      spacer.animate([{ height: spacer.style.height }, { height }], {
+        duration: reduced ? 0 : 320,
+        easing: 'cubic-bezier(0.16, 1, 0.3, 1)',
+      })
+      spacer.style.height = height
+    }
+    if (pill) {
+      heldAt.current = null
+      return fit(PILL_ROOM)
+    }
+    if (!floatRoom.current) return
+    // Gone because its card came into sight, or the woken turn is here.
+    if (outIds.length || (heldAt.current !== null && heldAt.current !== lastRow)) return fit(0)
+    heldAt.current ??= lastRow
+    const wait = setTimeout(() => fit(0), 2500)
+    return () => clearTimeout(wait)
+  }, [pill, outIds.length, lastRow, reduced])
 
   // History that lands is already scrolled to its end when it first paints.
   useLayoutEffect(() => {
@@ -389,22 +455,45 @@ export function Thread({
             <div ref={footerRef} className="pointer-events-none absolute inset-x-0 bottom-0 z-10">
               <div aria-hidden className="absolute inset-x-0 top-6 bottom-0 bg-linear-to-t from-bg from-30% to-transparent" />
               <div className="pointer-events-auto relative mx-auto w-full max-w-[736px]">
-                <AnimatePresence>
-                  {!isAtBottom && (
-                    <motion.button
-                      type="button"
-                      onClick={() => void scrollToBottom(reduced ? 'instant' : 'smooth')}
-                      initial={{ opacity: 0, y: 8, scale: 0.94 }}
-                      animate={{ opacity: 1, y: 0, scale: 1 }}
-                      exit={{ opacity: 0, y: 8, scale: 0.94 }}
-                      transition={{ type: 'spring', stiffness: 420, damping: 32 }}
-                      className="glass absolute bottom-full left-1/2 mb-3 flex h-9 -translate-x-1/2 items-center gap-1.5 rounded-full pr-3.5 pl-3 text-footnote font-medium text-ink shadow-float ring-[0.5px] ring-line-strong after:absolute after:-inset-1"
-                    >
-                      <ArrowDown size={15} strokeWidth={2} aria-hidden />
-                      Latest
-                    </motion.button>
-                  )}
-                </AnimatePresence>
+                {/* Floating just above the composer: helpers still out, and the way back down. */}
+                <div className="pointer-events-none absolute inset-x-0 bottom-full mb-3 flex justify-center gap-2 px-4">
+                  <AnimatePresence mode="popLayout">
+                    {errand && pill && (
+                      <motion.div
+                        key="helpers"
+                        layout="position"
+                        initial={{ opacity: 0, y: 8, scale: 0.94 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        exit={{ opacity: 0, y: 8, scale: 0.94 }}
+                        transition={FLOAT}
+                        className="pointer-events-auto min-w-0"
+                      >
+                        <HelperPill
+                          items={errand.items}
+                          agent={errand.speaker}
+                          hue={errand.speaker?.hue ?? DEFAULT_HUE}
+                          scrollRef={scrollRef}
+                        />
+                      </motion.div>
+                    )}
+                    {!isAtBottom && (
+                      <motion.button
+                        key="latest"
+                        type="button"
+                        layout="position"
+                        onClick={() => void scrollToBottom(reduced ? 'instant' : 'smooth')}
+                        initial={{ opacity: 0, y: 8, scale: 0.94 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        exit={{ opacity: 0, y: 8, scale: 0.94 }}
+                        transition={FLOAT}
+                        className="glass pointer-events-auto relative flex h-9 flex-none items-center gap-1.5 rounded-full pr-3.5 pl-3 text-footnote font-medium text-ink shadow-float ring-[0.5px] ring-line-strong after:absolute after:-inset-1"
+                      >
+                        <ArrowDown size={15} strokeWidth={2} aria-hidden />
+                        Latest
+                      </motion.button>
+                    )}
+                  </AnimatePresence>
+                </div>
                 {footer}
               </div>
             </div>
@@ -651,11 +740,13 @@ const Turn = memo(function Turn({
                 case 'plan':
                   return <Plan key={block.id} item={block.item} live={live} />
                 case 'helpers':
-                  return (
+                  return block.back ? (
+                    <HelpersBack key={block.id} items={block.items} back={block.back} hue={hue} />
+                  ) : (
                     <Helpers
                       key={block.id}
                       items={block.items}
-                      back={block.back}
+                      agent={section.speaker ?? agent}
                       hue={hue}
                       live={live}
                       onStop={onStopHelper}

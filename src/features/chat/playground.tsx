@@ -1,6 +1,6 @@
 // Dev-only playground: Thread + Composer with fake data and simulated
 // streaming, so the chat can be designed and reviewed without Hermes.
-// Scenes: ?scene=solo | live | group | empty | media | cards | wakes | errors. Sending anything plays a reply.
+// Scenes: ?scene=solo | live | group | empty | media | cards | helpers | wakes | errors. Sending anything plays a reply.
 // (media shows files from the connected Hermes: /opt/data/murmur-media-test.)
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
@@ -17,7 +17,7 @@ const ATLAS: Speaker = { id: 'atlas', name: 'Atlas', hue: 278 }
 const JUNIPER: Speaker = { id: 'juniper', name: 'Juniper', hue: 160 }
 const WREN: Speaker = { id: 'wren', name: 'Wren', hue: 28 }
 
-type Scene = 'solo' | 'live' | 'group' | 'empty' | 'media' | 'cards' | 'secrets' | 'wakes' | 'errors'
+type Scene = 'solo' | 'live' | 'group' | 'empty' | 'media' | 'cards' | 'secrets' | 'helpers' | 'wakes' | 'errors'
 
 let n = 0
 const uid = (p: string) => `${p}-${++n}`
@@ -172,7 +172,18 @@ function wakesHistory(): ChatItem[] {
     tool('mcp__gmail__search', { query: 'in:inbox newer_than:30d' }, t + 2000, 2400),
     tool('read_file', { path: '/opt/data/email_triage/selected.json' }, t + 5000, 300),
     tool('execute_code', {}, t + 6000, 4200),
-    tool('delegate_task', { goal: 'Read-only review of the support and feedback emails in this batch' }, t + 11_000, 900),
+    {
+      kind: 'helper',
+      id: 'helper-sa-7f3c',
+      subagentId: 'sa-7f3c',
+      goal: 'Read-only review of the support and feedback emails in this batch',
+      status: 'done',
+      tools: 9,
+      startedAt: t + 12_000,
+      endedAt: t + 122_000,
+      summary: 'Two customers are stuck on setup; the rest are copies of answered tickets.',
+      delegationId: errand,
+    },
     {
       kind: 'assistant',
       id: uid('a'),
@@ -180,18 +191,16 @@ function wakesHistory(): ChatItem[] {
       streaming: false,
       at: t + 13_000,
     },
-    { kind: 'wake', id: 'wake-1', reason: 'helpers', at: t + 123_000, delegationId: errand, helpers: 1, failed: 0 },
     {
-      kind: 'helper',
-      id: 'wake-1-helper-0',
-      subagentId: 'sa-7f3c',
-      goal: 'Read-only review of the support and feedback emails in this batch',
-      status: 'done',
-      tools: 9,
-      startedAt: t + 13_000,
-      endedAt: t + 123_000,
-      summary: 'Two customers are stuck on setup; the rest are copies of answered tickets.',
+      kind: 'wake',
+      id: 'wake-1',
+      reason: 'helpers',
+      at: t + 123_000,
       delegationId: errand,
+      helpers: 1,
+      failed: 0,
+      took: 110_000,
+      subagentIds: ['sa-7f3c'],
     },
     tool('read_file', { path: '/opt/data/email_triage/review.json' }, t + 125_000, 400),
     { kind: 'assistant', id: uid('a'), text: INBOX, streaming: false, at: t + 131_000 },
@@ -210,6 +219,127 @@ function wakesHistory(): ChatItem[] {
     tool('mcp__gmail__modify', {}, t + 401_000, 1800),
     { kind: 'assistant', id: uid('a'), text: 'Sorry, I restarted partway through archiving. All 19 are archived now.', streaming: false, at: t + 404_000 },
   ]
+}
+
+const BATCH = [
+  'Read the full ASUS thread for batch email #41 and summarize its actionable status, deadlines, and who owes the next reply',
+  'Review all Intercom notification threads and Youform threads in this batch; read full messages and flag anything that needs a reply',
+]
+
+/** Helpers out in the background while the chat carries on; they come back on their own (see useErrand). */
+function helpersHistory(): ChatItem[] {
+  const t = Date.now() - 70_000
+  return [
+    { kind: 'user', id: uid('u'), text: 'Go through today’s support batch and tell me what actually needs me', at: t - 8000 },
+    tool('mcp__gmail__search', { query: 'label:support newer_than:1d' }, t - 6000, 2400),
+    tool('mcp__gmail__read_email', { id: 'batch-41' }, t - 3000, 1800),
+    ...BATCH.map(
+      (goal, i): ChatItem => ({
+        kind: 'helper',
+        id: `helper-sa-${i}`,
+        subagentId: `sa-${i}`,
+        goal,
+        status: 'running',
+        line: i ? 'Searching email · Youform' : 'Reading an email · RMA approved for ROG Ally X',
+        tools: i ? 4 : 6,
+        startedAt: t,
+        delegationId: 'deleg_batch',
+        background: true,
+      }),
+    ),
+    {
+      kind: 'assistant',
+      id: uid('a'),
+      text: 'Most of the batch is routine. Two threads are long, so I’ve asked two helpers to read them in full. I’ll pull it all together when they’re back.',
+      streaming: false,
+      at: t + 1000,
+    },
+    { kind: 'user', id: uid('u'), text: 'While they’re at it, what did the Shopify customer want?', at: t + 30_000 },
+    {
+      kind: 'assistant',
+      id: uid('a'),
+      text: 'Maya Chen wants to change the shipping address on order **#2231** before it ships tomorrow morning.\n\n- **Old address:** 18 Wren Street, Portland, OR 97209\n- **New address:** 402 Alder Avenue, Apt 3, Portland, OR 97205\n\nThe order hasn’t been packed yet, so it’s an easy change in Shopify. Want me to update it and reply to her?',
+      streaming: false,
+      at: t + 34_000,
+    },
+    { kind: 'user', id: uid('u'), text: 'Yes please, and let her know', at: t + 50_000 },
+    tool('mcp__shopify__update_order', { id: '2231' }, t + 52_000, 1400),
+    tool('mcp__gmail__reply', { thread: 'maya-chen' }, t + 54_000, 1100),
+    {
+      kind: 'assistant',
+      id: uid('a'),
+      text: 'Done. Order **#2231** now ships to 402 Alder Avenue, and I told Maya it’s updated and still going out tomorrow.',
+      streaming: false,
+      at: t + 56_000,
+    },
+  ]
+}
+
+/** What the helpers in helpersHistory get up to, and how each one comes back. */
+const ERRAND: { at: number; i: number; run: (h: Extract<ChatItem, { kind: 'helper' }>) => Partial<ChatItem> }[] = [
+  { at: 2500, i: 0, run: () => ({ line: 'Reading an email · Re: Serial number for RMA', tools: 7 }) },
+  { at: 4000, i: 1, run: () => ({ line: 'Reading an email · Refund request #1182', tools: 5 }) },
+  { at: 6500, i: 1, run: () => ({ line: 'Reading an email · Export page shows a blank CSV', tools: 6 }) },
+  {
+    at: 9000,
+    i: 0,
+    run: () => ({
+      status: 'done',
+      tools: 9,
+      endedAt: Date.now(),
+      line: undefined,
+      summary: 'ASUS approved the RMA. They need the serial number by Friday, and the next reply is ours.',
+    }),
+  },
+  { at: 12_000, i: 1, run: () => ({ line: 'Searching email · Intercom', tools: 11 }) },
+  { at: 16_000, i: 1, run: () => ({ status: 'error', tools: 14, endedAt: Date.now(), line: 'Ran out of time' }) },
+]
+
+/** Plays helpersHistory's helpers out: they work, come back, and the agent picks it up. */
+function useErrand(on: boolean, setItems: (fn: (it: ChatItem[]) => ChatItem[]) => void) {
+  useEffect(() => {
+    if (!on) return
+    const timers = ERRAND.map(({ at, i, run }) =>
+      window.setTimeout(
+        () =>
+          setItems((it) =>
+            it.map((x) =>
+              x.kind === 'helper' && x.subagentId === `sa-${i}` && x.status === 'running'
+                ? ({ ...x, ...run(x) } as ChatItem)
+                : x,
+            ),
+          ),
+        at,
+      ),
+    )
+    timers.push(
+      window.setTimeout(
+        () =>
+          setItems((it) => [
+            ...it,
+            {
+              kind: 'wake',
+              id: uid('wake'),
+              reason: 'helpers',
+              at: Date.now(),
+              delegationId: 'deleg_batch',
+              helpers: 2,
+              failed: 1,
+              subagentIds: ['sa-0', 'sa-1'],
+            },
+            {
+              kind: 'assistant',
+              id: uid('a'),
+              text: 'The ASUS thread is done, but the Intercom and Youform helper ran out of time before it finished.\n\n**ASUS RMA (#41):** they approved the replacement and need the serial number by **Friday**.\n\nWant me to go through the Intercom and Youform threads myself?',
+              streaming: false,
+              at: Date.now(),
+            },
+          ]),
+        17_500,
+      ),
+    )
+    return () => timers.forEach((t) => window.clearTimeout(t))
+  }, [on, setItems])
 }
 
 function groupHistory(): ChatItem[] {
@@ -369,9 +499,12 @@ function Chat({ scene }: { scene: Scene }) {
                 ? secretsHistory()
                 : scene === 'wakes'
                   ? wakesHistory()
-                  : [],
+                  : scene === 'helpers'
+                    ? helpersHistory()
+                    : [],
   )
   const inset = useKeyboardInset()
+  useErrand(scene === 'helpers', setItems)
 
   useEffect(() => {
     if (scene === 'solo' || scene === 'group') setBusy(true)
@@ -518,6 +651,15 @@ function Chat({ scene }: { scene: Scene }) {
           )
         }
         onRetry={retry}
+        onStopHelper={(subagentId) =>
+          setItems((it) =>
+            it.map((i) =>
+              i.kind === 'helper' && i.subagentId === subagentId && i.status === 'running'
+                ? { ...i, status: 'stopped', line: undefined, endedAt: Date.now() }
+                : i,
+            ),
+          )
+        }
         emptyState={
           <div className="flex flex-col items-center gap-4 pb-16 text-center">
             <Orb hue={ATLAS.hue} size={96} seed="atlas" />
@@ -634,6 +776,7 @@ const SCENES: { value: Scene; label: string }[] = [
   { value: 'empty', label: 'Empty' },
   { value: 'cards', label: 'Cards' },
   { value: 'secrets', label: 'Logins' },
+  { value: 'helpers', label: 'Helpers' },
   { value: 'wakes', label: 'Wakes' },
   { value: 'errors', label: 'Errors' },
 ]

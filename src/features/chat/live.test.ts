@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  errandOf,
   planFromResult,
   reactionsOf,
   settleHelpers,
@@ -149,6 +150,20 @@ describe('helpers sent off in the background', () => {
   it('are keyed by their place when the call names no one', () => {
     const items = withErrand([user('u1')], { ...sent, subagent_ids: undefined }, 0)
     expect(items.map((i) => i.kind === 'helper' && i.subagentId)).toEqual([false, 'deleg_1-0', 'deleg_1-1'])
+  })
+
+  it('say why one didn’t finish, when Hermes says more than that', () => {
+    const items = withHelper([user('u1')], 'subagent.start', start, 1000)
+    const late = withHelper(items, 'subagent.complete', { ...start, status: 'timeout' }, 9000)
+    expect(late[1]).toMatchObject({ status: 'error', line: 'Ran out of time', endedAt: 9000 })
+    const failed = withHelper(items, 'subagent.complete', { ...start, status: 'failed' }, 9000)
+    expect(failed[1]).toMatchObject({ status: 'error', line: undefined })
+  })
+
+  it('are told from what else delegate_task says by the call’s answer', () => {
+    expect(errandOf(JSON.stringify(sent))).toMatchObject({ delegation_id: 'deleg_1' })
+    expect(errandOf({ results: [{ status: 'completed' }] })).toBeUndefined()
+    expect(errandOf({ status: 'dispatched' })).toBeUndefined()
   })
 
   it('leave anything else delegate_task says alone', () => {

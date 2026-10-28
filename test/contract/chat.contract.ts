@@ -4,7 +4,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { clearUnread, titleTaken, updateChat } from '@/state/chats'
-import { errandsOf, isYours, wakeItems, type SavedRow } from '@/features/chat/wake'
+import { errandsOf, isYours, sentItems, wakeItems, type SavedRow } from '@/features/chat/wake'
 import { api, connect, modelRequests, newChat, q, sleep, turn, whenIdle, type Socket } from './client'
 import { toolsTag } from './fake-model'
 
@@ -246,9 +246,15 @@ describe('a helper sent off', () => {
 
     // What Murmur makes of it: not your message, but the helper back, as the call named it.
     expect(rows.filter((r) => r.role === 'user' && isYours(r)).map((r) => r.content)).toEqual([expect.stringMatching(/^Ask a helper/)])
-    const [item, helper] = wakeItems(wake, 'w', errandsOf(rows))
+    const errands = errandsOf(rows)
+    const [item] = wakeItems(wake, 'w', errands)
     expect(item).toMatchObject({ kind: 'wake', reason: 'helpers', delegationId: sent.delegation_id, helpers: 1, failed: 0, rowId: wake.id })
-    expect(helper).toMatchObject({ kind: 'helper', goal, status: 'done', subagentId: (back.payload as { subagent_id?: string }).subagent_id })
+    // Its card stays in the turn that sent it, done now: what it said and how long it took, by the report under the wake.
+    const dispatch = rows.find((r) => r.role === 'tool' && r.tool_name === 'delegate_task')!
+    const { subagent_id, summary } = back.payload as { subagent_id?: string; summary?: string }
+    const [card] = sentItems(dispatch, errands)
+    expect(card).toMatchObject({ kind: 'helper', goal, status: 'done', subagentId: subagent_id, summary: summary?.trim() })
+    expect(card.endedAt! - card.startedAt).toBeGreaterThan(0)
   })
 })
 

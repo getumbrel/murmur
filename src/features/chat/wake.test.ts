@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { errandsOf, isYours, wakeItems, wakeReason, withSeenHelpers, type SavedRow } from './wake'
+import { errandsOf, isYours, sentItems, wakeItems, wakeReason, withSeenHelpers, type SavedRow } from './wake'
 import type { ChatItem } from './types'
 
 // As Hermes 0.22.5 saves them: delegate_task's answer to a background call
@@ -36,6 +36,23 @@ const back = (meta: object = {}): SavedRow => ({
   },
   timestamp: 1000,
 })
+
+// The report under it, a block for each helper, as Hermes writes it for the model.
+const REPORT = [
+  '[ASYNC DELEGATION BATCH COMPLETE — deleg_d390b76f]',
+  'A background fan-out unit you dispatched earlier — 2 subagent(s) — has finished; its consolidated results are below.',
+  '',
+  'Dispatched: 2026-10-28 12:35:45 (1m 50s ago)   Total duration: 110s',
+  '',
+  '--- ✓ TASK 1/2: Check the support emails  (status=completed, api_calls=4, 39.5s) ---',
+  '```text',
+  'Two need you: the ASUS RMA and a refund.',
+  '```',
+  'Full live transcript (complete tool/assistant trace): /tmp/deleg_d390b76f-0.jsonl',
+  '',
+  '--- ✗ TASK 2/2: Check the feedback emails  (status=timeout, api_calls=12, 101.2s) ---',
+  '(no summary — status=timeout: ran past 100s)',
+].join('\n')
 
 const helpers = (items: ChatItem[]) => items.flatMap((i) => (i.kind === 'helper' ? [i] : []))
 
@@ -101,43 +118,116 @@ describe('errands', () => {
   })
 })
 
+describe('helpers sent off', () => {
+  // Sent at 890s; back at 1000s, after 110s away.
+  const call = { ...dispatched(), timestamp: 890 }
+
+  it('are cards in the turn that sent them, out working until the wake that brings them back', () => {
+    expect(sentItems(call, errandsOf([call]))).toEqual([
+      {
+        kind: 'helper',
+        id: 'helper-sa-1',
+        subagentId: 'sa-1',
+        goal: 'Check the support emails',
+        status: 'running',
+        tools: 0,
+        startedAt: 890_000,
+        delegationId: 'deleg_d390b76f',
+        background: true,
+      },
+      expect.objectContaining({ id: 'helper-sa-2', goal: 'Check the feedback emails', status: 'running' }),
+    ])
+  })
+
+  it('say how it went once they’re back, timed as Hermes timed them', () => {
+    const errands = errandsOf([call, back()])
+    expect(errands.get('deleg_d390b76f')?.back).toEqual({ at: 1_000_000, helpers: 2, failed: 0, took: 110_000 })
+    expect(sentItems(call, errands)).toMatchObject([
+      { status: 'done', startedAt: 890_000, endedAt: 1_000_000 },
+      { status: 'done', endedAt: 1_000_000 },
+    ])
+    expect(sentItems(call, errands).some((h) => h.background)).toBe(false)
+  })
+
+  it('say each one didn’t finish when none did, and only that they’re back when some didn’t', () => {
+    const none = errandsOf([call, back({ failed_count: 2 })])
+    expect(sentItems(call, none).map((h) => h.status)).toEqual(['error', 'error'])
+    const some = errandsOf([call, back({ failed_count: 1 })])
+    expect(sentItems(call, some).map((h) => h.status)).toEqual(['back', 'back'])
+  })
+
+  it('say how each one went, and how long it took, from the report under the wake', () => {
+    const errands = errandsOf([call, { ...back({ failed_count: 1 }), content: REPORT }])
+    expect(sentItems(call, errands)).toMatchObject([
+      {
+        status: 'done',
+        startedAt: 890_000,
+        endedAt: 929_500,
+        summary: '```text\nTwo need you: the ASUS RMA and a refund.\n```',
+      },
+      { status: 'error', line: 'Ran out of time', endedAt: 991_200 },
+    ])
+    expect(sentItems(call, errands)[1]).not.toHaveProperty('summary')
+  })
+
+  it('come back part by part when the call split them up', () => {
+    const units = [
+      { delegation_id: 'deleg_a', task_indexes: [0] },
+      { delegation_id: 'deleg_b', task_indexes: [1] },
+    ]
+    const split = { ...dispatched({ units }), timestamp: 890 }
+    const errands = errandsOf([split, back({ delegation_id: 'deleg_b', task_count: 1, failed_count: 1 })])
+    expect(sentItems(split, errands).map((h) => [h.subagentId, h.status])).toEqual([
+      ['sa-1', 'running'],
+      ['sa-2', 'error'],
+    ])
+  })
+
+  it('are keyed by their place when the call names no one', () => {
+    const anon = { ...dispatched({ subagent_ids: undefined }), timestamp: 890 }
+    expect(sentItems(anon, errandsOf([anon])).map((h) => h.id)).toEqual([
+      'helper-deleg_d390b76f-0',
+      'helper-deleg_d390b76f-1',
+    ])
+  })
+
+  it('are nothing for any other call', () => {
+    const sync = { role: 'tool', tool_name: 'delegate_task', content: '{"results": []}' }
+    expect(sentItems(sync, errandsOf([sync]))).toEqual([])
+    expect(sentItems({ role: 'tool', tool_name: 'terminal', content: '{}' }, new Map())).toEqual([])
+  })
+})
+
 describe('a wake', () => {
-  it('when helpers are back, is their faces: who went and what they were asked', () => {
-    const items = wakeItems(back(), 'h9', errandsOf([dispatched()]))
-    expect(items[0]).toEqual({
-      kind: 'wake',
-      id: 'h9',
-      reason: 'helpers',
-      at: 1_000_000,
-      rowId: 9,
-      delegationId: 'deleg_d390b76f',
-      helpers: 2,
-      failed: 0,
-      took: 110_000,
-    })
-    expect(helpers(items)).toMatchObject([
-      { subagentId: 'sa-1', goal: 'Check the support emails', status: 'done', startedAt: 890_000, endedAt: 1_000_000 },
-      { subagentId: 'sa-2', goal: 'Check the feedback emails', status: 'done' },
+  it('when helpers are back, says how many, how long they were away and who went', () => {
+    expect(wakeItems(back(), 'h9', errandsOf([dispatched()]))).toEqual([
+      {
+        kind: 'wake',
+        id: 'h9',
+        reason: 'helpers',
+        at: 1_000_000,
+        rowId: 9,
+        delegationId: 'deleg_d390b76f',
+        helpers: 2,
+        failed: 0,
+        took: 110_000,
+        subagentIds: ['sa-1', 'sa-2'],
+      },
     ])
   })
 
   it('still counts its helpers when the errand that sent them is out of view', () => {
-    const items = wakeItems(back({ task_count: 3, failed_count: 3 }), 'h9', new Map())
-    expect(items[0]).toMatchObject({ helpers: 3, failed: 3 })
-    // Keyed as Hermes keys a helper's live events when it gives no id of its own.
-    expect(helpers(items).map((h) => [h.subagentId, h.goal, h.status])).toEqual([
-      ['deleg_d390b76f-0', '', 'error'],
-      ['deleg_d390b76f-1', '', 'error'],
-      ['deleg_d390b76f-2', '', 'error'],
-    ])
+    const [item] = wakeItems(back({ task_count: 3, failed_count: 3 }), 'h9', new Map())
+    expect(item).toMatchObject({ helpers: 3, failed: 3 })
+    expect(item).not.toHaveProperty('subagentIds')
   })
 
   it('makes do with what an older Hermes saved: metadata as text, or none', () => {
     const asText = wakeItems({ ...back(), display_metadata: JSON.stringify(back().display_metadata) }, 'h9', new Map())
-    expect(asText[0]).toMatchObject({ delegationId: 'deleg_d390b76f', helpers: 2 })
-    const bare = wakeItems({ ...back(), display_metadata: undefined }, 'h9', new Map())
-    expect(bare[0]).toMatchObject({ helpers: 1, failed: 0, delegationId: undefined })
-    expect(helpers(bare)).toMatchObject([{ subagentId: 'h9-0', startedAt: 1_000_000 }])
+    expect(asText[0]).toMatchObject({ delegationId: 'deleg_d390b76f', helpers: 2, took: 110_000 })
+    const [bare] = wakeItems({ ...back(), display_metadata: undefined }, 'h9', new Map())
+    expect(bare).toMatchObject({ helpers: 1, failed: 0, delegationId: undefined })
+    expect(bare).not.toHaveProperty('took')
   })
 
   it('for anything else is one line, and nothing for your own words', () => {
@@ -148,8 +238,10 @@ describe('a wake', () => {
 })
 
 describe('helpers seen live', () => {
+  const call = { ...dispatched(), timestamp: 890 }
+
   it('keep what this page saw of them once the chat is read back', () => {
-    const read = wakeItems(back({ failed_count: 1 }), 'h9', errandsOf([dispatched()]))
+    const read = sentItems(call, errandsOf([call, back({ failed_count: 1 })]))
     const seen: ChatItem[] = [
       {
         kind: 'helper',
@@ -157,25 +249,63 @@ describe('helpers seen live', () => {
         subagentId: 'sa-2',
         goal: 'Check the feedback emails',
         status: 'error',
+        line: 'Ran out of time',
         tools: 4,
         startedAt: 900_000,
         endedAt: 990_000,
       },
-      { kind: 'helper', id: 'helper-sa-1', subagentId: 'sa-1', goal: 'x', status: 'running', tools: 2, startedAt: 1 },
+      {
+        kind: 'helper',
+        id: 'helper-sa-1',
+        subagentId: 'sa-1',
+        goal: 'x',
+        status: 'running',
+        line: 'Searching',
+        tools: 2,
+        startedAt: 1,
+      },
     ]
     const [one, two] = helpers(withSeenHelpers(read, seen))
-    // Still running when it was last seen: how it went comes from the wake.
+    // Still running when it was last seen: how it went comes from the wake, and what it was doing goes.
     expect(one).toMatchObject({
       subagentId: 'sa-1',
       goal: 'Check the support emails',
-      status: 'done',
+      status: 'back',
       endedAt: 1_000_000,
     })
-    expect(two).toMatchObject({ status: 'error', tools: 4, startedAt: 900_000, endedAt: 990_000 })
+    expect(one.line).toBeUndefined()
+    expect(two).toMatchObject({
+      status: 'error',
+      line: 'Ran out of time',
+      tools: 4,
+      startedAt: 900_000,
+      endedAt: 990_000,
+    })
+  })
+
+  it('carry on where they were when they’re still out', () => {
+    const read = sentItems(call, errandsOf([call]))
+    const seen: ChatItem[] = [
+      {
+        kind: 'helper',
+        id: 'helper-sa-1',
+        subagentId: 'sa-1',
+        goal: 'x',
+        status: 'running',
+        line: 'Searching',
+        tools: 2,
+        startedAt: 1,
+      },
+    ]
+    expect(helpers(withSeenHelpers(read, seen))[0]).toMatchObject({
+      status: 'running',
+      line: 'Searching',
+      background: true,
+    })
   })
 
   it('leave the chat as read when none were seen', () => {
-    const read = wakeItems(back(), 'h9', new Map())
+    const read = sentItems(call, errandsOf([call]))
     expect(withSeenHelpers(read, [])).toBe(read)
   })
 })
