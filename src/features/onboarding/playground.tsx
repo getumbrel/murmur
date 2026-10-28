@@ -5,6 +5,7 @@ import { AgentEditorSheet } from '@/features/agents/agent-editor'
 import { NewGroupSheet } from '@/features/agents/new-group'
 import type { DeviceModel, DeviceSetup } from '@/state/local-jobs'
 import { ConnectModel, type ChatGPTFlow, type ConnectOption, type ConnectState, type FindState } from './connect'
+import { addressesFor, isPrivateUrl, serverName, ServerProblem, type ModelServer } from './servers'
 import { Done } from './done'
 import { FirstAgent } from './first-agent'
 import { Welcome } from './welcome'
@@ -19,7 +20,9 @@ import { SetupPlayground } from './setup-playground'
 // preparing|downloading|paused|starting|ready|error|none (&umbrel=0 for "this
 // computer"); a model typed in by name there: &custom=resolved|tight|toobig|
 // finding|error (type "nope/…" to see an error, anything else finds one); an
-// Ollama with no models yet: &local=empty&open=local.
+// Ollama with no models yet: &local=empty&open=local. Any other model server
+// (&local=none&open=local): an address at home finds two models, one online
+// asks for a key (one with "bad" in it is turned down), "nope…" isn't there.
 
 const params = new URLSearchParams(location.search)
 const param = (k: string) => params.get(k) ?? undefined
@@ -59,6 +62,20 @@ const SERVERS = [
 ]
 
 const EMPTY_OLLAMA = [{ name: 'Ollama', baseUrl: 'http://ollama_ollama_1:11434/v1', models: [] }]
+
+const HOSTED = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'qwen/qwen3-32b', 'moonshotai/kimi-k2-instruct', 'meta-llama/llama-4-scout-17b-16e-instruct', 'meta-llama/llama-4-maverick-17b-128e-instruct', 'deepseek-r1-distill-llama-70b', 'gemma2-9b-it', 'mistral-saba-24b', 'compound-beta']
+
+async function fakeFindServer(address: string, apiKey?: string): Promise<ModelServer> {
+  await new Promise((done) => setTimeout(done, 700))
+  const { urls, host } = addressesFor(address)
+  const url = urls[0]
+  const name = serverName(url)
+  if (/^nope/.test(address)) throw new ServerProblem(`Couldn’t reach ${host}. Check the address and that the server is running.`, 'unreachable')
+  if (!isPrivateUrl(url) && !apiKey) throw new ServerProblem(`${name} needs an API key.`, 'needs-key')
+  if (apiKey?.includes('bad')) throw new ServerProblem(`${name} didn’t accept that key. Check it and try again.`, 'bad-key')
+  const models = isPrivateUrl(url) ? SERVERS[0].models.slice(0, 2) : HOSTED.map((id) => ({ id, size: null, parameters: null }))
+  return { name, baseUrl: url, models, ...(apiKey && { apiKey }) }
+}
 
 // What Hermes's hardware answer turns into on a 16 GB Umbrel with about 12 GB free (local-tiers.ts).
 const DEVICE_MODELS: DeviceModel[] = [
@@ -242,7 +259,7 @@ export function Playground() {
           key={`${deviceKey}-${customKey}`}
           state={state}
           umbrel={umbrel}
-          onAddServer={() => {}}
+          onFindServer={fakeFindServer}
           onRunDevice={fake.start}
           onPauseDevice={fake.pause}
           onResumeDevice={fake.resume}

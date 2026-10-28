@@ -33,11 +33,15 @@ export const TextArea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<H
  * keyboard. It's never this site's own password, so browsers and password
  * managers aren't invited to save it for Murmur.
  */
-export function SecretField({ className, disabled, ...props }: InputHTMLAttributes<HTMLInputElement>) {
+export const SecretField = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(function SecretField(
+  { className, disabled, ...props },
+  ref,
+) {
   const [shown, setShown] = useState(false)
   return (
     <div className="relative">
       <TextField
+        ref={ref}
         {...props}
         disabled={disabled}
         type={shown ? 'text' : 'password'}
@@ -56,7 +60,7 @@ export function SecretField({ className, disabled, ...props }: InputHTMLAttribut
       </span>
     </div>
   )
-}
+})
 
 const ENTRY = 'input:not([type=hidden],[type=checkbox],[type=radio],[type=button],[type=submit]), textarea, select'
 

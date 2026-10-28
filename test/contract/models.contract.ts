@@ -4,9 +4,9 @@
 
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest'
 import { startGateway, stopGateway } from '@/hermes/gateway'
-import { connectLocal, findServer, setMainModel } from '@/state/models'
-import { MODELS } from './fake-model'
-import { api, connect, type Socket } from './client'
+import { connectServer, findServer, setMainModel, updateServer, type Service } from '@/state/models'
+import { MODEL_KEY, MODELS } from './fake-model'
+import { api, connect, modelRequests, newChat, turn, type Socket } from './client'
 
 let socket: Socket
 const forHermes = inject('model').forHermes
@@ -38,12 +38,66 @@ describe('a model server', () => {
 
   it('is connected as the main model, once, however often it’s picked', async () => {
     const server = await findServer(forHermes)
-    await connectLocal(server, server.models[1])
-    await connectLocal(server, server.models[1])
+    await connectServer(server, server.models[1])
+    await connectServer(server, server.models[1])
     const { endpoints, current } = await api.get('/api/providers/custom-endpoints')
     expect(endpoints.filter((e: { base_url: string }) => e.base_url === forHermes)).toHaveLength(1)
     expect(endpoints[0]).toMatchObject({ id: expect.any(String), name: expect.any(String), base_url: forHermes, model: expect.any(String) })
     expect(current).toMatchObject({ model: MODELS[1] })
+  })
+})
+
+describe('a model server that wants a key', () => {
+  const keyed = forHermes.replace(/\/v1$/, '/keyed/v1')
+  type Saved = { id: string; name: string; base_url: string; model: string; has_api_key: boolean; api_key_preview: string | null }
+  const saved = async () => (await api.get('/api/providers/custom-endpoints')).endpoints as Saved[]
+  /** The keyed server, as Settings → Models sees it. */
+  const service = async (): Promise<Service> => {
+    const e = (await saved()).find((e) => e.base_url.includes('/keyed') || e.name === 'Moved')!
+    const { provider } = await api.get('/api/model/options')
+    return { slug: e.id, name: e.name, detail: '', models: MODELS, current: provider === e.id, server: { id: e.id, baseUrl: e.base_url, hasKey: e.has_api_key, model: e.model } }
+  }
+
+  // Back to the fake model the way the tests before left it.
+  afterAll(async () => {
+    for (const e of await saved()) if (e.base_url.includes('/keyed') || e.name === 'Moved') await api.delete(`/api/providers/custom-endpoints/${e.id}`)
+    await setMainModel((await saved()).find((e) => e.base_url === forHermes)!.id, MODELS[1])
+  })
+
+  it('asks for one, turns a wrong one down, and lists its models for the right one', async () => {
+    await expect(findServer(keyed)).rejects.toMatchObject({ kind: 'needs-key', field: 'key' })
+    await expect(findServer(keyed, 'not-the-key')).rejects.toMatchObject({ kind: 'bad-key' })
+    const server = await findServer(keyed, MODEL_KEY)
+    expect(server).toMatchObject({ baseUrl: keyed, apiKey: MODEL_KEY })
+    expect(server.models.map((m) => m.id)).toEqual(MODELS)
+  })
+
+  it('is saved with its key, which chats carry and Hermes never hands back', async () => {
+    const server = await findServer(keyed, MODEL_KEY)
+    await connectServer(server, server.models[0])
+    const endpoints = await saved()
+    expect(endpoints.find((e) => e.base_url === keyed)).toMatchObject({ has_api_key: true, model: MODELS[0] })
+    expect(JSON.stringify(endpoints)).not.toContain(MODEL_KEY)
+    expect(JSON.stringify(await api.get('/api/env'))).not.toContain(MODEL_KEY)
+
+    const { runtime } = await newChat(socket)
+    await turn(socket, runtime, 'Hi [[say: through a key]]')
+    const last = (await modelRequests()).at(-1)
+    expect(last).toMatchObject({ path: '/v1/chat/completions', auth: `Bearer ${MODEL_KEY}` })
+  })
+
+  it('takes a new key, and lets one go only where it isn’t needed', async () => {
+    await expect(updateServer(await service(), { address: keyed, apiKey: 'not-the-key' })).rejects.toMatchObject({ kind: 'bad-key' })
+    await expect(updateServer(await service(), { address: keyed, apiKey: '' })).rejects.toMatchObject({ kind: 'needs-key' })
+    await updateServer(await service(), { address: keyed, apiKey: MODEL_KEY })
+    expect((await saved()).find((e) => e.base_url === keyed)).toMatchObject({ has_api_key: true })
+
+    // Moved somewhere that wants no key, it keeps its name and the main agent follows it.
+    const before = await service()
+    await updateServer({ ...before, name: 'Moved' }, { address: forHermes, apiKey: '' }, MODELS[1])
+    const moved = (await saved()).find((e) => e.id === before.slug)
+    expect(moved).toMatchObject({ name: 'Moved', base_url: forHermes, has_api_key: false })
+    expect(await api.get('/api/model/options')).toMatchObject({ provider: before.slug, model: MODELS[1] })
   })
 })
 

@@ -1,5 +1,5 @@
 // Models and the services that provide them: a ChatGPT plan, API keys and
-// model servers on the local network. Hermes keeps these per agent; Murmur
+// model servers, at home or online. Hermes keeps these per agent; Murmur
 // manages the main agent's, which new agents copy. Spec:
 // docs/hermes/models-and-onboarding.md.
 
@@ -7,7 +7,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, HermesError } from '@/hermes/rest'
 import { rpc } from '@/hermes/gateway'
-import type { ApiKeyService, ChatGPTFlow, LocalModel, LocalServer } from '@/features/onboarding/connect'
+import type { ApiKeyService, ChatGPTFlow } from '@/features/onboarding/connect'
+import { addressesFor, hostOf, isPrivateUrl, serverName, ServerProblem, type ModelServer, type ServerModel } from '@/features/onboarding/servers'
 import { readinessKey, type RuntimeCheck } from './readiness'
 import { freshenModels } from '@/features/model/use-models'
 import { planFromAccountLines, planUsage, reportsPlanAsText, type PlanUsage } from './limits'
@@ -32,7 +33,7 @@ type OptionsRow = {
 type Options = { model: string; provider: string; providers: OptionsRow[] }
 type OAuthRow = { id: string; status: { logged_in?: boolean } }
 type EnvRow = { is_set: boolean; category?: string; provider?: string; redacted_value?: string | null }
-type Endpoint = { id: string; name: string; base_url: string; model: string }
+type Endpoint = { id: string; name: string; base_url: string; model: string; models?: string[]; has_api_key?: boolean }
 
 export type Service = {
   /** The model/options slug, which is also what /api/model/set wants. */
@@ -47,6 +48,8 @@ export type Service = {
   limit?: unknown
   /** How to disconnect it; absent when Murmur can't (set up outside Murmur). */
   remove?: { kind: 'oauth'; id: string } | { kind: 'key'; env: string } | { kind: 'endpoint'; id: string }
+  /** A model server: where it is, so it can be changed. */
+  server?: { id: string; baseUrl: string; hasKey: boolean; model: string }
 }
 
 export type Models = { model: string; provider: string; services: Service[] }
@@ -94,7 +97,15 @@ export function useModels() {
           }
           if (signedIn)
             return { ...base, detail: p.slug === 'openai-codex' ? 'Your ChatGPT plan' : 'Signed in', remove: { kind: 'oauth', id: p.slug } }
-          if (endpoint) return { ...base, name: endpoint.name, detail: hostOf(endpoint.base_url), remove: { kind: 'endpoint', id: endpoint.id } }
+          if (endpoint)
+            return {
+              ...base,
+              name: endpoint.name,
+              // Named for where it is already: say what it offers instead.
+              detail: endpoint.name === hostOf(endpoint.base_url) ? plural(p.models.length, 'model') : hostOf(endpoint.base_url),
+              remove: { kind: 'endpoint', id: endpoint.id },
+              server: { id: endpoint.id, baseUrl: endpoint.base_url, hasKey: !!endpoint.has_api_key, model: endpoint.model },
+            }
           if (key) return { ...base, detail: keyHint(key[1].redacted_value), remove: { kind: 'key', env: key[0] } }
           // Hermes runs it itself (local-runtime.ts).
           if (p.slug === LOCAL_SLUG) return { ...base, detail: 'Runs privately' }
@@ -111,13 +122,7 @@ export function useModels() {
   })
 }
 
-const hostOf = (url: string) => {
-  try {
-    return new URL(url).host
-  } catch {
-    return url
-  }
-}
+const plural = (n: number, word: string) => `${n}\u00a0${word}${n === 1 ? '' : 's'}`
 
 /** «redacted:sk-o...1c65» → "Key ending in 1c65" */
 function keyHint(redacted?: string | null) {
@@ -250,7 +255,7 @@ export async function connectApiKey(service: ApiKeyService, key: string, confirm
   await adopt(slug, confirm)
 }
 
-// ── Local model servers ─────────────────────────────────────────────────────
+// ── Model servers ───────────────────────────────────────────────────────────
 
 /** Ollama or LocalAI on this Umbrel, found by the Murmur server. */
 export function useLocalServers(enabled = true) {
@@ -260,45 +265,113 @@ export function useLocalServers(enabled = true) {
     queryFn: async () => {
       const res = await fetch('/murmur/local')
       if (!res.ok) return []
-      return ((await res.json()) as { servers: LocalServer[] }).servers
+      return ((await res.json()) as { servers: ModelServer[] }).servers
     },
     staleTime: 15_000,
   })
 }
 
-/** Checks an address from Hermes' side of the network and lists its models. */
-export async function findServer(input: string): Promise<LocalServer> {
-  const url = /^https?:\/\//i.test(input.trim()) ? input.trim() : `http://${input.trim()}`
-  let host: string
-  try {
-    host = new URL(url).host
-  } catch {
-    throw new Error('That doesn’t look like an address. Try something like 192.168.1.20:11434.')
+/** Asks Hermes, from its side of the network, what answers at an address: each likely scheme in turn. */
+async function probe(input: string, apiKey?: string) {
+  const { urls, host } = addressesFor(input)
+  let url = urls[0]
+  let res!: Validation
+  for (url of urls) {
+    res = await api.post<Validation>('/api/providers/validate', { key: 'OPENAI_BASE_URL', value: url, ...(apiKey && { api_key: apiKey }) })
+    // Nothing there, or plain http on a host that only redirects: the next one, if any.
+    if (res.reachable && !/HTTP 30\d\b/.test(res.message ?? '')) break
   }
-  const res = await api.post<Validation>('/api/providers/validate', { key: 'OPENAI_BASE_URL', value: url })
-  if (!res.reachable) throw new Error(`Couldn’t reach ${host}. Check the address and that the server is running.`)
-  if (!res.ok) throw new Error(res.message || `${host} answered, but not like a model server.`)
-  if (!res.models?.length) throw new Error(`${host} is running but has no models yet.`)
+  return { url, host, res }
+}
+
+/**
+ * What's at an address, as Hermes sees it: the server and its models, or a
+ * ServerProblem saying which field would fix it. The key goes with the asking.
+ */
+export async function findServer(input: string, apiKey?: string): Promise<ModelServer> {
+  const key = apiKey?.trim() || undefined
+  const { url, host, res } = await probe(input, key)
+  const name = serverName(url)
+  if (!res.reachable) throw new ServerProblem(`Couldn’t reach ${host}. Check the address and that the server is running.`, 'unreachable')
+  if (!res.ok && /HTTP 40[13]\b/.test(res.message ?? ''))
+    throw key
+      ? new ServerProblem(`${name} didn’t accept that key. Check it and try again.`, 'bad-key')
+      : new ServerProblem(`${name} needs an API key.`, 'needs-key')
+  if (!res.ok)
+    throw new ServerProblem(`${host} answered, but isn’t serving models there. Check the full address, which often ends in /v1.`, 'not-a-server')
+  if (!res.models?.length)
+    // Online, an empty list is usually a missing key.
+    throw !key && !isPrivateUrl(url)
+      ? new ServerProblem(`${name} didn’t list any models. It may need an API key.`, 'needs-key')
+      : new ServerProblem(`${name} is running but has no models yet.`, 'no-models')
   return {
-    name: host,
+    name,
     baseUrl: res.resolved_base_url ?? url,
     models: res.models.map((id) => ({ id, size: null, parameters: null })),
+    ...(key && { apiKey: key }),
   }
 }
 
-export async function connectLocal(server: LocalServer, model: LocalModel) {
-  const check = await api.post<Validation>('/api/providers/validate', { key: 'OPENAI_BASE_URL', value: server.baseUrl })
+/**
+ * Hermes keys a server by its id, and some ids are its own services
+ * ("openrouter", "xai"): a new one is keyed by where it is instead, and named
+ * so it reads apart from any other ("Ollama", then "Ollama on 192.168.1.20").
+ */
+function newEndpoint(server: ModelServer, baseUrl: string, endpoints: Endpoint[]) {
+  const host = hostOf(baseUrl)
+  const slug = host.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^[-_]+|[-_]+$/g, '') || 'server'
+  let id = slug
+  for (let n = 2; endpoints.some((e) => e.id === id); n++) id = `${slug}-${n}`
+  const taken = (name: string) => endpoints.some((e) => e.name.toLowerCase() === name.toLowerCase())
+  const tries = server.name === host ? [server.name] : [server.name, `${server.name} on ${host}`]
+  let name = tries.find((n) => !taken(n))
+  for (let n = 2; !name; n++) if (!taken(`${server.name} ${n}`)) name = `${server.name} ${n}`
+  return { id, name }
+}
+
+/** Saves a server in Hermes (once, however often it's picked) and makes `model` the main agent's. */
+export async function connectServer(server: ModelServer, model: ServerModel) {
+  const key = server.apiKey
+  const check = await api.post<Validation>('/api/providers/validate', { key: 'OPENAI_BASE_URL', value: server.baseUrl, ...(key && { api_key: key }) })
   if (!check.reachable) throw new Error(`Hermes can’t reach ${server.name}. Make sure it’s running, then try again.`)
   const base_url = check.resolved_base_url ?? server.baseUrl
-  const existing = await api.get<{ endpoints: Endpoint[] }>('/api/providers/custom-endpoints')
+  const { endpoints } = await api.get<{ endpoints: Endpoint[] }>('/api/providers/custom-endpoints')
+  const saved = endpoints.find((e) => e.base_url === base_url)
   await api.post('/api/providers/custom-endpoints', {
-    id: existing.endpoints.find((e) => e.base_url === base_url)?.id ?? '',
-    name: server.name,
+    ...(saved ? { id: saved.id, name: saved.name } : newEndpoint(server, base_url, endpoints)),
     base_url,
     model: model.id,
     models: check.models?.length ? check.models : server.models.map((m) => m.id),
     make_default: true,
+    // Only a key typed just now replaces one already saved.
+    ...(key && { api_key: key }),
   })
+  // Hermes reads keys from its environment.
+  if (key) await rpc('reload.env', {}, 10_000).catch(() => {})
+}
+
+/**
+ * Moves a saved server, or changes its key: `apiKey` left out keeps the saved
+ * one (only ever at the same address), '' removes it. Checked first, with the
+ * key it will have. `main` is the main agent's model, kept if it's still there.
+ */
+export async function updateServer(service: Service, change: { address: string; apiKey?: string }, main?: string) {
+  const saved = service.server
+  if (!saved) return
+  const found = await findServer(change.address, change.apiKey)
+  const ids = found.models.map((m) => m.id)
+  const want = service.current && main ? main : saved.model
+  await api.post('/api/providers/custom-endpoints', {
+    id: saved.id,
+    name: service.name,
+    base_url: found.baseUrl,
+    model: ids.includes(want) ? want : ids[0],
+    models: ids,
+    // The main agent keeps its own copy of where its model is.
+    make_default: service.current,
+    ...(change.apiKey !== undefined && { api_key: change.apiKey.trim() }),
+  })
+  if (change.apiKey !== undefined) await rpc('reload.env', {}, 10_000).catch(() => {})
 }
 
 // ── ChatGPT sign-in (device code) ───────────────────────────────────────────

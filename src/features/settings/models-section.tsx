@@ -14,6 +14,7 @@ import { SearchField } from '@/features/search/search-field'
 import { ask } from './ask'
 import { ConnectFlow } from './connect-flow'
 import { LocalService } from './local-service'
+import { ServerSheet } from './server-sheet'
 import { Tile } from './page'
 import { PicturesRow } from './pictures-row'
 import { Swap } from './swap'
@@ -31,6 +32,8 @@ export function ModelsSection() {
   const [picking, setPicking] = useState(false)
   const [adding, setAdding] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
+  // The model server being looked at, as last seen: it stays in its sheet while that closes, even once disconnected.
+  const [server, setServer] = useState<{ service: Service; open: boolean } | null>(null)
 
   const chatgpt = data?.services.find((s) => s.slug === 'openai-codex')
   // (A Hermes before 0.22 only says per chat; models.ts.)
@@ -48,7 +51,7 @@ export function ModelsSection() {
     ) : s.remove ? (
       <button
         type="button"
-        onClick={() => remove(s)}
+        onClick={() => void remove(s)}
         className="pressable touch-target relative h-8 flex-none rounded-full bg-fill-2 px-3 text-footnote font-medium text-ink-2 select-none hover:text-ink active:bg-fill-3"
       >
         Disconnect
@@ -64,17 +67,20 @@ export function ModelsSection() {
       action: 'Disconnect',
       destructive: true,
     })
-    if (!yes) return
+    if (!yes) return false
     setBusy(s.slug)
     try {
       await disconnect(s)
       await refresh()
+      return true
     } catch (e) {
       toast.error(e instanceof Error ? e.message : `Couldn’t disconnect ${s.name}.`)
+      return false
     } finally {
       setBusy(null)
     }
   }
+  const shownServer = server && (data.services.find((s) => s.slug === server.service.slug) ?? server.service)
 
   return (
     <>
@@ -106,6 +112,16 @@ export function ModelsSection() {
         {others.map((s) =>
           s.slug === LOCAL_SLUG ? (
             <LocalService key={s.slug} service={s} services={data.services} />
+          ) : s.server ? (
+            // A server can be moved, or given a new key: its own sheet, with Disconnect inside.
+            <ListRow
+              key={s.slug}
+              icon={<ServiceTile service={s} />}
+              title={s.name}
+              subtitle={<PlanLine service={s} />}
+              chevron
+              onClick={() => setServer({ service: s, open: true })}
+            />
           ) : (
             <ListRow key={s.slug} icon={<ServiceTile service={s} />} title={s.name} subtitle={<PlanLine service={s} />} trailing={trailingFor(s)} />
           ),
@@ -116,6 +132,14 @@ export function ModelsSection() {
           onClick={() => setAdding(true)}
         />
       </ListGroup>
+
+      <ServerSheet
+        service={shownServer ?? null}
+        main={data.model}
+        open={!!server?.open}
+        onOpenChange={(open) => setServer((v) => v && { ...v, open })}
+        onDisconnect={remove}
+      />
 
       <ModelPicker open={picking} onOpenChange={setPicking} services={data.services} model={data.model} provider={data.provider} />
 

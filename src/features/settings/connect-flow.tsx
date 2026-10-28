@@ -1,9 +1,10 @@
 import { useState } from 'react'
-import { ConnectModel, type ConnectOption, type ConnectState, type LocalServer } from '@/features/onboarding/connect'
+import { ConnectModel, type ConnectOption, type ConnectState } from '@/features/onboarding/connect'
+import { choiceKey } from '@/features/onboarding/server-panel'
 import {
   adoptChatGPT,
   connectApiKey,
-  connectLocal,
+  connectServer,
   findServer,
   useChatGPTSignIn,
   useLocalServers,
@@ -55,10 +56,8 @@ export function ConnectFlow({ onConnected, onSkip, embedded, options }: Props) {
     await refresh()
   })
   const discovered = useLocalServers()
-  const [added, setAdded] = useState<LocalServer[]>([])
-  const [adding, setAdding] = useState(false)
-  const [addError, setAddError] = useState<string | null>(null)
   const [connecting, setConnecting] = useState<string | null>(null)
+  const [serverError, setServerError] = useState<string | null>(null)
   const [validating, setValidating] = useState(false)
   const [keyError, setKeyError] = useState<string | null>(null)
   const deviceModels = useDeviceModels()
@@ -73,10 +72,9 @@ export function ConnectFlow({ onConnected, onSkip, embedded, options }: Props) {
     chatgpt: chatgpt.flow,
     local: {
       loading: discovered.isPending,
-      servers: [...(discovered.data ?? []), ...added.filter((a) => !discovered.data?.some((d) => d.baseUrl === a.baseUrl))],
+      servers: discovered.data ?? [],
       connecting,
-      adding,
-      addError,
+      error: serverError,
     },
     apiKey: { validating, error: keyError },
     device: {
@@ -110,29 +108,19 @@ export function ConnectFlow({ onConnected, onSkip, embedded, options }: Props) {
       onCancelDevice={() => void device.cancel()}
       onFindDevice={(query) => void found.find(query)}
       onChooseLocal={async (server, model) => {
-        setConnecting(model.id)
+        setConnecting(choiceKey(server, model))
+        setServerError(null)
         try {
-          await connectLocal(server, model)
+          await connectServer(server, model)
           await refresh()
           onConnected()
         } catch (e) {
-          setAddError(errorText(e))
+          setServerError(errorText(e))
         } finally {
           setConnecting(null)
         }
       }}
-      onAddServer={async (url) => {
-        setAdding(true)
-        setAddError(null)
-        try {
-          const server = await findServer(url)
-          setAdded((list) => [...list.filter((s) => s.baseUrl !== server.baseUrl), server])
-        } catch (e) {
-          setAddError(errorText(e))
-        } finally {
-          setAdding(false)
-        }
-      }}
+      onFindServer={findServer}
       onSubmitKey={async (service, key) => {
         setValidating(true)
         setKeyError(null)

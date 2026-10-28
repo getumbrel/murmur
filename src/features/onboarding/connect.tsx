@@ -4,7 +4,6 @@ import {
   ArrowRight,
   Check,
   ChevronDown,
-  ChevronRight,
   Copy,
   Cpu,
   Eye,
@@ -24,14 +23,15 @@ import { overall } from '@/state/local-jobs'
 import { formatSize } from '@/state/local-tiers'
 import { fitLine } from '@/state/local-hf'
 import { Bloom } from './bloom'
-import { emptyLine } from './connect-copy'
+import { ServerPanel } from './server-panel'
+import type { ModelServer, ServerModel } from './servers'
 import { STEP_COLUMN, StepHeader } from './step'
 
 // "Connect a model": the one decision Murmur needs before it can think.
 // A few cards, one open at a time. The lead owns every async step and feeds
 // progress back through `state`; this screen only renders it.
 
-/** `device`: a model Hermes runs itself, on its own machine. `local`: a model server such as Ollama. */
+/** `device`: a model Hermes runs itself, on its own machine. `local`: a model server, such as Ollama at home or Groq online. */
 export type ConnectOption = 'chatgpt' | 'device' | 'local' | 'api-key'
 
 export type DeviceCode = { userCode: string; verificationUrl: string; /** epoch ms */ expiresAt: number }
@@ -46,9 +46,6 @@ export type ChatGPTFlow =
   | { status: 'success' }
   | { status: 'error'; message: string; kind: 'device_login_disabled' | 'expired' | 'other' }
 
-export type LocalModel = { id: string; size: number | null; parameters: string | null }
-export type LocalServer = { name: string; baseUrl: string; models: LocalModel[] }
-
 export type ApiKeyService = 'openrouter' | 'openai' | 'anthropic' | 'gemini' | 'xai'
 
 export type ConnectState = {
@@ -57,12 +54,12 @@ export type ConnectState = {
   chatgpt: ChatGPTFlow
   local: {
     loading: boolean
-    servers: LocalServer[]
-    /** Model id being connected, if any. */
+    /** The ones Murmur found by itself. */
+    servers: ModelServer[]
+    /** choiceKey() of the model being connected, if any. */
     connecting?: string | null
-    /** Checking an address typed into "Use another server". */
-    adding?: boolean
-    addError?: string | null
+    /** Why the last model picked didn't connect. */
+    error?: string | null
   }
   apiKey: {
     validating: boolean
@@ -105,10 +102,10 @@ const CHATGPT_SECURITY_URL = 'https://chatgpt.com/#settings/Security'
 type Props = {
   state: ConnectState
   onChooseChatGPT: () => void
-  onChooseLocal: (server: LocalServer, model: LocalModel) => void
+  onChooseLocal: (server: ModelServer, model: ServerModel) => void
   onSubmitKey: (service: ApiKeyService, key: string) => void
-  /** Look for models at an address the person types in. */
-  onAddServer?: (url: string) => void
+  /** What's at an address the person types in (a key with it, if any); throws a ServerProblem. */
+  onFindServer?: (address: string, apiKey?: string) => Promise<ModelServer>
   onSkip?: () => void
   /** Shown once ChatGPT is connected, if the lead doesn't move on by itself. */
   onDone?: () => void
@@ -132,7 +129,7 @@ export function ConnectModel({
   onChooseChatGPT,
   onChooseLocal,
   onSubmitKey,
-  onAddServer,
+  onFindServer,
   onSkip,
   onDone,
   defaultOpen,
@@ -161,7 +158,10 @@ export function ConnectModel({
     setHadSetup(Boolean(setup))
     if (setup && open === null) setOpen('device')
   }
-  const { servers, loading } = state.local
+  const { loading } = state.local
+  // Servers found at an address typed in join the ones found by themselves (once each).
+  const [added, setAdded] = useState<ModelServer[]>([])
+  const servers = [...state.local.servers, ...added.filter((a) => !state.local.servers.some((s) => s.baseUrl === a.baseUrl))]
   const modelCount = servers.reduce((n, s) => n + s.models.length, 0)
   const emptyServers = servers.filter((s) => !s.models.length)
 
@@ -191,8 +191,7 @@ export function ConnectModel({
       <OptionCard
         key="local"
         glyph={<HardDrive size={20} strokeWidth={1.75} />}
-        // Beside "Run a model on this Umbrel", this one is about servers.
-        title={device ? 'Use a model server' : umbrel ? 'Use a model on this Umbrel' : 'Use a model on your network'}
+        title="Use a model server"
         subtitle={
           loading ? (
             <span className="inline-flex items-center gap-1.5">
@@ -205,8 +204,8 @@ export function ConnectModel({
               .join(', ')
           ) : emptyServers.length ? (
             `${emptyServers[0].name} · no models yet`
-          ) : onAddServer ? (
-            device ? 'Ollama, LM Studio and others' : 'Ollama, LocalAI and others'
+          ) : onFindServer ? (
+            'Ollama, LM Studio or any OpenAI\u2011compatible API'
           ) : umbrel && !device ? (
             'Install Ollama from the Umbrel App Store to run models privately'
           ) : (
@@ -214,16 +213,16 @@ export function ConnectModel({
           )
         }
         open={open === 'local'}
-        disabled={!modelCount && !emptyServers.length && !onAddServer}
+        disabled={!modelCount && !emptyServers.length && !onFindServer}
         onToggle={() => toggle('local')}
       >
-        <LocalPanel
+        <ServerPanel
           servers={servers}
           connecting={state.local.connecting}
+          error={state.local.error}
           onChoose={onChooseLocal}
-          onAdd={onAddServer}
-          adding={state.local.adding}
-          addError={state.local.addError}
+          onFind={onFindServer}
+          onFound={(server) => setAdded((list) => [...list.filter((s) => s.baseUrl !== server.baseUrl), server])}
           umbrel={umbrel}
           device={Boolean(device)}
         />
@@ -590,148 +589,6 @@ function ChatGPTError({ error, onRetry }: { error: Extract<ChatGPTFlow, { status
         </Button>
       </div>
     </div>
-  )
-}
-
-// ── Local models ────────────────────────────────────────────────────────────
-
-function LocalPanel({
-  servers,
-  connecting,
-  onChoose,
-  onAdd,
-  adding,
-  addError,
-  umbrel,
-  device,
-}: {
-  servers: LocalServer[]
-  connecting?: string | null
-  onChoose: (server: LocalServer, model: LocalModel) => void
-  onAdd?: (url: string) => void
-  adding?: boolean
-  addError?: string | null
-  umbrel?: boolean
-  /** Hermes can run a model itself (the card above), so there's no need to send anyone off to install one. */
-  device?: boolean
-}) {
-  const shown = servers.filter((s) => s.models.length)
-  // A server that answered but has nothing to offer (Ollama, freshly installed) is there, just empty.
-  const empty = servers.find((s) => !s.models.length)
-  return (
-    <div className="space-y-4">
-      {!shown.length && (
-        <p className="text-subhead text-pretty text-ink-2">
-          {empty
-            ? emptyLine(empty, umbrel)
-            : umbrel
-              ? device
-                ? 'No model servers on this Umbrel.'
-                : 'Nothing found on this Umbrel yet. Install Ollama from the Umbrel App Store, or enter the address of a model server.'
-              : 'Nothing found nearby yet. Enter the address of a computer running Ollama, LM Studio or LocalAI.'}
-        </p>
-      )}
-      {shown.map((server) => (
-        <div key={server.baseUrl}>
-          {shown.length > 1 && <p className="mb-2 px-4 text-footnote font-medium text-ink-2">{server.name}</p>}
-          <div className="list-group overflow-hidden rounded-xl bg-fill-1">
-            {server.models.map((model) => {
-              const busy = connecting === model.id
-              const detail = [model.parameters, model.size != null && formatBytes(model.size)]
-                .filter(Boolean)
-                .join(' · ')
-              return (
-                <button
-                  key={model.id}
-                  type="button"
-                  disabled={!!connecting}
-                  onClick={() => onChoose(server, model)}
-                  title={prettyModel(model.id)}
-                  className="flex min-h-14 w-full items-center gap-3 px-4 py-2.5 text-left transition-colors select-none focus-visible:-outline-offset-2 enabled:hover:bg-fill-1 enabled:active:bg-fill-2 disabled:cursor-default"
-                >
-                  <span className={cn('min-w-0 flex-1', connecting && !busy && 'opacity-40')}>
-                    <span className="block truncate text-body">{prettyModel(model.id)}</span>
-                    {detail && <span className="block text-footnote text-ink-2">{detail}</span>}
-                  </span>
-                  {busy ? (
-                    <Spinner className="text-ink-2" />
-                  ) : (
-                    <ChevronRight size={18} className="-mr-1.5 flex-none text-ink-3" />
-                  )}
-                </button>
-              )
-            })}
-          </div>
-        </div>
-      ))}
-      {onAdd && <AddServer onAdd={onAdd} adding={adding} error={addError} collapsed={shown.length > 0} />}
-      {shown.length > 0 && (
-        <p className="px-4 text-footnote text-pretty text-ink-3">
-          {umbrel ? 'Runs privately on your Umbrel.' : 'Runs privately on your own computer.'} Nothing leaves your
-          home.
-        </p>
-      )}
-    </div>
-  )
-}
-
-function AddServer({
-  onAdd,
-  adding,
-  error,
-  collapsed,
-}: {
-  onAdd: (url: string) => void
-  adding?: boolean
-  error?: string | null
-  collapsed: boolean
-}) {
-  const [open, setOpen] = useState(!collapsed)
-  const [url, setUrl] = useState('')
-  if (!open)
-    return (
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className="pressable flex h-11 items-center rounded-md text-subhead font-medium text-accent select-none"
-      >
-        Use another server
-      </button>
-    )
-  return (
-    <form
-      className="animate-fade"
-      onSubmit={(e) => {
-        e.preventDefault()
-        if (url.trim()) onAdd(url.trim())
-      }}
-    >
-      <div className="flex gap-2">
-        <TextField
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          placeholder="192.168.1.20:11434"
-          aria-label="Server address"
-          aria-invalid={!!error}
-          inputMode="url"
-          autoComplete="off"
-          autoCapitalize="off"
-          autoCorrect="off"
-          spellCheck={false}
-          autoFocus={collapsed}
-          className={cn('min-w-0 flex-1', error && 'ring-danger/60! focus:ring-danger/70!')}
-        />
-        <Button type="submit" variant="secondary" className="h-12 flex-none" loading={adding} disabled={!url.trim()}>
-          Find models
-        </Button>
-      </div>
-      <p
-        className={cn('mt-2 px-1 text-footnote text-balance', error ? 'text-danger' : 'text-ink-3')}
-        aria-live="polite"
-      >
-        {error ?? 'Ollama, LM Studio or LocalAI on another computer works too.'}
-      </p>
-    </form>
   )
 }
 
@@ -1316,14 +1173,6 @@ function useSecondsLeft(expiresAt: number) {
 const formatClock = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 
 const plural = (n: number, word: string) => `${n}\u00a0${word}${n === 1 ? '' : 's'}`
-
-function formatBytes(bytes: number) {
-  const gb = bytes / 1e9
-  return gb >= 1 ? `${gb.toFixed(gb >= 10 ? 0 : 1)}\u00a0GB` : `${Math.round(bytes / 1e6)}\u00a0MB`
-}
-
-/** "llama3.2:3b" → "llama3.2 3b"; "latest" tags add nothing. */
-const prettyModel = (id: string) => id.replace(/:latest$/, '').replace(':', ' ')
 
 // umbrel.local is plain http, where navigator.clipboard doesn't exist.
 async function copyText(text: string) {

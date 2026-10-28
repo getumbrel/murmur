@@ -133,7 +133,7 @@ export async function turn(socket: Socket, runtime: string, text: string, agent 
 }
 
 /** Every request Hermes sent the fake model so far. */
-export async function modelRequests(): Promise<{ body: Json }[]> {
+export async function modelRequests(): Promise<{ path: string; body: Json; auth?: string }[]> {
   return (await fetch(`${inject('model').local}/_requests`)).json()
 }
 

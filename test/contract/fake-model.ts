@@ -17,12 +17,15 @@
 // and GET /_requests returns them, so a test can see what Hermes asked.
 //
 // It also plays a connected app that turns Hermes away: /mcp/unauthorized
-// answers 401 and /mcp/missing 404, as an MCP server would.
+// answers 401 and /mcp/missing 404, as an MCP server would. And a server that
+// wants a key: everything under /keyed/ is the same, but answers 401 without
+// `Bearer ${MODEL_KEY}`.
 
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
 
 export const MODELS = ['murmur-fake-small', 'murmur-fake-large']
+export const MODEL_KEY = 'murmur-fake-key'
 
 type Message = { role: string; content?: unknown; tool_calls?: unknown[] }
 type Body = { model?: string; stream?: boolean; messages?: Message[]; tools?: unknown[] }
@@ -75,14 +78,15 @@ export function decide(body: Body): Reply {
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 export async function startFakeModel(port = 0) {
-  const requests: { path: string; body: Body }[] = []
+  const requests: { path: string; body: Body; auth?: string }[] = []
   let calls = 0
 
   const server = http.createServer((req, res) => {
     let raw = ''
     req.on('data', (chunk) => (raw += chunk))
     req.on('end', async () => {
-      const path = (req.url ?? '/').split('?')[0]
+      let path = (req.url ?? '/').split('?')[0]
+      const auth = req.headers.authorization
       const send = (status: number, value: unknown) => {
         res.writeHead(status, { 'content-type': 'application/json' })
         res.end(JSON.stringify(value))
@@ -95,12 +99,16 @@ export async function startFakeModel(port = 0) {
       if (req.method === 'GET' && path === '/_requests') return send(200, requests)
       if (path === '/mcp/unauthorized') return send(401, { error: 'Unauthorized' })
       if (path === '/mcp/missing') return send(404, { error: 'Not Found' })
+      if (path.startsWith('/keyed/')) {
+        if (auth !== `Bearer ${MODEL_KEY}`) return send(401, { error: { message: 'Invalid API key', type: 'invalid_request_error' } })
+        path = path.slice('/keyed'.length)
+      }
       if (req.method === 'GET' && path === '/v1/models') {
         return send(200, { object: 'list', data: MODELS.map((id) => ({ id, object: 'model', created: 1760000000, owned_by: 'murmur' })) })
       }
       if (req.method !== 'POST' || path !== '/v1/chat/completions') return send(404, { error: { message: `No route ${req.method} ${path}` } })
 
-      requests.push({ path, body })
+      requests.push({ path, body, ...(auth && { auth }) })
       const reply = decide(body)
       if (reply.kind === 'fail') return send(400, { error: { message: 'The fake model refused this request', type: 'invalid_request_error' } })
 
