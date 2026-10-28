@@ -14,7 +14,7 @@ export type HostedApp = {
   description: string
   /** What the connected row says under the name ("Messages and channels"). */
   summary: string
-  /** Its key in MARKS, for AppIcon. Never Nous's logo: Murmur doesn't fetch icons. */
+  /** Its key in MARKS, for AppIcon. Icons ship with Murmur: none is fetched from Nous. */
   icon: string
   /** An everyday app, rather than one for developers. */
   everyday: boolean
@@ -29,6 +29,8 @@ const marksByName = new Map(Object.keys(MARKS).map((key) => [normal(key), key]))
 
 // Nous's names for brands whose mark Murmur keeps under another key.
 const ICON: Record<string, string> = {
+  adobe_marketing_agent_mcp: 'adobe',
+  cashfree_payments_mcp: 'cashfree',
   coinbase_agents_mcp: 'coinbase',
   coinbase_wallet_mcp: 'coinbase',
   discordbot: 'discord',

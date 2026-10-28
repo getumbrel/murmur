@@ -43,7 +43,9 @@ public and checks the one-time `state`; Murmur passes the query on with no crede
 - Sign-ins are per agent: "Also for" adds the app to another agent, which then signs in on its own.
 - Removing an app leaves its saved token on Hermes's disk (no API to delete it), so adding it back is quick.
 - An abandoned sign-in blocks that app for up to 5 minutes. Retrying from the same tab releases it.
-- Brand marks come from Simple Icons (inline SVG paths, `features/apps/marks.ts`); others get a coloured initial.
+- Every app shows its real icon. Full-colour ones are bundled SVGs (`features/apps/icons/`, from the maker's own logo). The rest are
+  Simple Icons glyphs on the brand's colour (`features/apps/marks.ts`). `app-icon.test.ts` fails if any app Murmur names, or any app
+  in Nous's catalog, would fall back to a coloured initial.
 
 ## 2. WhatsApp
 
@@ -299,4 +301,4 @@ so an agent reached over Telegram or a routine first can't make one either.
   requests as from a desktop app (Murmur closes the tab as soon as Hermes sees the account).
 - **A sign-in left half-way** (the tab or Murmur closed) isn't cleaned up: Nous lets it expire, and it lists as
   "Sign in again".
-- Murmur never loads Nous's `logo_url`; the marks are its own (`features/apps/marks.ts`).
+- Murmur never loads Nous's `logo_url` at runtime; the icons ship with Murmur (`features/apps/icons/`, `features/apps/marks.ts`).

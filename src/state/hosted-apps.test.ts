@@ -277,7 +277,7 @@ describe('Nous’s catalog', () => {
     expect(apps.find((a) => a.slug === 'discordbot')).toMatchObject({ name: 'Discord Bot', icon: 'discord' })
     // "Use … through Hermes" says nothing: replaced where Murmur can say more, left out otherwise.
     expect(apps.find((a) => a.slug === 'greptile_mcp')?.description).toBe('Ask questions about your code')
-    expect(apps.find((a) => a.slug === 'memelord_mcp')).toMatchObject({ description: '', icon: 'memelord_mcp' })
+    expect(apps.find((a) => a.slug === 'memelord_mcp')).toMatchObject({ description: '', icon: 'memelord' })
     expect(apps.find((a) => a.slug === 'resend_mcp')?.everyday).toBe(false)
     expect(apps.some((a) => a.slug === 'Not A Slug')).toBe(false)
     expect(JSON.stringify(apps)).not.toContain('logos.composio.dev')
