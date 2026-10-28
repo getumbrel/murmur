@@ -1,6 +1,6 @@
 # Murmur ↔ Hermes: apps, email, WhatsApp, who can message, usage, moving agents and passwords
 
-Target: Hermes Agent **0.22** (`ghcr.io/getumbrel/hermes-agent-umbrel:v0.22.5`). Routes are in
+Target: Hermes Agent **0.22** (`ghcr.io/getumbrel/hermes-agent-umbrel:v0.22.5-1`, the first with `murmur-mail`). Routes are in
 `hermes_cli/web_routers/*.py`, RPCs in `tui_gateway/methods*.py`. Everything here is per agent (a Hermes
 profile, passed as `?profile=` or `profile` in the body) unless it says otherwise. Each part was checked
 against a throwaway Hermes; what couldn't be (a real app sign-in, a linked phone, a live model) is said.

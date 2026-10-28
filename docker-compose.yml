@@ -30,7 +30,7 @@ services:
       - "host.docker.internal:host-gateway"
 
   hermes:
-    image: ghcr.io/getumbrel/hermes-agent-umbrel:v0.22.5@sha256:141f26fa26b58292516dd3a5ce1e096212b15dc0ddcf8dc893b3eb2996f404db
+    image: ghcr.io/getumbrel/hermes-agent-umbrel:v0.22.5-1@sha256:56a113bf566852b75e739ac978b874ffc45d0973d56c21b1ab94b6cac2538fe9
     restart: on-failure
     stop_grace_period: 1m
     volumes:
