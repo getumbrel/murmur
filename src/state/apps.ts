@@ -41,6 +41,7 @@ const path = (name: string) => encodeURIComponent(name)
 // Can't start a sign-in through Hermes (checked against 0.22): they only take
 // apps they've approved (Algolia, Dropbox, Strava), want a developer app of
 // your own (Asana, Hugging Face), or turn down Hermes's request (Indeed, Semgrep).
+// Asana connects through Nous instead (state/hosted-apps.ts).
 const UNAVAILABLE = new Set(['algolia', 'asana', 'dropbox', 'hugging_face', 'indeed', 'semgrep', 'strava'])
 
 // Everyday apps lead, roughly by how many people use them; developer tools follow.
@@ -77,9 +78,17 @@ const EVERYDAY = [
   'comfy-cloud',
 ]
 
+/**
+ * Whether Murmur offers an app from Hermes's catalog: one it can sign in to
+ * and add without installing anything. An app that isn't can still come
+ * through Nous (state/hosted-apps.ts), as Asana does.
+ */
+export const isOffered = (app: Pick<CatalogApp, 'name' | 'needs_install'>) =>
+  !UNAVAILABLE.has(app.name) && !app.needs_install
+
 /** What's worth offering, split into everyday apps (in order) and developer tools. */
 export function arrange(apps: CatalogApp[], nameOf: (name: string) => string) {
-  const shown = apps.filter((a) => !UNAVAILABLE.has(a.name) && !a.needs_install)
+  const shown = apps.filter(isOffered)
   const rank = (a: CatalogApp) => EVERYDAY.indexOf(a.name)
   return {
     everyday: shown.filter((a) => rank(a) >= 0).sort((a, b) => rank(a) - rank(b)),
