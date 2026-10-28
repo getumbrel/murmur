@@ -680,6 +680,7 @@ function onEvent(ev: GatewayEvent) {
             name,
             label: label.label,
             detail: label.detail,
+            app: label.app,
             status: 'running',
             startedAt: Date.now(),
           },

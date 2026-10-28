@@ -8,7 +8,8 @@
 // SSH or agents) put a stand-in like "<terminal> (plugin approval rule)" where
 // the command goes; that's never shown, only what it stands for.
 
-import { toolLabel } from './tool-labels'
+import { isSendApproval, readSendApproval, type SendApproval } from '@/state/mail-chat'
+import { peopleOf, toolLabel } from './tool-labels'
 import type { ApprovalChoice } from './types'
 
 export type ApprovalText = {
@@ -20,6 +21,8 @@ export type ApprovalText = {
   choices: ApprovalChoice[]
   /** The connected tool it's about, so its details can fill in once the call shows up. */
   tool?: string
+  /** An email the agent wants to send: the card shows it whole, and asks Send or Don't send. */
+  email?: SendApproval
 }
 
 /** A tool call: Hermes's name for it, its arguments and its own one-line preview. */
@@ -60,6 +63,19 @@ export function approvalText({
   patternKeys = [],
   call,
 }: Request): ApprovalText {
+  // An email (the murmur-mail plugin): every send is its own yes, never "always".
+  const email = isSendApproval(patternKeys) ? readSendApproval(description) : null
+  if (email) {
+    const to = peopleOf(email.to)
+    return {
+      title: to ? `Send this email to ${to}?` : 'Send this email?',
+      command: email.subject || 'No subject',
+      prose: true,
+      choices: ONCE,
+      tool: 'email_send',
+      email,
+    }
+  }
   const untrusted = UNTRUSTED.exec(command ?? '')
   if (untrusted) {
     const [, tool, server] = untrusted

@@ -8,6 +8,7 @@ import { MurmurMark } from '@/ui/brand'
 import { startGateway } from '@/hermes/gateway'
 import { wireChats } from '@/state/chats'
 import { wireSessionLists } from '@/state/sync'
+import { wireChatConnects } from '@/state/hosted-apps-chat'
 import { markWelcomed, useReadiness } from '@/state/readiness'
 import { useAgents, useFreshAgents } from '@/state/agents'
 import { usePicturesSync } from '@/state/pictures'
@@ -51,6 +52,7 @@ export function App() {
     wireChats()
     wireNotices()
     wireSessionLists(queryClient)
+    wireChatConnects(queryClient)
     // Split out of the main bundle and fetched once the first screen is up, so
     // they don't compete with it: markdown first (chats are what people open),
     // then the other screens. Markdown comes at once only when the app opens

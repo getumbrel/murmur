@@ -11,6 +11,7 @@ import { api } from '@/hermes/rest'
 import { useEffect } from 'react'
 import { gateway, rpc } from '@/hermes/gateway'
 import { ensureAgentTimezone } from '@/state/timezone'
+import { forgetInheritedMail } from '@/state/mail'
 import { hideDesktopToolsets } from '@/state/toolsets'
 import { ensureUmbrelContext } from '@/state/umbrel-context'
 import { ensureUmbrelMcp } from '@/state/umbrel-mcp'
@@ -437,6 +438,8 @@ export async function createAgent(input: AgentInput) {
   // On an Umbrel, what the main agent knows about running there (Umbrel's Hermes only gives it to the main agent).
   void ensureUmbrelContext(id).catch(() => {})
   void ensureUmbrelMcp(id).catch(() => {})
+  // Hermes copies the main agent's .env into a new agent, its email password included: not this agent's to keep.
+  void forgetInheritedMail(id).catch(() => {})
   await rpc('profiles.configure', { name: id, ui_meta: meta }).then(
     () => setPendingLook(id),
     () => {}, // Left pending: the next read retries it.

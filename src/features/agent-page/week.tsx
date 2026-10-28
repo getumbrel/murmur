@@ -25,6 +25,8 @@ const KIND: Partial<Record<ToolCategory, string>> = {
   message: 'Messages',
   schedule: 'Routines',
   history: 'Past chats',
+  mail: 'Email',
+  app: 'Apps',
 }
 
 const ease = [0.16, 1, 0.3, 1] as const

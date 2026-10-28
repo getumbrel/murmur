@@ -13,6 +13,7 @@ import type { MediaContext } from '@/features/media/context'
 import type { ChatItem } from '@/features/chat/types'
 import { ChatHeader } from '@/features/chat-screen/chat-header'
 import { EmptyState } from '@/features/chat-screen/empty-state'
+import { takeOpeningLine } from '@/features/chat-screen/opening-line'
 import { NotFound } from '@/features/chat-screen/not-found'
 import { ThreadSkeleton } from '@/features/chat-screen/thread-skeleton'
 import { useOrbState } from '@/features/chat-screen/use-orb-state'
@@ -31,6 +32,7 @@ import { useThinkingDefault, type ModelPick } from '@/features/model/use-models'
 import { commandList, isCurated, type CommandName } from '@/features/commands/commands'
 import { useCatalog } from '@/features/commands/use-catalog'
 import { useUmbrelKey } from '@/features/chat/umbrel-key'
+import { ChatConnectCard } from '@/features/chat/connect-card'
 import { stopSpeaking, useSpeech } from '@/features/voice/speech'
 import { useConnection } from '@/hermes/gateway'
 import { useChatUsage } from '@/state/insights'
@@ -205,6 +207,16 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
     if (stored?.archived) void act.unarchive(stored)
     return id ? send(id, text, files) : start(text, files)
   }
+  // A question asked from elsewhere (the Apps sheet) opens this blank chat as if typed.
+  const opening = isDraft && agent && !starting
+  useEffect(() => {
+    if (!opening) return
+    const text = takeOpeningLine(agentId)
+    if (text) void post(text)
+    // Only when the blank chat first shows for this agent.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [opening, agentId])
+
   const onSend = (text: string, files: File[]) => {
     if (rewrite && id && !files.length) {
       setRewrite(null)
@@ -545,7 +557,12 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
               onCancelEdit={cancelRewrite}
               onTypingChange={setTyping}
               voice={agentId}
-              above={umbrelKey.above}
+              above={(text) => (
+                <>
+                  {agent && <ChatConnectCard runtimeId={chat?.runtimeId} agent={agent} />}
+                  {umbrelKey.above(text)}
+                </>
+              )}
               onBeforeSend={umbrelKey.beforeSend}
               accessory={
                 agent && (

@@ -24,6 +24,17 @@ import { rpc } from '@/hermes/gateway'
 
 export const MAIL_PLUGIN = 'murmur-mail'
 
+export {
+  isMailTool,
+  isSendApproval,
+  MAIL_TOOLS,
+  readMailResult,
+  readSendApproval,
+  SEND_APPROVAL_PREFIX,
+  type MailTool,
+  type SendApproval,
+} from './mail-chat'
+
 const q = (profile: string) => `profile=${encodeURIComponent(profile)}`
 const route = (path: string, profile: string) => `/api/plugins/${MAIL_PLUGIN}/${path}?${q(profile)}`
 
@@ -201,6 +212,11 @@ export type MailStatus = {
   version: string
   /** The plugin is switched on for this agent (its tools need it). connectMail switches it on. */
   enabled: boolean
+  /**
+   * The person switched the agent's email off (setMailEnabled): its email
+   * toolset is off, so its chats have no email tools, and the account stays.
+   */
+  off: boolean
   /** The agent has an account. */
   configured: boolean
   account: MailAccount | null
@@ -258,7 +274,44 @@ export async function fetchMailStatus(profile: string): Promise<MailStatus | nul
   }
   if (wire?.plugin !== MAIL_PLUGIN) return null
   if (wire.inherited) await clearMailKeys(profile).catch(() => {})
-  return { version: wire.version, enabled: !!wire.enabled, configured: !!wire.configured, account: wire.account ? toAccount(wire.account) : null }
+  const off = await mailToolsOff(profile).catch(() => false)
+  return {
+    version: wire.version,
+    enabled: !!wire.enabled,
+    off,
+    configured: !!wire.configured,
+    account: wire.account ? toAccount(wire.account) : null,
+  }
+}
+
+// ── On and off ──────────────────────────────────────────────────────────────
+
+/** The plugin's toolset: what Murmur switches off to take an agent's email tools away. */
+export const MAIL_TOOLSET = 'email'
+
+const toolsetList = (value: unknown) =>
+  Array.isArray(value) ? value.map(String) : typeof value === 'string' && value.trim() ? [value.trim()] : []
+
+const disabledToolsets = async (profile: string) =>
+  toolsetList(
+    (await api.get<{ agent?: { disabled_toolsets?: unknown } }>(`/api/config?${q(profile)}&include_defaults=false`))?.agent
+      ?.disabled_toolsets,
+  )
+
+const mailToolsOff = async (profile: string) => (await disabledToolsets(profile)).includes(MAIL_TOOLSET)
+
+/**
+ * Puts the agent's email toolset on or off in its own config (agent.disabled_toolsets,
+ * Hermes's per-agent switch for a set of tools), leaving its other entries be.
+ * Not the plugin's own switch: Hermes refuses a plugin's routes for an agent that
+ * has it switched off, and Murmur couldn't read the account any more.
+ */
+async function switchMailTools(profile: string, on: boolean) {
+  const list = await disabledToolsets(profile)
+  const next = on ? list.filter((t) => t !== MAIL_TOOLSET) : list.includes(MAIL_TOOLSET) ? list : [...list, MAIL_TOOLSET]
+  if (next.length === list.length) return
+  // PUT deep-merges into the file; the list is replaced whole.
+  await api.put(`/api/config?${q(profile)}`, { config: { agent: { disabled_toolsets: next } } })
 }
 
 /** useQuery over fetchMailStatus: `data === null` means no email on this Hermes. */
@@ -511,6 +564,25 @@ export async function ensureMailPlugin(profile: string, status?: MailStatus | nu
 }
 
 /**
+ * Switches the agent's email on or off, keeping its account: its next chat
+ * has the email tools, or doesn't (chats already open keep what they started
+ * with). Hermes notices because the agent's config changed.
+ */
+export async function setMailEnabled(qc: QueryClient, profile: string, enabled: boolean) {
+  const before = qc.getQueryData<MailStatus | null>(mailKey(profile))
+  qc.setQueryData<MailStatus | null>(mailKey(profile), (s) => (s ? { ...s, off: !enabled } : s))
+  try {
+    await switchMailTools(profile, enabled)
+    if (enabled) await ensureMailPlugin(profile)
+  } catch (e) {
+    qc.setQueryData(mailKey(profile), before)
+    throw e
+  } finally {
+    void qc.invalidateQueries({ queryKey: mailKey(profile) })
+  }
+}
+
+/**
  * Records which account the agent's email uses in its config (the plugin's
  * own settings), '' once there's none. Hermes keeps each agent's list of tools
  * until its config changes, so this is also what brings the email tools to the
@@ -539,6 +611,8 @@ export async function connectMail(qc: QueryClient, profile: string, input: MailC
     for (const key of await savedKeys(profile)) if (!(key in env)) await deleteEnv(profile, key)
     for (const [key, value] of Object.entries(env)) await putEnv(profile, key, value)
     await ensureMailPlugin(profile)
+    // Connecting is switching it on. (Not worth failing over: the sheet shows the switch as it stands.)
+    await switchMailTools(profile, true).catch(() => {})
     await recordAccount(profile, body.address ?? '')
   } catch {
     // Half an account is no account: take it all away rather than leave it.
@@ -595,60 +669,5 @@ export async function disconnectMail(qc: QueryClient, profile: string) {
   } finally {
     qc.removeQueries({ queryKey: mailHealthKey(profile) })
     void refresh(qc, profile)
-  }
-}
-
-// ── In chats ────────────────────────────────────────────────────────────────
-
-export const MAIL_TOOLS = ['email_search', 'email_read', 'email_draft', 'email_send'] as const
-export type MailTool = (typeof MAIL_TOOLS)[number]
-export const isMailTool = (name: string): name is MailTool => (MAIL_TOOLS as readonly string[]).includes(name)
-
-/** Approvals for a send carry this pattern key (the rest names the message). */
-export const SEND_APPROVAL_PREFIX = 'plugin_rule:murmur-mail-send:'
-
-export const isSendApproval = (patternKeys: readonly string[] | undefined) =>
-  !!patternKeys?.some((k) => k.startsWith(SEND_APPROVAL_PREFIX))
-
-export type SendApproval = { from: string; to: string[]; cc: string[]; bcc: string[]; subject: string; body: string }
-
-const list = (line: string | undefined) => (line ? line.split(/,\s*(?=(?:[^"]*"[^"]*")*[^"]*$)/).map((s) => s.trim()).filter(Boolean) : [])
-
-/**
- * The email an approval asks to send, from its description (the plugin
- * writes it as "Send an email from …", then To:, Cc:, Bcc: and Subject: lines,
- * a blank line, and the text). Null when it isn't one.
- */
-export function readSendApproval(description: string | undefined): SendApproval | null {
-  const text = description ?? ''
-  const head = text.match(/^Send an email from (.+)\n/)
-  if (!head) return null
-  const [top, ...rest] = text.split('\n\n')
-  const field = (name: string) => top.match(new RegExp(`^${name}: (.*)$`, 'm'))?.[1]
-  const subject = field('Subject') ?? ''
-  const body = rest.join('\n\n')
-  return {
-    from: head[1].trim(),
-    to: list(field('To')),
-    cc: list(field('Cc')),
-    bcc: list(field('Bcc')),
-    subject: subject === '(no subject)' ? '' : subject,
-    body: body === '(no text)' ? '' : body,
-  }
-}
-
-/**
- * A mail tool's result as data. Search and read results arrive inside the
- * boundary Hermes puts around outside content (the mail was written by its
- * sender); this takes the JSON out of it. Null when there's nothing to read.
- */
-export function readMailResult<T = Record<string, unknown>>(result: unknown): T | null {
-  if (result && typeof result === 'object') return result as T
-  if (typeof result !== 'string') return null
-  const inner = result.match(/^<untrusted_tool_result[^>]*>\n[^\n]*\n\n([\s\S]*)\n<\/untrusted_tool_result>\s*$/)
-  try {
-    return JSON.parse(inner ? inner[1] : result) as T
-  } catch {
-    return null
   }
 }

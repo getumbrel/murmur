@@ -1,6 +1,8 @@
 // View model for a conversation. The Hermes event stream is folded into this
 // shape by the chat store; components render it and never see wire types.
 
+import type { SendApproval } from '@/state/mail-chat'
+
 export type Speaker = { id: string; name: string; hue: number }
 
 export type ApprovalChoice = 'once' | 'session' | 'always' | 'deny'
@@ -77,6 +79,8 @@ export type ChatItem =
       media?: string[]
       /** Hermes's id for the call, so a live result finds a step loaded from history. */
       callId?: string
+      /** The mark of the app the step uses (an app through Nous), drawn in place of its kind's icon. */
+      app?: string
     }
   | {
       kind: 'approval'
@@ -92,6 +96,8 @@ export type ChatItem =
       prose?: boolean
       /** The connected tool it's about (Hermes asking before using it). */
       tool?: string
+      /** An email to send, shown whole on the card. */
+      email?: SendApproval
       choices: ApprovalChoice[]
       status: 'pending' | 'approved' | 'denied' | 'expired'
       /** What the person picked, once resolved. */

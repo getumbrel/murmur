@@ -6,6 +6,7 @@ import { cn } from '@/lib/cn'
 import type { ChatItem } from './types'
 import { didSummary, pastLabel, toolCategory } from './tool-labels'
 import { ToolIcon } from './tool-icon'
+import { AppIcon } from '@/features/apps/app-icon'
 import { formatDuration, formatStep } from './format'
 import './work.css'
 
@@ -141,6 +142,7 @@ export function Work({ items, live, hue, seed }: { items: WorkItem[]; live: bool
 }
 
 const APPROVAL = { approved: 'Allowed', denied: 'Not allowed', expired: 'Timed out', pending: 'Waiting' } as const
+const EMAIL_APPROVAL = { approved: 'Send approved', denied: 'Not sent', expired: 'Timed out', pending: 'Waiting' } as const
 
 const Step = memo(function Step({
   item,
@@ -166,13 +168,17 @@ const Step = memo(function Step({
   let label = running ? 'Thinking' : 'Thought'
   let detail: string | undefined
   if (item.kind === 'tool') {
-    icon = <ToolIcon category={toolCategory(item.name)} size={13} />
+    icon = item.app ? (
+      <AppIcon name={item.app} size={14} className="shadow-none" />
+    ) : (
+      <ToolIcon category={toolCategory(item.name)} size={13} />
+    )
     label = running ? item.label : pastLabel(item.label)
     detail = item.detail
   } else if (item.kind === 'approval') {
     const Icon = item.status === 'approved' ? ShieldCheck : item.status === 'expired' ? Clock : Ban
     icon = <Icon size={13} strokeWidth={1.75} aria-hidden />
-    label = APPROVAL[item.status]
+    label = item.email ? EMAIL_APPROVAL[item.status] : APPROVAL[item.status]
     detail = item.command ?? item.title
   }
   if (failed) icon = <X size={13} strokeWidth={2} aria-hidden />
@@ -196,7 +202,7 @@ const Step = memo(function Step({
           <p className="min-w-0 flex-1 truncate text-footnote text-ink-2">
             {label}
             {detail && (
-              <span className={cn('text-ink-3', item.kind === 'approval' && 'font-mono text-caption tracking-normal')}>
+              <span className={cn('text-ink-3', item.kind === 'approval' && !item.prose && 'font-mono text-caption tracking-normal')}>
                 {' · '}
                 {detail}
               </span>

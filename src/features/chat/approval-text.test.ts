@@ -137,3 +137,41 @@ describe('summarize', () => {
     expect(summarize({})).toBeUndefined()
   })
 })
+
+// The murmur-mail plugin asks before every send (getumbrel/hermes-agent-umbrel),
+// with the whole message in the description and a per-message pattern key.
+describe('sending an email', () => {
+  const send = {
+    command: '<email_send> (plugin approval rule)',
+    description:
+      'Send an email from ada@example.com\nTo: Priya Raman <priya@example.org>\nCc: sam@example.org\nSubject: Lunch on Thursday\n\nHi Priya,\n\nLunch on Thursday at 1?',
+    patternKeys: ['plugin_rule:murmur-mail-send:0123456789abcdef0123456789abcdef'],
+    choices: ['once', 'session', 'always', 'deny'] as ApprovalChoice[],
+  }
+
+  it('asks to send this email, to whom, and shows all of it', () => {
+    expect(approvalText({ who: 'Ada', ...send })).toEqual({
+      title: 'Send this email to Priya Raman?',
+      command: 'Lunch on Thursday',
+      prose: true,
+      choices: ['once', 'deny'],
+      tool: 'email_send',
+      email: {
+        from: 'ada@example.com',
+        to: ['Priya Raman <priya@example.org>'],
+        cc: ['sam@example.org'],
+        bcc: [],
+        subject: 'Lunch on Thursday',
+        body: 'Hi Priya,\n\nLunch on Thursday at 1?',
+      },
+    })
+  })
+
+  it('never offers a yes that lasts: each email is its own', () => {
+    expect(approvalText(send).choices).toEqual(['once', 'deny'])
+  })
+
+  it('stays a plugin’s plain question when it isn’t an email', () => {
+    expect(approvalText({ ...send, description: 'Deploys need your OK' }).email).toBeUndefined()
+  })
+})

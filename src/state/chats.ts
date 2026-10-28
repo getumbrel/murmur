@@ -10,7 +10,9 @@ import { create } from 'zustand'
 import { gateway, rpc, type GatewayEvent, type ServerRequest } from '@/hermes/gateway'
 import { api, HermesError } from '@/hermes/rest'
 import { isMissingMethod } from '@/hermes/compat'
-import { toolLabel } from '@/features/chat/tool-labels'
+import { restoreChatConnect } from '@/state/hosted-apps-chat'
+import type { ConnectionRequestPayload } from '@/hermes/vendor/gateway-contract.generated'
+import { foundSubjects, readingLabel, resultLabel, toolLabel } from '@/features/chat/tool-labels'
 import { approvalText, detailOf, isCallTo, toolAsked, type ToolCall } from '@/features/chat/approval-text'
 import { explainError } from '@/features/chat/errors'
 import type { ApprovalChoice, ChatItem, ChatStatus, ClarifyQuestion, Reaction, SecretAsk, Speaker } from '@/features/chat/types'
@@ -159,11 +161,30 @@ function viaToolCall(name = 'tool', args?: unknown): { name: string; args?: unkn
   return [{ name, args }]
 }
 
+/** Reading an email the agent found earlier in the chat: "Reading ‘<its subject>’" from the start. */
+function mailRead(name: string, args: unknown, subjects: Map<string, string> | undefined) {
+  if (name !== 'email_read' || !subjects) return undefined
+  let parsed = args
+  try {
+    if (typeof args === 'string') parsed = JSON.parse(args)
+  } catch {
+    return undefined
+  }
+  const id = (parsed as { id?: unknown } | null)?.id
+  const subject = typeof id === 'string' ? subjects.get(id) : undefined
+  return subject ? readingLabel(subject) : undefined
+}
+
+/** Per live chat: what its email searches found (message id → subject). */
+const mailSubjects = new Map<string, Map<string, string>>()
+
 /** `errands`: the helpers the agent sent off, from these rows or a wider look at the chat. */
 function rowsToItems(rows: Row[], speaker?: Speaker, errands: Map<string, Errand> = errandsOf(rows)): ChatItem[] {
   const items: ChatItem[] = []
   const tools = new Map<string, Extract<ChatItem, { kind: 'tool' }>[]>()
   const plans = new Set<string>()
+  // What the agent's email searches found, so a read says which email.
+  const subjects = new Map<string, string>()
   for (const [n, row] of rows.entries()) {
     const at = (row.timestamp ?? 0) * 1000
     const key = `h${row.id ?? items.length}`
@@ -235,8 +256,9 @@ function rowsToItems(rows: Row[], speaker?: Speaker, errands: Map<string, Errand
             id: `${key}-${callId}${n ? `-${n}` : ''}`,
             callId: n ? undefined : callId,
             name,
-            label: label.label,
+            label: mailRead(name, args, subjects) ?? label.label,
             detail: label.detail,
+            app: label.app,
             // Done once its result row turns up; one still waiting (on your OK, say) is still going.
             status: 'running',
             startedAt: at,
@@ -263,6 +285,8 @@ function rowsToItems(rows: Row[], speaker?: Speaker, errands: Map<string, Errand
       for (const tool of steps) {
         tool.status = /"exit_code":\s*-1|BLOCKED:|"error":\s*"/.test(row.content ?? '') ? 'error' : 'done'
         tool.endedAt = (row.timestamp ?? 0) * 1000
+        tool.label = resultLabel(tool.name, row.content) ?? tool.label
+        for (const [id, subject] of foundSubjects(tool.name, row.content)) subjects.set(id, subject)
         const media = toolMedia(tool.name, row.content)
         if (media.length) tool.media = media
       }
@@ -356,6 +380,8 @@ type ResumeResult = {
   inflight?: { assistant?: string; streaming?: boolean }
   info?: { model?: string; provider?: string; reasoning_effort?: string; title?: string }
   todo_state?: { todos?: unknown; revision?: number } | null
+  /** An app the agent asked to connect, still waiting on the person (state/hosted-apps-chat.ts). */
+  pending_connection?: ConnectionRequestPayload | null
 }
 
 const opening = new Map<string, Promise<void>>()
@@ -429,6 +455,7 @@ async function resume(id: string, first: boolean) {
     attaching--
   }
   bindRuntime(id, res.session_id)
+  restoreChatConnect(res.session_id, res.pending_connection)
   if (!attaching) parked.clear()
   const busy = res.running || ['working', 'streaming', 'starting'].includes(res.status ?? '')
   // A message sent while we asked started a turn this answer doesn't know about.
@@ -1433,9 +1460,11 @@ function onEvent(ev: GatewayEvent) {
         const step: ChatItem = {
           kind: 'tool',
           id: `tool-${String(payload.tool_id ?? uid('x'))}`,
-          name,
-          label: label.label,
+          // One call through the bridge (an app through Nous) is that call, as history has it.
+          name: calls.length === 1 ? calls[0].name : name,
+          label: mailRead(name, payload.args, mailSubjects.get(id)) ?? label.label,
           detail: label.detail,
+          app: label.app,
           status: 'running',
           startedAt: Date.now(),
           speaker: c.speaker,
@@ -1472,6 +1501,9 @@ function onEvent(ev: GatewayEvent) {
       )
       const media = failed ? [] : toolMedia(String(payload.name ?? ''), payload.result)
       const name = String(payload.name ?? '')
+      const found = foundSubjects(name, payload.result)
+      if (found.length) mailSubjects.set(id, new Map([...(mailSubjects.get(id) ?? []), ...found]))
+      const read = failed ? undefined : resultLabel(name, payload.result)
       return patch(id, (c) => {
         // Helpers sent off to work in the background stay live after this turn,
         // and their card takes the place of the step that sent them.
@@ -1482,6 +1514,7 @@ function onEvent(ev: GatewayEvent) {
             return handedOff ? [] : [
               {
                 ...i,
+                label: read ?? i.label,
                 status: failed ? 'error' : 'done',
                 endedAt: Date.now(),
                 media: media.length ? media : i.media,

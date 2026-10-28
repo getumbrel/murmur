@@ -50,6 +50,7 @@ const {
 const qc = {
   invalidateQueries: vi.fn(() => Promise.resolve()),
   setQueryData: vi.fn(),
+  getQueryData: vi.fn(),
   removeQueries: vi.fn(),
 } as never
 
@@ -179,6 +180,7 @@ describe('status', () => {
     expect(await fetchMailStatus('default')).toEqual({
       version: '1.0.0',
       enabled: true,
+      off: false,
       configured: true,
       account: {
         address: 'ada@gmail.com',
@@ -331,5 +333,40 @@ describe('in chats', () => {
     expect(readMailResult({ ok: true, saved: true })).toEqual({ ok: true, saved: true })
     expect(readMailResult('{"error":"x"}')).toEqual({ error: 'x' })
     expect(readMailResult('not json')).toBeNull()
+  })
+})
+
+describe('switching it off and on', () => {
+  it('reads off from the agent’s own switched-off toolsets', async () => {
+    routes['GET /api/config'] = () => ({ agent: { disabled_toolsets: ['catalog', 'email'] } })
+    expect(await fetchMailStatus('scout')).toMatchObject({ enabled: true, off: true })
+  })
+
+  it('puts the email toolset off and back on, keeping the agent’s other choices', async () => {
+    let disabled: string[] = ['catalog', 'project']
+    routes['GET /api/config'] = () => ({ agent: { disabled_toolsets: disabled } })
+    routes['PUT /api/config'] = (body) => {
+      disabled = (body as { config: { agent: { disabled_toolsets: string[] } } }).config.agent.disabled_toolsets
+      return { ok: true }
+    }
+    await mail.setMailEnabled(qc, 'scout', false)
+    expect(disabled).toEqual(['catalog', 'project', 'email'])
+    // Never the plugin's own switch: Hermes would stop answering its routes for this agent.
+    expect(rpc).not.toHaveBeenCalledWith('plugins.manage', expect.objectContaining({ enable: false }))
+    await mail.setMailEnabled(qc, 'scout', true)
+    expect(disabled).toEqual(['catalog', 'project'])
+  })
+
+  it('is on again once an account is connected', async () => {
+    let disabled: string[] = ['email']
+    routes['GET /api/config'] = () => ({ agent: { disabled_toolsets: disabled } })
+    routes['PUT /api/config'] = (body) => {
+      const agent = (body as { config: { agent?: { disabled_toolsets: string[] } } }).config.agent
+      if (agent) disabled = agent.disabled_toolsets
+      return { ok: true }
+    }
+    routes['POST /api/plugins/murmur-mail/check'] = () => proof
+    await connectMail(qc, 'scout', { provider: 'gmail', address: 'ada@gmail.com', password: 'abcd efgh ijkl mnop' })
+    expect(disabled).toEqual([])
   })
 })

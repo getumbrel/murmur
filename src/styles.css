@@ -866,3 +866,19 @@ html[data-desktop] [data-sidebar] ~ [role='main'] [data-window-gap='start'] {
     animation: none;
   }
 }
+
+/* The caret in an app password's boxes (features/apps/code-field.tsx): a
+   text field's own blink, steady under reduced motion. */
+.code-caret {
+  animation: code-caret 1.06s steps(1, end) infinite;
+}
+@keyframes code-caret {
+  50% {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .code-caret {
+    animation: none;
+  }
+}

@@ -1,6 +1,9 @@
 // Hermes tool names → warm, present-tense words people understand. The raw
 // name never reaches the screen; unknown tools fall back to humanized text.
 
+import { connectorTool, hostedAppFrom } from '@/state/hosted-apps-names'
+import { readMailResult } from '@/state/mail-chat'
+
 export type ToolCategory =
   | 'web'
   | 'browser'
@@ -18,9 +21,12 @@ export type ToolCategory =
   | 'schedule'
   | 'question'
   | 'history'
+  | 'mail'
+  | 'app'
   | 'other'
 
-export type ToolLabel = { label: string; category: ToolCategory; detail?: string }
+/** `app`: the mark (a MARKS key) of the app the step uses, drawn in place of the category's icon. */
+export type ToolLabel = { label: string; category: ToolCategory; detail?: string; app?: string }
 
 type Args = Record<string, unknown>
 type Rule = {
@@ -193,6 +199,104 @@ const clip = (s: string, max = 48) => {
   return line.length > max ? `${line.slice(0, max - 1).trimEnd()}…` : line
 }
 
+// ── Email (the murmur-mail plugin) and apps through Nous ─────────────────────
+
+/** Who an address is ("Priya Raman <priya@…>" → "Priya Raman", "sam@…" → "sam"). */
+export function personOf(address: string) {
+  const named = /^\s*"?([^"<]*?)"?\s*<([^>]*)>\s*$/.exec(address)
+  const name = named?.[1].trim()
+  if (name) return name
+  const bare = (named?.[2] ?? address).trim()
+  return bare.split('@')[0] || bare
+}
+
+/** "Priya Raman", "Priya and Sam", "Priya and 2 others". */
+export function peopleOf(addresses: unknown) {
+  const list = (Array.isArray(addresses) ? addresses : typeof addresses === 'string' ? addresses.split(',') : [])
+    .filter((a): a is string => typeof a === 'string' && !!a.trim())
+    .map(personOf)
+  if (list.length <= 1) return list[0]
+  const first = (n: string) => n.split(/\s+/)[0]
+  if (list.length === 2) return `${first(list[0])} and ${first(list[1])}`
+  return `${first(list[0])} and ${list.length - 1} others`
+}
+
+/** "Reading ‘Your boarding pass’": an email, by its subject once Murmur knows it. */
+export const readingLabel = (subject?: string) => (subject?.trim() ? `Reading ‘${clip(subject, 40)}’` : 'Reading an email')
+
+/** The subjects an email search found, by message id, so reading one can say which. */
+export function foundSubjects(name: string, result: unknown): [id: string, subject: string][] {
+  if (name !== 'email_search') return []
+  const found = readMailResult<{ messages?: { id?: unknown; subject?: unknown }[] }>(result)
+  return (Array.isArray(found?.messages) ? found.messages : []).flatMap((m) =>
+    typeof m?.id === 'string' && typeof m.subject === 'string' && m.subject.trim() ? [[m.id, m.subject] as [string, string]] : [],
+  )
+}
+
+/** A step's label once its result is in, when that says more than the call did (an email read, by its subject). */
+export function resultLabel(name: string, result: unknown): string | undefined {
+  if (name !== 'email_read') return undefined
+  const read = readMailResult<{ subject?: unknown }>(result)
+  return typeof read?.subject === 'string' && read.subject.trim() ? readingLabel(read.subject) : undefined
+}
+
+function mailLabel(name: string, a: Args): ToolLabel | undefined {
+  switch (name) {
+    case 'email_search': {
+      const q = str(a.query)
+      return q ? { label: 'Searching your email', category: 'mail', detail: clip(q) } : { label: 'Checking your inbox', category: 'mail' }
+    }
+    case 'email_read':
+      return { label: readingLabel(), category: 'mail' }
+    case 'email_draft': {
+      const to = peopleOf(a.to)
+      const label = to ? `Drafting an email to ${clip(to, 32)}` : str(a.reply_to_id) ? 'Drafting a reply' : 'Drafting an email'
+      return { label, category: 'mail', detail: str(a.subject) && clip(str(a.subject)!) }
+    }
+    case 'email_send': {
+      const to = peopleOf(a.to)
+      return { label: to ? `Sending an email to ${clip(to, 32)}` : 'Sending an email', category: 'mail', detail: str(a.subject) && clip(str(a.subject)!) }
+    }
+  }
+}
+
+/** The calls a `tool_call` wraps (Hermes's bridge for tools loaded on demand), or the call itself. */
+function callsOf(name: string, args: Args): { name: string; args: Args }[] {
+  if (name !== 'tool_call' || !Array.isArray(args.calls)) return [{ name, args }]
+  const calls = (args.calls as { name?: unknown; arguments?: unknown }[])
+    .filter((c) => typeof c?.name === 'string')
+    .map((c) => ({ name: c.name as string, args: parseArgs(c.arguments) }))
+  return calls.length ? calls : [{ name, args }]
+}
+
+/** "Using Slack" (and what it's doing there), for apps connected through Nous. */
+function connectorLabel(calls: { name: string }[]): ToolLabel | undefined {
+  const used = calls.map((c) => connectorTool(c.name))
+  if (!used.length || used.some((u) => !u)) return undefined
+  const apps = [...new Map(used.map((u) => [u!.app.slug, u!.app])).values()]
+  const actions = [...new Set(used.map((u) => u!.action).filter(Boolean))]
+  const names = apps.map((app) => app.name)
+  return {
+    label: `Using ${names.length > 2 ? `${names[0]} and ${names.length - 1} more` : names.join(' and ')}`,
+    category: 'app',
+    detail: actions.length === 1 ? actions[0].charAt(0).toUpperCase() + actions[0].slice(1) : undefined,
+    app: apps.length === 1 ? apps[0].icon : undefined,
+  }
+}
+
+/** manage_connections: the agent looking at, or connecting, apps through Nous. */
+function connectionsLabel(a: Args): ToolLabel {
+  const action = str(a.action)?.toLowerCase() ?? 'status'
+  const named = (Array.isArray(a.connectors) ? a.connectors : [])
+    .map((c) => (typeof c === 'string' ? c : typeof (c as { name?: unknown })?.name === 'string' ? (c as { name: string }).name : ''))
+    .filter(Boolean)
+  const one = named.length === 1 ? hostedAppFrom({ slug: named[0] }) : undefined
+  if (['connect', 'reconnect', 'authorize', 'install', 'enable'].includes(action))
+    return { label: one ? `Connecting ${one.name}` : 'Connecting apps', category: 'app', app: one?.icon }
+  if (action === 'display') return { label: 'Finding apps', category: 'app' }
+  return { label: 'Checking your apps', category: 'app' }
+}
+
 /**
  * Human label, icon category and a short detail for a Hermes tool call.
  * `args` may be an object or a JSON string; `preview` is Hermes' own one-line
@@ -201,6 +305,14 @@ const clip = (s: string, max = 48) => {
 export function toolLabel(name: string, args?: unknown, preview?: string): ToolLabel {
   const rule = RULES[name] ?? PREFIXES.find(([p]) => name.startsWith(p))?.[1]
   const a = parseArgs(args)
+  const calls = callsOf(name, a)
+  const viaNous = connectorLabel(calls)
+  if (viaNous) return viaNous
+  // One call through the bridge: label the tool it wraps.
+  if (name === 'tool_call' && calls.length === 1 && calls[0].name !== name) return toolLabel(calls[0].name, calls[0].args, preview)
+  const mail = mailLabel(name, a)
+  if (mail) return mail
+  if (name === 'manage_connections') return connectionsLabel(a)
   const tool = connected(name, a)
   if (tool) return tool
   if (!rule) {
@@ -243,6 +355,9 @@ const PAST: Record<string, string> = {
   Sending: 'Sent',
   Scheduling: 'Scheduled',
   Following: 'Followed',
+  Drafting: 'Drafted',
+  Connecting: 'Connected',
+  Finding: 'Found',
 }
 
 /** "Searching the web" → "Searched the web". Labels it doesn't know stay as they are. */
@@ -280,6 +395,11 @@ const DONE: Record<string, Done> = {
   cronjob_manage: { key: 'schedule', one: 'Set up a routine' },
   clarify: { key: 'ask', one: 'Asked you' },
   session_search: { key: 'history', one: 'Looked through past chats' },
+  email_search: { key: 'mail-search', one: 'Searched your email' },
+  email_read: { key: 'mail-read', one: 'Read an email', many: (n) => `Read ${n} emails` },
+  email_draft: { key: 'mail-draft', one: 'Drafted an email', many: (n) => `Drafted ${n} emails` },
+  email_send: { key: 'mail-send', one: 'Sent an email', many: (n) => `Sent ${n} emails` },
+  manage_connections: { key: 'connections', one: 'Checked your apps' },
 }
 
 const DONE_PREFIXES: [string, Done][] = [
@@ -299,7 +419,9 @@ export function didSummary(names: string[]): string | undefined {
   const groups = new Map<string, { done: Done; n: number }>()
   for (const name of names) {
     const server = MCP.exec(name)?.[1]
+    const viaNous = connectorTool(name)?.app
     const done =
+      (viaNous && { key: `nous:${viaNous.slug}`, one: `Used ${viaNous.name}` }) ??
       DONE[name] ??
       DONE_PREFIXES.find(([p]) => name.startsWith(p))?.[1] ??
       (server ? { key: `mcp:${server}`, one: `Used ${serverName(server)}` } : OTHER)

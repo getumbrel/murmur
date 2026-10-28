@@ -12,7 +12,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { QueryClient } from '@tanstack/react-query'
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest'
-import { startGateway, stopGateway } from '@/hermes/gateway'
+import { rpc, startGateway, stopGateway } from '@/hermes/gateway'
 import { JsonRpcGatewayClient, type GatewayEvent } from '@/hermes/vendor/json-rpc-gateway'
 import type { ServerRequest } from '@/hermes/vendor/json-rpc-channel'
 import { createAgent } from '@/state/agents'
@@ -27,9 +27,10 @@ import {
   readMailResult,
   readSendApproval,
   isSendApproval,
+  setMailEnabled,
   type MailConnectInput,
 } from '@/state/mail'
-import { api, connect, MURMUR, modelRequests, newChat, q, sleep, turn, type Socket } from './client'
+import { agentName, api, connect, MURMUR, modelRequests, newChat, q, sleep, turn, type Socket } from './client'
 import { toolsTag } from './fake-model'
 import { MAIL_HOST, MAILBOXES, PORTS, startGreenMail, type GreenMail } from './greenmail'
 
@@ -175,22 +176,35 @@ describe('connecting', () => {
     expect(newest).toHaveLength(3)
   })
 
-  it('is each agent’s own, and switches the plugin on for an agent made since Hermes started', async () => {
+  it('isn’t copied into a new agent: Hermes copies the .env, Murmur clears the account out of it', async () => {
+    // Hermes copies the main agent's .env into an agent it makes (any app's), the account with it…
+    const copy = agentName('mail-copy')
+    await rpc('profiles.create', { name: copy, share_auth: true }, 120_000)
+    try {
+      expect(await envFile(copy)).toContain('MURMUR_MAIL_ADDRESS=ada@example.com')
+      // …which isn't that agent's: the plugin ignores it, and looking clears it away.
+      expect(await fetchMailStatus(copy)).toMatchObject({ enabled: false, configured: false, account: null })
+      expect(await envFile(copy)).not.toMatch(/MURMUR_MAIL_/)
+    } finally {
+      await api.call('DELETE', `/api/profiles/${copy}`)
+    }
+    // An agent Murmur makes doesn't keep the copy even that long (createAgent clears it).
     other = await createAgent({ name: `Contract Mail ${Date.now().toString(36)}`, hue: 120, role: 'Mail' })
-    // Hermes copies the main agent's .env into a new agent: the copy of its account isn't the new agent's.
-    expect(await envFile(other)).toContain('MURMUR_MAIL_ADDRESS=ada@example.com')
-    expect(await fetchMailStatus(other)).toMatchObject({ enabled: false, configured: false, account: null })
-    // And looking cleared it away.
+    for (let i = 0; i < 40 && /MURMUR_MAIL_/.test(await envFile(other)); i++) await sleep(250)
     expect(await envFile(other)).not.toMatch(/MURMUR_MAIL_/)
-    await connectMail(qc, other, account('cy'))
-    expect(await fetchMailStatus(other)).toMatchObject({ enabled: true, configured: true, account: { address: MAILBOXES.cy.address } })
+    expect(await fetchMailStatus(other)).toMatchObject({ enabled: false, configured: false, account: null })
+  }, 180_000)
+
+  it('is each agent’s own, and switches the plugin on for an agent made since Hermes started', async () => {
+    await connectMail(qc, other!, account('cy'))
+    expect(await fetchMailStatus(other!)).toMatchObject({ enabled: true, configured: true, account: { address: MAILBOXES.cy.address } })
     expect((await fetchMailStatus('default'))?.account?.address).toBe(MAILBOXES.ada.address)
     expect(await envFile('default')).not.toContain(MAILBOXES.cy.password)
 
     // Its chats can use it straight away.
     await mail.deliver({ from: 'Dee <dee@example.org>', to: MAILBOXES.cy.address, subject: 'For Cy only', text: 'Hi Cy.' })
-    const { runtime } = await newChat(socket, other)
-    await turn(socket, runtime, `Check ${toolsTag([use('email_search', { query: 'Cy' })])}`, other)
+    const { runtime } = await newChat(socket, other!)
+    await turn(socket, runtime, `Check ${toolsTag([use('email_search', { query: 'Cy' })])}`, other!)
     const found = readMailResult<{ account: string; messages: { subject: string }[] }>(results(runtime)[0]?.result)
     expect(found).toMatchObject({ account: MAILBOXES.cy.address, messages: [{ subject: 'For Cy only' }] })
   })
@@ -215,6 +229,22 @@ describe('in a chat', () => {
     expect(await offered()).toEqual(expect.arrayContaining(['email_search', 'email_read', 'email_draft', 'email_send']))
   })
 
+  it('switches off and on for one agent, keeping its account', async () => {
+    // The Apps sheet's switch: off takes the tools from the agent's next chat, on brings them back.
+    await setMailEnabled(qc, 'default', false)
+    // The account, and the plugin's routes, stay: only the agent's tools go (its email toolset is off).
+    expect(await fetchMailStatus('default')).toMatchObject({ enabled: true, off: true, configured: true, account: { address: MAILBOXES.ada.address } })
+    const off = await newChat(socket)
+    await turn(socket, off.runtime, 'Hello')
+    expect(await offered()).not.toEqual(expect.arrayContaining(['email_search']))
+
+    await setMailEnabled(qc, 'default', true)
+    expect(await fetchMailStatus('default')).toMatchObject({ enabled: true, off: false, configured: true })
+    const on = await newChat(socket)
+    await turn(socket, on.runtime, 'Hello')
+    expect(await offered()).toEqual(expect.arrayContaining(['email_search', 'email_send']))
+  })
+
   it('searches, reads, and drafts a reply into Drafts', async () => {
     const lisbon = (await mail.messages(MAILBOXES.ada.address)).find((m) => m.subject === 'Flight to Lisbon')!
     const id = `INBOX:${lisbon.uid}`
@@ -231,6 +261,9 @@ describe('in a chat', () => {
     )
     const [search, read, draft] = results(runtime)
     expect(search.name).toBe('email_search')
+    // A chat's steps are labelled by the real tool, not the tool_call bridge it went through (tool-labels.ts).
+    const started = socket.of(runtime).filter((e) => e.type === 'tool.start').map((e) => (e.payload as { name: string }).name)
+    expect(started).toEqual(['email_search', 'email_read', 'email_draft'])
     expect(readMailResult(search.result)).toMatchObject({ folder: 'INBOX', total: 1, messages: [{ id, subject: 'Flight to Lisbon', from: [{ name: 'Sam Lee', address: 'sam@example.org' }], unread: true }] })
     expect(readMailResult(read.result)).toMatchObject({ id, subject: 'Flight to Lisbon', body: 'Your flight leaves Friday at 9.', attachments: [] })
     expect(readMailResult(draft.result)).toMatchObject({ ok: true, saved: true, folder: 'Drafts', to: ['Sam Lee <sam@example.org>'], subject: 'Re: Flight to Lisbon' })

@@ -1,6 +1,7 @@
 import {
   AppWindow,
   AudioLines,
+  Blocks,
   BookOpen,
   Bookmark,
   Braces,
@@ -11,6 +12,7 @@ import {
   History,
   ImagePlus,
   ListChecks,
+  Mail,
   MessageCircleQuestion,
   Send,
   SquareTerminal,
@@ -37,6 +39,8 @@ const ICONS: Record<ToolCategory, LucideIcon> = {
   schedule: CalendarClock,
   question: MessageCircleQuestion,
   history: History,
+  mail: Mail,
+  app: Blocks,
   other: Wrench,
 }
 

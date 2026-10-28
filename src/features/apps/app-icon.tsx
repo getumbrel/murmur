@@ -1,4 +1,5 @@
 import type { CSSProperties } from 'react'
+import { Mail } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { MARKS } from './marks'
 
@@ -6,8 +7,12 @@ import { MARKS } from './marks'
 // rounded square. Hermes's catalog has no icons, so they're drawn here
 // (marks.ts); an app without a mark gets its initial, never a broken image.
 
+/** The icon name for email that isn't one company's (an agent's own account, the Email tile). */
+export const EMAIL_ICON = 'email'
+
 /** The app's name the way its maker writes it. */
 export function appName(name: string) {
+  if (name === EMAIL_ICON) return 'Email'
   return MARKS[name]?.[0] ?? name.replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
@@ -35,6 +40,7 @@ export function AppIcon({
   className?: string
   style?: CSSProperties
 }) {
+  if (name === EMAIL_ICON) return <EmailIcon size={size} className={className} style={style} />
   const mark = MARKS[name]
   const background = mark ? `#${mark[1]}` : `oklch(0.6 0.13 ${hueOf(name)})`
   const ink = mark && isLight(mark[1]) ? '#1d1626' : '#fff'
@@ -69,6 +75,30 @@ export function AppIcon({
           {appName(name).charAt(0)}
         </span>
       )}
+    </span>
+  )
+}
+
+/** Email that isn't one company's: an envelope on a calm blue, drawn like the other app icons. */
+function EmailIcon({ size, className, style }: { size: number; className?: string; style?: CSSProperties }) {
+  return (
+    <span
+      aria-hidden
+      className={cn(
+        'relative grid flex-none place-items-center overflow-hidden select-none',
+        'shadow-[inset_0_0_0_0.5px_var(--line-strong)]',
+        className,
+      )}
+      style={{
+        width: size,
+        height: size,
+        borderRadius: size * 0.2237,
+        background: 'linear-gradient(180deg, oklch(0.72 0.14 235), oklch(0.58 0.17 252))',
+        ...style,
+      }}
+    >
+      <span className="absolute inset-0 bg-[linear-gradient(180deg,rgb(255_255_255/0.16),transparent_55%)]" />
+      <Mail size={Math.round(size * 0.5)} strokeWidth={size < 24 ? 2.2 : 1.9} color="#fff" className="relative" />
     </span>
   )
 }
