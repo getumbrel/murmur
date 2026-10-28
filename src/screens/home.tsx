@@ -5,7 +5,7 @@ import { ChevronRight, Plus, Search, Settings, SquarePen } from 'lucide-react'
 import { AgentsIcon } from '@/ui/icons'
 import { Button, IconButton } from '@/ui/button'
 import { Orb } from '@/ui/orb'
-import { ByUmbrel, MurmurWordmark } from '@/ui/brand'
+import { ByUmbrel, MurmurVersion, MurmurWordmark } from '@/ui/brand'
 import { useAgents } from '@/state/agents'
 import { useIsWide } from '@/lib/use-media'
 import { cn } from '@/lib/cn'
@@ -376,9 +376,10 @@ export function Sidebar() {
             </div>
           )}
         </motion.div>
-        {/* Signed, quietly, at the foot of the list. */}
-        <footer className="flex-none px-6 pt-2 pb-4">
+        {/* Signed, quietly, at the foot of the list, with the version across from it. */}
+        <footer className="flex flex-none items-baseline justify-between gap-3 px-6 pt-2 pb-4">
           <ByUmbrel />
+          <MurmurVersion />
         </footer>
         {actions.sheets}
       </aside>

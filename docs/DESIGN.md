@@ -133,7 +133,7 @@ The Murmur mark is two buddies, violet and coral, shoulder to shoulder so togeth
 | Home (`screens/home.tsx`) | `MurmurWordmark` 31 (phone large title), 24 (sidebar) | The header mark the splash and welcome land on. |
 | Welcome (`features/onboarding/welcome.tsx`) | `MurmurMark`, `breathe` | Where the murmuration lands. |
 | Settings › About, install tip | `MurmurMark tile` | The app icon, as people will see it on their home screen. |
-| Footers of sign in, Connect, welcome, done, the sidebar and Settings | `ByUmbrel` | |
+| Footers of sign in, Connect, welcome, done, the sidebar and Settings | `ByUmbrel` | The sidebar's has `MurmurVersion` across from it. |
 | Favicon and app icons (`public/`) | Static exports of `glyph` and `tile` | Re-export from `/buddy.html` when the mark changes. |
 
 ## Patterns

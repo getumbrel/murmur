@@ -127,11 +127,6 @@
 .by-umbrel > svg {
   margin-right: 0.15em;
 }
-.by-umbrel-name {
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  color: var(--ink-2);
-}
 .by-umbrel-link {
   position: relative;
   font-weight: 500;
@@ -146,10 +141,26 @@
     background-size 200ms var(--ease-out),
     color 150ms ease;
 }
+.by-umbrel-name {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+/* The version: caption-sized like the signature, in its quietest ink. */
+.murmur-version {
+  font-family: var(--font-sans);
+  font-size: 0.75rem;
+  line-height: 1rem;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-3);
+}
 @media (hover: hover) and (pointer: fine) {
   .by-umbrel-link:hover {
     color: var(--ink);
     background-size: 100% 1px;
+  }
+  .murmur-version:hover {
+    color: var(--ink-2);
   }
 }
 /* A caption-sized link still gets a thumb-sized target on touch screens. */

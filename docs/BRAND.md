@@ -68,9 +68,10 @@ All of these come from `src/ui/brand.tsx`.
 
 `<ByUmbrel />` renders "**Murmur** by Umbrel".
 - It's a 12px caption in `ink-3`, with Murmur in semibold `ink-2`.
-- "Umbrel" links to https://umbrel.com (new tab, `rel=noopener`) and gets an underline on hover.
+- "Murmur" links to its source on GitHub and "Umbrel" to https://umbrel.com (new tab, `rel=noopener`). Each gets an underline on hover.
 - Use it in About, Settings footers and onboarding's last screen. It should be legible, never louder than Murmur, and never in the main navigation.
 - `mark` adds the 16px glyph in front (the colour mark would be under its 24px minimum).
+- `<MurmurVersion />` is the version ("v0.8.1"), a quieter caption in `ink-3` that opens its release notes. It sits across from the signature at the foot of the sidebar.
 
 ## Voice
 

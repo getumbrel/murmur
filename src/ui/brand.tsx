@@ -375,6 +375,9 @@ export function MurmurWordmark({
   )
 }
 
+/** Where Murmur is made, in the open. */
+export const SOURCE_URL = 'https://github.com/getumbrel/murmur'
+
 /** The endorsement signature: "Murmur by Umbrel". Quiet, legible, deferential. */
 export function ByUmbrel({ className, mark = false }: { className?: string; mark?: boolean }) {
   return (
@@ -382,12 +385,29 @@ export function ByUmbrel({ className, mark = false }: { className?: string; mark
       {/* The flat glyph is the mark drawn for this size: 16px square, an m
           about 10px tall that sits on the caption's x-height. */}
       {mark && <MurmurMark variant="glyph" size={16} label="" />}
-      <span className="by-umbrel-name">Murmur</span>
+      <a href={SOURCE_URL} target="_blank" rel="noopener" className="by-umbrel-link by-umbrel-name">
+        Murmur
+      </a>
       <span className="by-umbrel-by">by</span>
       <a href="https://umbrel.com" target="_blank" rel="noopener" className="by-umbrel-link">
         Umbrel
       </a>
     </p>
+  )
+}
+
+/** The version, quieter still, beside the signature; it opens what's new in it. */
+export function MurmurVersion({ className }: { className?: string }) {
+  return (
+    <a
+      href={`${SOURCE_URL}/releases/tag/v${__MURMUR_VERSION__}`}
+      target="_blank"
+      rel="noopener"
+      title={`What’s new in Murmur ${__MURMUR_VERSION__}`}
+      className={cn('by-umbrel-link murmur-version', className)}
+    >
+      v{__MURMUR_VERSION__}
+    </a>
   )
 }
 

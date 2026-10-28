@@ -4,7 +4,7 @@ import { ArrowUpRight, ChevronRight } from 'lucide-react'
 import { ListGroup, ListRow } from '@/ui/list'
 import { Segmented } from '@/ui/segmented'
 import { Orb } from '@/ui/orb'
-import { ByUmbrel, MurmurMark, UmbrelIcon } from '@/ui/brand'
+import { ByUmbrel, MurmurMark, SOURCE_URL, UmbrelIcon } from '@/ui/brand'
 import { useIsWide } from '@/lib/use-media'
 import { api } from '@/hermes/rest'
 import { useConnection } from '@/hermes/gateway'
@@ -34,8 +34,7 @@ import { AgentsIcon, ImportIcon, ModelsIcon, ServerIcon, SignOutIcon } from '@/u
 /** package.json's, baked in at build time (vite.config.ts). */
 const VERSION = __MURMUR_VERSION__
 
-/** Where Murmur lives. Help goes to its issues; the rest follow from here. */
-const SOURCE_URL = 'https://github.com/getumbrel/murmur'
+/** Help goes to Murmur's issues, the license sits beside its source. */
 const HELP_URL = `${SOURCE_URL}/issues`
 const LICENSE_URL = `${SOURCE_URL}/blob/master/LICENSE`
 
