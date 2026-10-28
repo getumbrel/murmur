@@ -56,8 +56,11 @@ export function planFromResult(result: unknown): { todos: Todo[]; revision: numb
   return null
 }
 
-/** Where this turn starts: just after the last thing you said. */
-const turnStart = (items: ChatItem[]) => items.findLastIndex((i) => i.kind === 'user') + 1
+/** What a turn answers: something you said, or Hermes waking the agent (a helper back, say). */
+export const startsTurn = (i: ChatItem) => i.kind === 'user' || i.kind === 'wake'
+
+/** Where this turn starts: just after what it answers. */
+const turnStart = (items: ChatItem[]) => items.findLastIndex(startsTurn) + 1
 
 /**
  * The turn's checklist, made or brought up to date. One per turn: later
@@ -107,8 +110,10 @@ function lineOf(type: string, p: P): string | undefined {
 export function withHelper(items: ChatItem[], type: string, p: P, now: number): ChatItem[] {
   const key = helperKey(p)
   const from = turnStart(items)
-  const at = items.findIndex((i, n) => n >= from && i.kind === 'helper' && i.subagentId === key)
+  // One working in the background keeps its card in the turn that sent it, whatever has been said since.
+  const at = items.findIndex((i, n) => i.kind === 'helper' && i.subagentId === key && (n >= from || i.background))
   const was = items[at] as Of<'helper'> | undefined
+  const delegationId = typeof p.delegation_id === 'string' && p.delegation_id ? p.delegation_id : was?.delegationId
   const goal = typeof p.goal === 'string' && p.goal.trim() ? p.goal.trim() : (was?.goal ?? 'Helping out')
   const tools = typeof p.tool_count === 'number' ? p.tool_count : (was?.tools ?? 0)
   const ended = type === 'subagent.complete' ? (ENDED[String(p.status ?? 'completed')] ?? 'done') : undefined
@@ -122,15 +127,59 @@ export function withHelper(items: ChatItem[], type: string, p: P, now: number): 
     line: ended ? undefined : (lineOf(type, p) ?? was?.line),
     ...(ended && { endedAt: now }),
     ...(ended && typeof p.summary === 'string' && p.summary.trim() && { summary: p.summary.trim() }),
+    ...(delegationId && { delegationId }),
   }
   return was ? items.map((i, n) => (n === at ? next : i)) : [...items, next]
 }
 
-/** The turn is over: any helper still shown as running isn't anymore. */
+/**
+ * delegate_task sent its helpers off to work in the background (every call
+ * the agent itself makes, since Hermes 0.22): they carry on after this turn,
+ * and Hermes wakes the agent when they're back. Their cards stay live, and
+ * any helper not heard from yet gets its card now, from what the call says it
+ * sent (`{status: "dispatched", delegation_id, goals, subagent_ids}`).
+ */
+export function withErrand(items: ChatItem[], result: unknown, now: number): ChatItem[] {
+  const r = parse(result)
+  if (r?.status !== 'dispatched' || typeof r.delegation_id !== 'string') return items
+  const errand = r.delegation_id
+  const goals = Array.isArray(r.goals) ? r.goals : []
+  const ids = Array.isArray(r.subagent_ids) && r.subagent_ids.length === goals.length ? r.subagent_ids : []
+  const keys = goals.map((_, i) => (typeof ids[i] === 'string' && ids[i] ? (ids[i] as string) : `${errand}-${i}`))
+  const from = turnStart(items)
+  const sent = (i: ChatItem, n: number): i is Of<'helper'> =>
+    n >= from && i.kind === 'helper' && (keys.includes(i.subagentId) || i.delegationId === errand)
+  const known = new Set(items.flatMap((i, n) => (sent(i, n) ? [i.subagentId] : [])))
+  const fresh = keys.flatMap((key, i): Of<'helper'>[] =>
+    known.has(key)
+      ? []
+      : [
+          {
+            kind: 'helper',
+            id: `helper-${key}`,
+            subagentId: key,
+            goal: typeof goals[i] === 'string' && goals[i].trim() ? goals[i].trim() : 'Helping out',
+            status: 'running',
+            tools: 0,
+            startedAt: now,
+            delegationId: errand,
+            background: true,
+          },
+        ],
+  )
+  return [
+    ...items.map((i, n) => (sent(i, n) ? { ...i, delegationId: i.delegationId ?? errand, background: true } : i)),
+    ...fresh,
+  ]
+}
+
+/** The turn is over: any helper still shown as running isn't anymore (unless it works in the background). */
 export function settleHelpers(items: ChatItem[], stopped: boolean, now: number): ChatItem[] {
-  if (!items.some((i) => i.kind === 'helper' && i.status === 'running')) return items
+  if (!items.some((i) => i.kind === 'helper' && i.status === 'running' && !i.background)) return items
   return items.map((i) =>
-    i.kind === 'helper' && i.status === 'running' ? { ...i, status: stopped ? 'stopped' : 'done', endedAt: now } : i,
+    i.kind === 'helper' && i.status === 'running' && !i.background
+      ? { ...i, status: stopped ? 'stopped' : 'done', endedAt: now }
+      : i,
   )
 }
 

@@ -7,6 +7,7 @@ import type { ChatItem } from './types'
 import { formatDuration } from './format'
 
 export type HelperItem = Extract<ChatItem, { kind: 'helper' }>
+type WakeItem = Extract<ChatItem, { kind: 'wake' }>
 
 const roll = { duration: 0.28, ease: [0.16, 1, 0.3, 1] } as const
 const arrive = { type: 'spring', duration: 0.45, bounce: 0.2 } as const
@@ -36,33 +37,49 @@ function lineOf(h: HelperItem) {
 }
 
 /** Afterwards: "3 helpers finished", or how many didn't. */
-function doneLine(items: HelperItem[]) {
-  const ok = items.filter((h) => h.status === 'done').length
-  const who = items.length === 1 ? 'Helper' : `${items.length} helpers`
-  if (ok === items.length) return `${who} finished`
-  return `${who} · ${ok} finished`
+function doneLine(all: number, ok: number) {
+  const who = all === 1 ? 'Helper' : `${all} helpers`
+  if (ok === all) return `${who} finished`
+  if (!ok) return `${who} didn’t finish`
+  return `${ok} of ${all} helpers finished`
+}
+
+/** How long helpers were away: as Hermes timed them, or from the first one leaving to the last one back. */
+function awayFor(back: WakeItem, items: HelperItem[]) {
+  const left = Math.min(...items.map((h) => h.startedAt))
+  const ms = back.took ?? Math.max(...items.map((h) => h.endedAt ?? h.startedAt)) - left
+  return ms >= 1000 ? formatDuration(ms) : ''
 }
 
 /**
  * The helpers the agent sent off, as small cards: each its own little buddy
  * in the agent's colours, its goal, and one live line. Stop calls one back.
  * Once they're all back and the reply is done, they fold into one line.
+ * Helpers that worked in the background come back as that line (`back`), at
+ * the start of the turn Hermes wakes the agent with.
  */
 export function Helpers({
   items,
+  back,
   hue,
   live,
   onStop,
 }: {
   items: HelperItem[]
+  back?: WakeItem
   hue: number
   live: boolean
   onStop?: (subagentId: string) => void
 }) {
   const reduce = useReducedMotion()
   const [open, setOpen] = useState(false)
-  const folded = !live && !items.some((h) => h.status === 'running')
+  const folded = (!live || !!back) && !items.some((h) => h.status === 'running')
   const shown = !folded || open
+  const all = back?.helpers ?? items.length
+  const ok = back ? all - (back.failed ?? 0) : items.filter((h) => h.status === 'done').length
+  // The cards say what each was asked and how it went: only when that's known for every one.
+  const canOpen =
+    items.length > 0 && items.every((h) => h.goal) && items.filter((h) => h.status === 'done').length === ok
   return (
     <div>
       <AnimatePresence initial={false}>
@@ -70,25 +87,33 @@ export function Helpers({
           <motion.button
             key="line"
             type="button"
-            aria-expanded={open}
+            disabled={!canOpen}
+            aria-expanded={canOpen ? open : undefined}
             onClick={() => setOpen(!open)}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ duration: 0.2 }}
-            className="group relative -mx-1 flex h-8 max-w-full items-center gap-2 rounded-full px-1 text-left text-subhead text-ink-3 transition-colors duration-150 after:absolute after:-inset-y-1.5 after:inset-x-0 hover:text-ink-2"
+            className={cn(
+              'group relative -mx-1 flex h-8 max-w-full items-center gap-2 rounded-full px-1 text-left text-subhead text-ink-3 transition-colors duration-150 after:absolute after:-inset-y-1.5 after:inset-x-0',
+              canOpen && 'hover:text-ink-2',
+            )}
           >
             <span className="flex flex-none -space-x-1.5">
               {items.slice(0, 4).map((h, i) => (
                 <Orb key={h.id} hue={kin(hue, i)} size={20} seed={h.subagentId} />
               ))}
             </span>
-            <span className="truncate">{doneLine(items)}</span>
-            <ChevronRight
-              size={14}
-              strokeWidth={2}
-              aria-hidden
-              className={cn('flex-none transition-transform duration-300 ease-(--ease-sheet)', open && 'rotate-90')}
-            />
+            <span className="truncate">
+              {[doneLine(all, ok), back && awayFor(back, items)].filter(Boolean).join(' · ')}
+            </span>
+            {canOpen && (
+              <ChevronRight
+                size={14}
+                strokeWidth={2}
+                aria-hidden
+                className={cn('flex-none transition-transform duration-300 ease-(--ease-sheet)', open && 'rotate-90')}
+              />
+            )}
           </motion.button>
         )}
       </AnimatePresence>
@@ -108,7 +133,8 @@ export function Helpers({
             className={cn('flex flex-col gap-1.5 overflow-hidden', folded && 'pt-2')}
           >
             {items.map((h, i) => (
-              <Card key={h.id} h={h} i={i} hue={hue} onStop={live ? onStop : undefined} />
+              // One working in the background can be called back after the turn that sent it.
+              <Card key={h.id} h={h} i={i} hue={hue} onStop={live || h.background ? onStop : undefined} />
             ))}
           </motion.ul>
         )}

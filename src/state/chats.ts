@@ -22,13 +22,16 @@ import {
   planFromResult,
   reactionsOf,
   settleHelpers,
+  startsTurn,
   todosOf,
   toggled,
+  withErrand,
   withHelper,
   withPlan,
   withPreview,
   withReactions,
 } from '@/features/chat/live'
+import { errandsOf, isYours, wakeItems, withSeenHelpers, type Errand } from '@/features/chat/wake'
 
 export type Chat = {
   id: string
@@ -50,6 +53,8 @@ export type Chat = {
   goal?: Goal
   /** Counts the times you've been sweet to the agent (thanks, <3), so its face can show it. */
   vibes?: number
+  /** A turn begun elsewhere (a helper back, say) that this page hasn't shown yet: working, for lists. */
+  starting?: boolean
 }
 
 export type Goal = { title: string; status: string }
@@ -129,10 +134,11 @@ type Row = {
   reasoning?: string | null
   display_kind?: string | null
   display_metadata?: { reactions?: unknown } | null
+  /** What Hermes shows for your message when that isn't its content: a request carried inside a chat's summary, say. */
+  display_content?: string | null
   timestamp?: number
 }
 
-const SKIPPED = new Set(['hidden', 'process_complete', 'model_switch'])
 /** The agent's tapbacks land on the message itself; a step saying so would narrate it. */
 const QUIET_TOOLS = new Set(['react_to_message'])
 const INTERRUPTED = /^\s*Operation interrupted\b/
@@ -152,20 +158,27 @@ function viaToolCall(name = 'tool', args?: unknown): { name: string; args?: unkn
   return [{ name, args }]
 }
 
-function rowsToItems(rows: Row[], speaker?: Speaker): ChatItem[] {
+/** `errands`: the helpers the agent sent off, from these rows or a wider look at the chat. */
+function rowsToItems(rows: Row[], speaker?: Speaker, errands: Map<string, Errand> = errandsOf(rows)): ChatItem[] {
   const items: ChatItem[] = []
   const tools = new Map<string, Extract<ChatItem, { kind: 'tool' }>[]>()
   const plans = new Set<string>()
-  for (const row of rows) {
+  for (const [n, row] of rows.entries()) {
     const at = (row.timestamp ?? 0) * 1000
     const key = `h${row.id ?? items.length}`
-    // Hidden turns, and Hermes's notes to the model (a model switch) aren't the person's words.
-    if (row.display_kind && SKIPPED.has(row.display_kind)) continue
+    // Hidden turns aren't for the person at all.
+    if (row.display_kind === 'hidden') continue
+    // Hermes writing in the person's name: waking the agent (a helper back, say) or a note to the model.
+    if (row.role === 'user' && !isYours(row)) {
+      items.push(...wakeItems(row, key, errands, rows[n + 1]?.role === 'assistant'))
+      continue
+    }
     if (row.role === 'user') {
-      const raw = row.content ?? ''
-      // A message sent mid-reply is stored wrapped in Hermes's steering markers.
+      const shown = typeof row.display_content === 'string' ? row.display_content : undefined
+      const raw = shown ?? row.content ?? ''
+      // A message sent mid-reply is stored wrapped in Hermes's steering markers (an older Hermes shows them).
       const { text, attachments } = parseUserMessage(
-        row.display_kind === 'steer' ? (STEER.exec(raw)?.[1] ?? raw) : raw,
+        row.display_kind === 'steer' && shown == null ? (STEER.exec(raw)?.[1] ?? raw) : raw,
       )
       if (text || attachments.length) {
         items.push({
@@ -265,7 +278,7 @@ async function loadHistory(id: string, profile: string, speaker?: Speaker) {
   return rowsToItems(await readRows(id, profile), speaker)
 }
 
-const rowOf = (i: ChatItem) => (i.kind === 'user' || i.kind === 'assistant' ? i.rowId : undefined)
+const rowOf = (i: ChatItem) => (i.kind === 'user' || i.kind === 'assistant' || i.kind === 'wake' ? i.rowId : undefined)
 
 /**
  * A turn this page didn't start: sent from another device, or an edit, retry
@@ -273,32 +286,56 @@ const rowOf = (i: ChatItem) => (i.kind === 'user' || i.kind === 'assistant' ? i.
  * Hermes saved it before the turn began, so take the chat as saved up to that
  * message and keep what has streamed in since. With `live` false the turn is
  * over (we were away for it) and the whole saved chat is taken. Messages
- * already on screen stay as they are. Says whether anything was missing.
+ * already on screen stay as they are; `before` is what was on screen when
+ * the turn began, so what has come in since stays too. Says whether anything
+ * was missing.
  */
-async function catchUp(id: string, live: boolean) {
+async function catchUp(id: string, live: boolean, before = new Set(getChat(id)?.items.map((i) => i.id))) {
   const chat = getChat(id)
   if (!chat?.ready) return false
-  const before = new Set(chat.items.map((i) => i.id))
   const shown = new Map(chat.items.flatMap((i) => (rowOf(i) != null ? [[rowOf(i)!, i] as const] : [])))
   const rows = await readRows(id, chat.profile).catch(() => [] as Row[])
-  // The turn's own message, hidden ones included. Rows after it are the turn's
-  // steps so far, which are already streaming in.
+  // The turn ended while we read: its end takes the whole saved chat instead.
+  if (live && !begunElsewhere.has(id)) return false
+  // The turn's own message (yours or Hermes's), hidden ones included. Rows
+  // after it are the turn's steps so far, which are already streaming in.
   const at = rows.findLastIndex((r) => r.role === 'user')
-  if (at < 0 || (rows[at].id ?? 0) <= Math.max(0, ...shown.keys())) return false
-  const earlier = rowsToItems(rows.slice(0, live ? at : rows.length), chat.speaker).map(
+  // Compared with what started a turn on screen: a reply this page saw can be saved after that message.
+  const opened = chat.items.flatMap((i) => (startsTurn(i) && rowOf(i) != null ? [rowOf(i)!] : []))
+  if (at < 0 || (rows[at].id ?? 0) <= Math.max(0, ...opened)) return false
+  const errands = errandsOf(rows)
+  const earlier = rowsToItems(rows.slice(0, live ? at : rows.length), chat.speaker, errands).map(
     (i) => shown.get(rowOf(i) ?? -1) ?? i,
   )
-  const prompt = live ? rowsToItems([rows[at]], chat.speaker) : []
-  patch(id, (c) => ({
-    items: [
+  const prompt = live ? rowsToItems([rows[at]], chat.speaker, errands) : []
+  patch(id, (c) => {
+    const items = [
       ...earlier,
       // Side questions and commands live only on this page.
       ...c.items.filter((i) => before.has(i.id) && isSide(i)),
       ...prompt,
       ...c.items.filter((i) => !before.has(i.id)),
-    ],
-  }))
+    ]
+    // A read that overlapped another brings in what that one already did: each item once.
+    const seen = new Set<string>()
+    const once = items.filter((i) => !seen.has(i.id) && seen.add(i.id))
+    // Helpers this page watched keep what it saw of them (what each said, how long it took).
+    return { items: withSeenHelpers(once, c.items) }
+  })
   return true
+}
+
+/**
+ * A turn begun elsewhere, brought in as it starts. Hermes saves a wake's
+ * message just after it starts the turn, so look again a few times, keeping
+ * what streams in meanwhile; the turn's end catches up on anything still missing.
+ */
+async function catchUpTurn(id: string) {
+  const before = new Set(getChat(id)?.items.map((i) => i.id))
+  for (const wait of [0, 250, 500, 1000, 2000]) {
+    if (wait) await new Promise((resolve) => setTimeout(resolve, wait))
+    if (!begunElsewhere.has(id) || (await catchUp(id, true, before))) return
+  }
 }
 
 // ── Opening and creating chats ──────────────────────────────────────────────
@@ -317,6 +354,8 @@ const opening = new Map<string, Promise<void>>()
 const viewing = new Set<string>()
 /** When each chat last started a turn here, so a resume answered from before it can't call it idle. */
 const asked = new Map<string, number>()
+/** Chats in a turn this page didn't start (sent elsewhere, or Hermes waking the agent). */
+const begunElsewhere = new Set<string>()
 
 /** Load a stored chat and attach to it so its live events reach us. */
 export function openChat(id: string, profile: string, speaker?: Speaker): Promise<void> {
@@ -882,7 +921,7 @@ export async function continueHere(id: string) {
     )
     const messages = (res.messages ?? res.data ?? []).flatMap((r) => {
       const content = r.role === 'user' ? parseUserMessage(r.content ?? '').text : (r.content ?? '').trim()
-      return (r.role === 'user' || r.role === 'assistant') && content && r.display_kind !== 'hidden'
+      return (isYours(r) || r.role === 'assistant') && content && r.display_kind !== 'hidden'
         ? [{ role: r.role, content }]
         : []
     })
@@ -1282,9 +1321,17 @@ function onEvent(ev: GatewayEvent) {
   switch (ev.type) {
     case 'message.start': {
       // Everything sent from here shows as busy first, so an idle chat means it came from elsewhere.
-      const elsewhere = !isBusy(getChat(id))
-      patch(id, (c) => ({ status: c.status === 'waiting' ? 'waiting' : 'thinking' }))
-      if (elsewhere) void catchUp(id, true)
+      const chat = getChat(id)
+      if (isBusy(chat)) return patch(id, (c) => ({ status: c.status === 'waiting' ? 'waiting' : 'thinking' }))
+      // Hermes can announce a turn twice; the first is already bringing it in.
+      if (chat?.starting) return
+      begunElsewhere.add(id)
+      patch(id, () => ({ starting: true }))
+      // Busy once what started it is in (or after a moment), so the last turn doesn't come alive first.
+      const caughtUp = catchUpTurn(id).catch(() => {})
+      void Promise.race([caughtUp, new Promise((resolve) => setTimeout(resolve, 1000))]).then(() =>
+        patch(id, (c) => ({ starting: false, status: begunElsewhere.has(id) && !isBusy(c) ? 'thinking' : c.status })),
+      )
       return
     }
 
@@ -1417,7 +1464,9 @@ function onEvent(ev: GatewayEvent) {
       const media = failed ? [] : toolMedia(String(payload.name ?? ''), payload.result)
       const name = String(payload.name ?? '')
       return patch(id, (c) => {
-        const items = c.items.flatMap((i): ChatItem[] => {
+        // Helpers sent off to work in the background stay live after this turn.
+        const sent = name === 'delegate_task' ? withErrand(c.items, payload.result, Date.now()) : c.items
+        const items = sent.flatMap((i): ChatItem[] => {
           if (i.kind === 'tool' && isIt(i))
             return [
               {
@@ -1444,7 +1493,7 @@ function onEvent(ev: GatewayEvent) {
       const persisted = payload.persisted_turn as { user_row_id?: number; final_assistant_row_id?: number } | undefined
       const reasoning = pendingReasoning.get(id)
       pendingReasoning.delete(id)
-      return patch(id, (c) => {
+      patch(id, (c) => {
         let items = closeThinking(c.items).map((i) =>
           i.kind === 'tool' && i.status === 'running' ? { ...i, status: 'done' as const, endedAt: Date.now() } : i,
         )
@@ -1464,7 +1513,7 @@ function onEvent(ev: GatewayEvent) {
           reasoning.trim() !== finalText &&
           !items.some((i) => i.kind === 'thinking' && i.text === reasoning)
         ) {
-          const at = items.findLastIndex((i) => i.kind === 'user') + 1
+          const at = items.findLastIndex(startsTurn) + 1
           const now = Date.now()
           items.splice(at, 0, {
             kind: 'thinking',
@@ -1488,17 +1537,23 @@ function onEvent(ev: GatewayEvent) {
         const final = persisted?.final_assistant_row_id
         const said = items.findLastIndex((i) => i.kind === 'assistant')
         const reply = items[said]
-        if (final != null && reply?.kind === 'assistant' && reply.rowId == null && said > items.findLastIndex((i) => i.kind === 'user'))
+        if (final != null && reply?.kind === 'assistant' && reply.rowId == null && said > items.findLastIndex(startsTurn))
           items = replaceAt(items, said, { ...reply, rowId: final })
-        // The message that started this reply is saved now: it can be edited.
+        // The message that started this reply is saved now: yours can be edited.
         const rowId = persisted?.user_row_id
-        const at = items.findLastIndex((i) => i.kind === 'user')
+        const at = items.findLastIndex(startsTurn)
         const asked = items[at]
-        if (rowId != null && asked?.kind === 'user' && asked.rowId == null) {
+        if (rowId != null && (asked?.kind === 'user' || asked?.kind === 'wake') && asked.rowId == null) {
           items = items.map((i, n) => (n === at ? { ...asked, rowId } : i))
         }
         return { items, status: status === 'error' ? 'error' : 'idle', turns: (c.turns ?? 0) + 1 }
       })
+      // Begun elsewhere, before its message was saved (Hermes saves a wake as its turn starts):
+      // now that it is, bring it in.
+      const saved = persisted?.user_row_id
+      if (begunElsewhere.delete(id) && saved != null && !getChat(id)?.items.some((i) => rowOf(i) === saved))
+        void catchUp(id, false)
+      return
     }
 
     case 'todo.updated': {
@@ -1613,7 +1668,7 @@ const isSide = (i: ChatItem) => i.kind === 'aside' || i.kind === 'command'
 
 /** This turn already shows the text: Hermes saved it before pausing (to ask you, say). */
 function saidSinceAsked(items: ChatItem[], text: string) {
-  const asked = items.findLastIndex((i) => i.kind === 'user')
+  const asked = items.findLastIndex(startsTurn)
   return items
     .slice(asked + 1)
     .some((i) => i.kind === 'assistant' && (text.startsWith(i.text) || i.text.startsWith(text)))

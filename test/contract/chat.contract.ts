@@ -4,6 +4,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { clearUnread, titleTaken, updateChat } from '@/state/chats'
+import { errandsOf, isYours, wakeItems, type SavedRow } from '@/features/chat/wake'
 import { api, connect, modelRequests, newChat, q, sleep, turn, whenIdle, type Socket } from './client'
 import { toolsTag } from './fake-model'
 
@@ -13,7 +14,7 @@ beforeAll(async () => {
 })
 afterAll(() => socket?.close())
 
-type Row = { id: number; role: string; content: string | null; timestamp: number; tool_calls?: unknown[]; tool_call_id?: string; tool_name?: string; display_kind?: string | null }
+type Row = { id: number; role: string; content: string | null; timestamp: number; tool_calls?: unknown[]; tool_call_id?: string; tool_name?: string; display_kind?: string | null; display_metadata?: unknown }
 
 /** A chat's saved messages, the way the app loads them (oldest first). */
 async function history(stored: string, agent = 'default') {
@@ -198,6 +199,56 @@ describe('a running turn', () => {
     await socket.event('message.delta', runtime)
     await expect(socket.request('session.steer', { session_id: runtime, text: 'Shorter please' })).resolves.toBeDefined()
     await socket.event('message.complete', runtime)
+  })
+})
+
+describe('a helper sent off', () => {
+  it('works in the background, and Hermes wakes the agent with a marked message when it’s back', async () => {
+    const { runtime, stored } = await newChat(socket)
+    // The goal comes back in the wake, so the woken reply streams slowly too.
+    const goal = 'Look it up [[slow: 100]] [[say: one two three four five six seven eight nine ten]]'
+    const done = await turn(socket, runtime, `Ask a helper [[tool: delegate_task {"goal":"${goal}"}]]`)
+    expect(done.payload).toMatchObject({ text: '[[tool done]]', status: 'complete' })
+
+    // The call comes back at once, saying what it sent off.
+    const call = socket.of(runtime).find((e) => e.type === 'tool.complete' && (e.payload as { name?: string }).name === 'delegate_task')!
+    const result = (call.payload as { result?: unknown }).result
+    const sent = (typeof result === 'string' ? JSON.parse(result) : result) as Record<string, unknown>
+    expect(sent).toMatchObject({ status: 'dispatched', delegation_id: expect.any(String), goals: [goal] })
+
+    // It keeps working after the turn, under the id the call gave it.
+    const back = await socket.until('the helper to finish', () =>
+      socket.of(runtime).find((e) => e.type === 'subagent.complete'),
+    )
+    expect(back.payload).toMatchObject({ delegation_id: sent.delegation_id, status: 'completed' })
+    if (Array.isArray(sent.subagent_ids)) expect(sent.subagent_ids).toContain((back.payload as { subagent_id?: string }).subagent_id)
+
+    // Then Hermes starts a turn of its own. Its message is saved a moment after
+    // the turn starts (chats.ts looks again for it), well before the turn ends.
+    await socket.until('the agent to be woken', () => socket.of(runtime).filter((e) => e.type === 'message.start').at(1))
+    let saved: Row | undefined
+    for (let i = 0; i < 100 && !saved; i++) {
+      saved = (await history(stored)).find((r) => r.display_kind === 'async_delegation_complete')
+      if (!saved) await sleep(20)
+    }
+    expect(saved).toBeDefined()
+    expect(socket.of(runtime).filter((e) => e.type === 'message.complete')).toHaveLength(1)
+    const answered = await socket.until('the woken turn to finish', () =>
+      socket.of(runtime).filter((e) => e.type === 'message.complete').at(1),
+    )
+    const rows = (await history(stored)) as (Row & SavedRow)[]
+    const wake = rows.find((r) => r.display_kind === 'async_delegation_complete')!
+    expect(wake).toMatchObject({
+      role: 'user',
+      display_metadata: { delegation_id: sent.delegation_id, task_count: 1, completed_count: 1, failed_count: 0, duration_seconds: expect.any(Number) },
+    })
+    expect(answered.payload).toMatchObject({ persisted_turn: { user_row_id: wake.id } })
+
+    // What Murmur makes of it: not your message, but the helper back, as the call named it.
+    expect(rows.filter((r) => r.role === 'user' && isYours(r)).map((r) => r.content)).toEqual([expect.stringMatching(/^Ask a helper/)])
+    const [item, helper] = wakeItems(wake, 'w', errandsOf(rows))
+    expect(item).toMatchObject({ kind: 'wake', reason: 'helpers', delegationId: sent.delegation_id, helpers: 1, failed: 0, rowId: wake.id })
+    expect(helper).toMatchObject({ kind: 'helper', goal, status: 'done', subagentId: (back.payload as { subagent_id?: string }).subagent_id })
   })
 })
 

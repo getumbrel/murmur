@@ -34,6 +34,7 @@ import { AsideCard, CommandCard } from './side-cards'
 import { ERROR_ACTION_LABEL, errorActionOf, type ErrorAction } from './errors'
 import { Plan } from './plan'
 import { Helpers } from './helpers'
+import { WakeLine } from './wake-line'
 import { ReactionBadge, ReactionPills, Tapback, useHoldToReact } from './reactions'
 
 type Of<K extends ChatItem['kind']> = Extract<ChatItem, { kind: K }>
@@ -46,7 +47,9 @@ type Block =
   | { kind: 'secret'; id: string; item: Of<'secret'> }
   | { kind: 'error'; id: string; item: Of<'error'> }
   | { kind: 'plan'; id: string; item: Of<'plan'> }
-  | { kind: 'helpers'; id: string; items: Of<'helper'>[] }
+  /** Helpers the agent sent off; `back`, when Hermes woke the agent with them. */
+  | { kind: 'helpers'; id: string; items: Of<'helper'>[]; back?: Of<'wake'> }
+  | { kind: 'wake'; id: string; item: Of<'wake'> }
 
 type Section = { id: string; speaker?: Speaker; blocks: Block[] }
 
@@ -55,7 +58,8 @@ type Row =
   | { kind: 'notice'; id: string; item: Of<'notice'> }
   | { kind: 'command'; id: string; item: Of<'command'> }
   | { kind: 'aside'; id: string; item: Of<'aside'> }
-  | { kind: 'turn'; id: string; sections: Section[] }
+  /** `woken`: Hermes started it, not you (a helper came back, say). */
+  | { kind: 'turn'; id: string; sections: Section[]; woken?: boolean }
 
 const DEFAULT_HUE = 278
 /** How the thread follows a growing reply. */
@@ -88,6 +92,19 @@ function toRows(items: ChatItem[], busy: boolean, live: Set<string>): Row[] {
       aside = []
       rows.push({ kind: item.kind, id: item.id, item } as Row)
       turn = null
+      prev = item.id
+      continue
+    }
+    if (item.kind === 'wake') {
+      // Hermes woke the agent: a turn of its own, opened by what came back.
+      rows.push(...aside)
+      aside = []
+      const block: Block =
+        item.reason === 'helpers'
+          ? { kind: 'helpers', id: item.id, items: [], back: item }
+          : { kind: 'wake', id: item.id, item }
+      turn = { kind: 'turn', id: `turn-${item.id}`, sections: [{ id: item.id, blocks: [block] }], woken: true }
+      rows.push(turn)
       prev = item.id
       continue
     }
@@ -334,7 +351,8 @@ export function Thread({
                               onApprove={stable.onApprove}
                               onAnswer={stable.onAnswer}
                               onSecret={handlers.onSecret ? stable.onSecret : undefined}
-                              onRetry={last && handlers.onRetry ? stable.onRetry : undefined}
+                              // Trying again asks your last message again: a turn Hermes started isn't one of those.
+                              onRetry={last && !row.woken && handlers.onRetry ? stable.onRetry : undefined}
                               onErrorAction={last && handlers.onErrorAction ? stable.onErrorAction : undefined}
                               onReact={handlers.onReact ? stable.onReact : undefined}
                               onStopHelper={handlers.onStopHelper ? stable.onStopHelper : undefined}
@@ -531,7 +549,10 @@ const sameTurn = (a: TurnProps, b: TurnProps) =>
         const y = sb.blocks[j]
         if (x.kind === 'work' || x.kind === 'helpers')
           return (
-            y.kind === x.kind && x.items.length === y.items.length && x.items.every((it, k) => it === y.items[k])
+            y.kind === x.kind &&
+            x.items.length === y.items.length &&
+            x.items.every((it, k) => it === y.items[k]) &&
+            (x.kind !== 'helpers' || (y.kind === 'helpers' && x.back === y.back))
           )
         return x.kind === y.kind && 'item' in y && x.item === y.item
       })
@@ -630,7 +651,18 @@ const Turn = memo(function Turn({
                 case 'plan':
                   return <Plan key={block.id} item={block.item} live={live} />
                 case 'helpers':
-                  return <Helpers key={block.id} items={block.items} hue={hue} live={live} onStop={onStopHelper} />
+                  return (
+                    <Helpers
+                      key={block.id}
+                      items={block.items}
+                      back={block.back}
+                      hue={hue}
+                      live={live}
+                      onStop={onStopHelper}
+                    />
+                  )
+                case 'wake':
+                  return <WakeLine key={block.id} item={block.item} hue={hue} seed={seed} />
                 case 'approval':
                   return <ApprovalCard key={block.id} item={block.item} hue={hue} seed={seed} onApprove={onApprove} />
                 case 'clarify':

@@ -1,6 +1,6 @@
 // Dev-only playground: Thread + Composer with fake data and simulated
 // streaming, so the chat can be designed and reviewed without Hermes.
-// Scenes: ?scene=solo | live | group | empty | media | cards | errors. Sending anything plays a reply.
+// Scenes: ?scene=solo | live | group | empty | media | cards | wakes | errors. Sending anything plays a reply.
 // (media shows files from the connected Hermes: /opt/data/murmur-media-test.)
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
@@ -17,7 +17,7 @@ const ATLAS: Speaker = { id: 'atlas', name: 'Atlas', hue: 278 }
 const JUNIPER: Speaker = { id: 'juniper', name: 'Juniper', hue: 160 }
 const WREN: Speaker = { id: 'wren', name: 'Wren', hue: 28 }
 
-type Scene = 'solo' | 'live' | 'group' | 'empty' | 'media' | 'cards' | 'secrets' | 'errors'
+type Scene = 'solo' | 'live' | 'group' | 'empty' | 'media' | 'cards' | 'secrets' | 'wakes' | 'errors'
 
 let n = 0
 const uid = (p: string) => `${p}-${++n}`
@@ -143,6 +143,73 @@ function soloHistory(pending: boolean): ChatItem[] {
     )
   }
   return items
+}
+
+const INBOX = `Here’s the newest 50, sorted.
+
+**Keep in your inbox (4)**
+- **Stripe:** payout for October failed. Needs a new bank detail by Friday.
+- **Lena (Acme):** asks if the pilot can start Nov 3. Waiting on you.
+- **Two support threads** where a customer is stuck on setup.
+
+**Archive (19):** receipts, shipping updates and calendar replies.
+
+**Safe to trash (27):** newsletters, promos and Intercom copies of tickets you’ve already answered.
+
+Nothing has changed in Gmail yet. Say the word and I’ll archive and trash these.`
+
+/** Hermes waking the agent on its own: helpers back from the background, a command done, a reply picked up. */
+function wakesHistory(): ChatItem[] {
+  const t = T0
+  const errand = 'deleg_d390b76f'
+  return [
+    {
+      kind: 'user',
+      id: uid('u'),
+      text: 'Lots of junk in my Gmail. Go through it carefully, newest first, 50 at a time: tell me what matters and what’s safe to trash.',
+      at: t,
+    },
+    tool('mcp__gmail__search', { query: 'in:inbox newer_than:30d' }, t + 2000, 2400),
+    tool('read_file', { path: '/opt/data/email_triage/selected.json' }, t + 5000, 300),
+    tool('execute_code', {}, t + 6000, 4200),
+    tool('delegate_task', { goal: 'Read-only review of the support and feedback emails in this batch' }, t + 11_000, 900),
+    {
+      kind: 'assistant',
+      id: uid('a'),
+      text: 'The main review is done. A helper is checking the support and feedback emails, so nothing important hides in those notifications. Nothing in Gmail has changed.',
+      streaming: false,
+      at: t + 13_000,
+    },
+    { kind: 'wake', id: 'wake-1', reason: 'helpers', at: t + 123_000, delegationId: errand, helpers: 1, failed: 0 },
+    {
+      kind: 'helper',
+      id: 'wake-1-helper-0',
+      subagentId: 'sa-7f3c',
+      goal: 'Read-only review of the support and feedback emails in this batch',
+      status: 'done',
+      tools: 9,
+      startedAt: t + 13_000,
+      endedAt: t + 123_000,
+      summary: 'Two customers are stuck on setup; the rest are copies of answered tickets.',
+      delegationId: errand,
+    },
+    tool('read_file', { path: '/opt/data/email_triage/review.json' }, t + 125_000, 400),
+    { kind: 'assistant', id: uid('a'), text: INBOX, streaming: false, at: t + 131_000 },
+    { kind: 'user', id: uid('u'), text: 'Great. Clear out the old build caches in the background too.', at: t + 200_000 },
+    tool('terminal', { command: 'rm -rf ~/build-cache/*' }, t + 201_000, 800),
+    {
+      kind: 'assistant',
+      id: uid('a'),
+      text: 'Started. It’s a big folder, so I’ll let you know when it’s done.',
+      streaming: false,
+      at: t + 203_000,
+    },
+    { kind: 'wake', id: 'wake-2', reason: 'command', at: t + 290_000 },
+    { kind: 'assistant', id: uid('a'), text: 'The build caches are gone. That freed **14.2 GB**.', streaming: false, at: t + 293_000 },
+    { kind: 'wake', id: 'wake-3', reason: 'resume', at: t + 400_000 },
+    tool('mcp__gmail__modify', {}, t + 401_000, 1800),
+    { kind: 'assistant', id: uid('a'), text: 'Sorry, I restarted partway through archiving. All 19 are archived now.', streaming: false, at: t + 404_000 },
+  ]
 }
 
 function groupHistory(): ChatItem[] {
@@ -300,7 +367,9 @@ function Chat({ scene }: { scene: Scene }) {
               ? cardsHistory()
               : scene === 'secrets'
                 ? secretsHistory()
-                : [],
+                : scene === 'wakes'
+                  ? wakesHistory()
+                  : [],
   )
   const inset = useKeyboardInset()
 
@@ -565,6 +634,7 @@ const SCENES: { value: Scene; label: string }[] = [
   { value: 'empty', label: 'Empty' },
   { value: 'cards', label: 'Cards' },
   { value: 'secrets', label: 'Logins' },
+  { value: 'wakes', label: 'Wakes' },
   { value: 'errors', label: 'Errors' },
 ]
 

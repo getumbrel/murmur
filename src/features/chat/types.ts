@@ -126,6 +126,26 @@ export type ChatItem =
     }
   | { kind: 'error'; id: string; message: string; retryable?: boolean }
   | { kind: 'notice'; id: string; text: string }
+  /**
+   * Hermes woke the agent itself: helpers it sent off are back, a command it
+   * left running has finished, or a reply a restart cut off picks up again.
+   * It starts a turn the way your message would, but it isn't yours.
+   */
+  | {
+      kind: 'wake'
+      id: string
+      reason: WakeReason
+      at: number
+      /** Hermes's row id for it, once it's saved. */
+      rowId?: number
+      /** The helpers' errand (reason "helpers"), as delegate_task named it. */
+      delegationId?: string
+      /** How many helpers came back, and how many of those didn't finish. */
+      helpers?: number
+      failed?: number
+      /** How long they were away (ms), as Hermes timed them. */
+      took?: number
+    }
   /** A slash command you ran, and what it printed. */
   | { kind: 'command'; id: string; command: string; output?: string; status: 'running' | 'done' | 'error' }
   /** A side question (/btw): answered off to the side, without interrupting the conversation. */
@@ -146,7 +166,13 @@ export type ChatItem =
       endedAt?: number
       /** What it came back with. */
       summary?: string
+      /** The errand it's part of (one delegate_task call), which its return names. */
+      delegationId?: string
+      /** Still working after the turn that sent it ended: Hermes wakes the agent when it's back. */
+      background?: boolean
     }
+
+export type WakeReason = 'helpers' | 'command' | 'resume' | 'update'
 
 /** A tapback: one per author per message, the way Messages does it. */
 export type Reaction = { emoji: string; author: 'user' | 'agent' }

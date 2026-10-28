@@ -7,6 +7,7 @@ import {
   toggled,
   withHelper,
   withPlan,
+  withErrand,
   withPreview,
   withReactions,
 } from './live'
@@ -120,6 +121,61 @@ describe('helpers', () => {
     const items = withHelper([], 'subagent.start', start, 0)
     expect(settleHelpers(items, false, 5)[0]).toMatchObject({ status: 'done', endedAt: 5 })
     expect(settleHelpers(items, true, 5)[0]).toMatchObject({ status: 'stopped' })
+  })
+})
+
+describe('helpers sent off in the background', () => {
+  // As delegate_task answers a background call in Hermes 0.22.5.
+  const sent = {
+    status: 'dispatched',
+    mode: 'background',
+    delegation_id: 'deleg_1',
+    goals: ['Compare flight prices', 'Find a hotel'],
+    subagent_ids: ['sa-1', 'sa-2'],
+  }
+  const start = { subagent_id: 'sa-1', goal: 'Compare flight prices', delegation_id: 'deleg_1', task_index: 0 }
+
+  it('all get a card when the call returns, the ones already heard from included', () => {
+    let items = withHelper([user('u1')], 'subagent.start', start, 1000)
+    items = withErrand(items, JSON.stringify(sent), 2000)
+    expect(items.slice(1)).toMatchObject([
+      { subagentId: 'sa-1', status: 'running', startedAt: 1000, background: true, delegationId: 'deleg_1' },
+      { subagentId: 'sa-2', goal: 'Find a hotel', status: 'running', startedAt: 2000, background: true },
+    ])
+    // Told twice, still one card each.
+    expect(withErrand(items, sent, 3000)).toHaveLength(3)
+  })
+
+  it('are keyed by their place when the call names no one', () => {
+    const items = withErrand([user('u1')], { ...sent, subagent_ids: undefined }, 0)
+    expect(items.map((i) => i.kind === 'helper' && i.subagentId)).toEqual([false, 'deleg_1-0', 'deleg_1-1'])
+  })
+
+  it('leave anything else delegate_task says alone', () => {
+    const items = [user('u1')]
+    expect(withErrand(items, { results: [{ status: 'completed' }] }, 0)).toBe(items)
+    expect(withErrand(items, 'not json', 0)).toBe(items)
+  })
+
+  it('keep working after the turn ends, and finish in their own card later', () => {
+    let items = withErrand(withHelper([user('u1')], 'subagent.start', start, 1000), sent, 2000)
+    items = settleHelpers([...items, reply('a1')], false, 5000)
+    expect(items.filter((i) => i.kind === 'helper').map((i) => i.kind === 'helper' && i.status)).toEqual([
+      'running',
+      'running',
+    ])
+    // You've said something since; the helper's news still goes to its card.
+    items = [...items, user('u2')]
+    items = withHelper(items, 'subagent.complete', { ...start, status: 'completed', summary: 'TAP.' }, 9000)
+    expect(items[1]).toMatchObject({ status: 'done', summary: 'TAP.', endedAt: 9000 })
+    expect(items.filter((i) => i.kind === 'helper')).toHaveLength(2)
+  })
+
+  it('are told apart from an earlier turn’s helpers with the same key', () => {
+    // A foreground helper from before: settled, so the next one with its key starts afresh.
+    const earlier = settleHelpers(withHelper([user('u1')], 'subagent.start', start, 0), false, 1)
+    const items = withHelper([...earlier, reply('a1'), user('u2')], 'subagent.start', start, 2)
+    expect(items.filter((i) => i.kind === 'helper')).toHaveLength(2)
   })
 })
 

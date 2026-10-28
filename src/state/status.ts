@@ -263,12 +263,15 @@ export function useChatActivities(): Readonly<Record<string, ChatActivity>> {
   return useMemo(() => mergeActivities(local, remote), [local, remote])
 }
 
-/** What the chats on this page are doing; one attached here and at rest says so too. */
-export function localActivities(chats: Record<string, Pick<Chat, 'id' | 'status' | 'runtimeId'>>) {
+/**
+ * What the chats on this page are doing; one attached here and at rest says so too. A turn
+ * Hermes started elsewhere counts from its start, before this page shows it.
+ */
+export function localActivities(chats: Record<string, Pick<Chat, 'id' | 'status' | 'runtimeId' | 'starting'>>) {
   const out: Record<string, ChatActivity | 'idle'> = {}
   for (const c of Object.values(chats)) {
     if (c.status === 'waiting') out[c.id] = 'waiting'
-    else if (BUSY.has(c.status)) out[c.id] = 'working'
+    else if (BUSY.has(c.status) || c.starting) out[c.id] = 'working'
     else if (c.runtimeId) out[c.id] = 'idle'
   }
   return out

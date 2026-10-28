@@ -17,8 +17,10 @@ describe('chats mid-turn', () => {
         d: { id: 'd', status: 'idle', runtimeId: 'r4' },
         e: { id: 'e', status: 'idle' },
         f: { id: 'f', status: 'error', runtimeId: 'r6' },
+        // Hermes woke its agent a moment ago; the page shows the turn once its message is read in.
+        g: { id: 'g', status: 'idle', runtimeId: 'r7', starting: true },
       }),
-    ).toEqual({ a: 'working', b: 'working', c: 'waiting', d: 'idle', f: 'idle' })
+    ).toEqual({ a: 'working', b: 'working', c: 'waiting', d: 'idle', f: 'idle', g: 'working' })
   })
 
   it('takes a chat attached here at its word over Hermes’s polled list', () => {
