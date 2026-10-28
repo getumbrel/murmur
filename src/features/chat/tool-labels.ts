@@ -240,11 +240,57 @@ export function resultLabel(name: string, result: unknown): string | undefined {
   return typeof read?.subject === 'string' && read.subject.trim() ? readingLabel(read.subject) : undefined
 }
 
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+const SPAN: Record<string, [string, string]> = { d: ['day', 'days'], w: ['week', 'weeks'], m: ['month', 'months'], y: ['year', 'years'] }
+const IS: Record<string, string> = { unread: 'unread', read: 'read', starred: 'starred', flagged: 'starred', important: 'important' }
+
+/** "2026/10/01" → "1 Oct" (with the year when it isn't this one), or null. */
+function day(text: string) {
+  const m = /^(\d{4})[/-](\d{1,2})(?:[/-](\d{1,2}))?$/.exec(text)
+  if (!m || Number(m[2]) < 1 || Number(m[2]) > 12) return null
+  const month = MONTHS[Number(m[2]) - 1]
+  const when = m[3] ? `${Number(m[3])} ${month}` : month
+  return Number(m[1]) === new Date().getFullYear() ? when : `${when} ${m[1]}`
+}
+
+/**
+ * An email search in words: "from:priya is:unread newer_than:7d flight" →
+ * "flight, unread, from priya, last 7 days". The agent writes Gmail's search
+ * syntax; the person reads what it looked for. Anything it doesn't know stays.
+ */
+export function searchWords(query: string) {
+  const words: string[] = []
+  const filters: string[] = []
+  for (const m of query.matchAll(/(-?)(?:(\w+):)?(?:"([^"]*)"|(\S+))/g)) {
+    const [, not, op = '', quoted, bare] = m
+    const value = quoted ?? bare ?? ''
+    if (!value) continue
+    const key = op.toLowerCase()
+    const span = /^(\d+)([dwmy])$/i.exec(value)
+    const said =
+      key === 'from' ? `from ${value}`
+      : key === 'to' ? `to ${value}`
+      : key === 'cc' ? `cc ${value}`
+      : key === 'subject' ? `about “${value}”`
+      : key === 'is' && IS[value.toLowerCase()] ? IS[value.toLowerCase()]
+      : key === 'has' && /^attachments?$/i.test(value) ? 'with attachments'
+      : (key === 'in' || key === 'label') ? `in ${value.charAt(0).toUpperCase()}${value.slice(1)}`
+      : (key === 'newer_than' || key === 'newer') && span ? `last ${span[1] === '1' ? SPAN[span[2].toLowerCase()][0] : `${span[1]} ${SPAN[span[2].toLowerCase()][1]}`}`
+      : (key === 'older_than' || key === 'older') && span ? `older than ${span[1]} ${SPAN[span[2].toLowerCase()][Number(span[1]) === 1 ? 0 : 1]}`
+      : (key === 'after' || key === 'since') && day(value) ? `since ${day(value)}`
+      : (key === 'before' || key === 'until') && day(value) ? `before ${day(value)}`
+      : null
+    if (said) filters.push(not ? `not ${said}` : said)
+    else words.push(`${not}${key ? `${op}:` : ''}${quoted !== undefined ? `“${value}”` : value}`)
+  }
+  return [words.join(' '), ...filters].filter(Boolean).join(', ')
+}
+
 function mailLabel(name: string, a: Args): ToolLabel | undefined {
   switch (name) {
     case 'email_search': {
       const q = str(a.query)
-      return q ? { label: 'Searching your email', category: 'mail', detail: clip(q) } : { label: 'Checking your inbox', category: 'mail' }
+      return q ? { label: 'Searching your email', category: 'mail', detail: clip(searchWords(q) || q) } : { label: 'Checking your inbox', category: 'mail' }
     }
     case 'email_read':
       return { label: readingLabel(), category: 'mail' }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { didSummary, foundSubjects, pastLabel, peopleOf, resultLabel, toolLabel } from './tool-labels'
+import { didSummary, foundSubjects, pastLabel, peopleOf, resultLabel, searchWords, toolLabel } from './tool-labels'
 
 describe('tools from connected servers', () => {
   it('read as plain steps', () => {
@@ -37,10 +37,23 @@ describe('tools Hermes renamed', () => {
 // carries them (Hermes unwraps tool_call for a plugin's tool), and wrapped the
 // way the transcript stores them.
 describe('email', () => {
+  it('says what a search looked for in words, not Gmail’s syntax', () => {
+    const year = new Date().getFullYear()
+    expect(searchWords('newer_than:2d')).toBe('last 2 days')
+    expect(searchWords('newer_than:1w')).toBe('last week')
+    expect(searchWords('from:priya@example.org is:unread offsite')).toBe('offsite, from priya@example.org, unread')
+    expect(searchWords('subject:"boarding pass" has:attachment')).toBe('about “boarding pass”, with attachments')
+    expect(searchWords(`after:${year}/10/01 before:${year}/10/31`)).toBe('since 1 Oct, before 31 Oct')
+    expect(searchWords('after:2025/3/9')).toBe('since 9 Mar 2025')
+    expect(searchWords('-is:read in:sent "exact phrase"')).toBe('“exact phrase”, not read, in Sent')
+    // What it doesn't know stays as written.
+    expect(searchWords('category:promotions larger:5M')).toBe('category:promotions larger:5M')
+  })
+
   const via = (name: string, args: Record<string, unknown>) => ({ calls: [{ name, arguments: args }] })
 
   it('reads as what the agent is doing with your mail', () => {
-    expect(toolLabel('email_search', { query: 'from:sam flight' })).toEqual({ label: 'Searching your email', category: 'mail', detail: 'from:sam flight' })
+    expect(toolLabel('email_search', { query: 'from:sam flight' })).toEqual({ label: 'Searching your email', category: 'mail', detail: 'flight, from sam' })
     expect(toolLabel('email_search', {})).toEqual({ label: 'Checking your inbox', category: 'mail' })
     expect(toolLabel('email_read', { id: 'INBOX:4' })).toEqual({ label: 'Reading an email', category: 'mail' })
     expect(toolLabel('email_draft', { to: ['Sam Lee <sam@example.org>'], subject: 'Friday', body: 'Hi' })).toEqual({

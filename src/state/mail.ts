@@ -415,20 +415,28 @@ export function useMailHealth(profile: string, enabled = true) {
 
 // ── Words ───────────────────────────────────────────────────────────────────
 
-/** What went wrong, in a sentence for the person. */
-export function mailErrorText(provider: MailProviderId, kind: MailFailureKind, where: MailFailureWhere | null = null) {
+/**
+ * What went wrong, in a sentence for the person. `change`: only a new password
+ * was given (the address and servers are the saved ones).
+ */
+export function mailErrorText(
+  provider: MailProviderId,
+  kind: MailFailureKind,
+  where: MailFailureWhere | null = null,
+  { change = false }: { change?: boolean } = {},
+) {
   const p = MAIL_PROVIDERS[provider]
   const known = provider !== 'other'
   switch (kind) {
     case 'incomplete':
+      if (change) return known ? 'Paste the new app password.' : 'Type the new password.'
       return known ? 'Add your address and app password.' : 'Add your address, password and both servers.'
     case 'app_password':
       return `${p.name} wants an app password here, not your usual password.`
     case 'wrong_password':
       if (known) return `${p.name} didn’t accept that password. Check it’s an app password, not your usual one.`
-      return where === 'outgoing'
-        ? 'Mail came in, but sending didn’t sign in. Check the outgoing server’s settings.'
-        : 'That address and password didn’t sign in. Check them and try again.'
+      if (where === 'outgoing') return 'Mail came in, but sending didn’t sign in. Check the outgoing server’s settings.'
+      return change ? 'That password didn’t sign in. Check it and try again.' : 'That address and password didn’t sign in. Check them and try again.'
     case 'unreachable':
       if (known) return `Couldn’t reach ${p.name}. Check your connection and try again.`
       return where === 'outgoing'
@@ -630,9 +638,10 @@ export async function changeMailPassword(qc: QueryClient, profile: string, passw
   const status = await fetchMailStatus(profile)
   if (!status?.account) throw new MailError('This agent has no email account yet.', 'incomplete')
   const clean = cleanAppPassword(status.account.provider, password)
-  if (!clean) throw new MailError(mailErrorText(status.account.provider, 'incomplete'), 'incomplete')
+  if (!clean) throw new MailError(mailErrorText(status.account.provider, 'incomplete', null, { change: true }), 'incomplete')
   const check = await checkMail(profile, { password: clean })
-  if (!check.ok) throw new MailError(mailErrorText(status.account.provider, check.kind, check.where), check.kind, check.where)
+  if (!check.ok)
+    throw new MailError(mailErrorText(status.account.provider, check.kind, check.where, { change: true }), check.kind, check.where)
   try {
     await putEnv(profile, `${ENV}PASSWORD`, clean)
   } catch {

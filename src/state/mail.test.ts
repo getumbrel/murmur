@@ -230,10 +230,16 @@ describe('checking', () => {
     expect(mailErrorText('yahoo', 'app_password')).toBe('Yahoo Mail wants an app password here, not your usual password.')
     expect(mailErrorText('other', 'unreachable', 'outgoing')).toBe('Couldn’t reach the outgoing server. Check its name and port.')
     expect(mailErrorText('other', 'wrong_password', 'outgoing')).toMatch(/^Mail came in, but sending didn’t sign in/)
+    // A new password for a saved account: the address isn't in question.
+    expect(mailErrorText('other', 'wrong_password', 'incoming')).toBe('That address and password didn’t sign in. Check them and try again.')
+    expect(mailErrorText('other', 'wrong_password', 'incoming', { change: true })).toBe('That password didn’t sign in. Check it and try again.')
+    expect(mailErrorText('fastmail', 'incomplete', null, { change: true })).toBe('Paste the new app password.')
     // Never the words Murmur keeps out of sight.
     for (const id of MAIL_PROVIDER_ORDER)
       for (const kind of ['incomplete', 'wrong_password', 'app_password', 'unreachable', 'tls', 'unknown'] as const)
-        for (const where of ['incoming', 'outgoing', null] as const) expect(mailErrorText(id, kind, where)).not.toMatch(/IMAP|SMTP|token|plugin|provider|gateway/i)
+        for (const where of ['incoming', 'outgoing', null] as const)
+          for (const change of [false, true])
+            expect(mailErrorText(id, kind, where, { change })).not.toMatch(/IMAP|SMTP|token|plugin|provider|gateway/i)
   })
 })
 
