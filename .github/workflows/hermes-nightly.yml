@@ -3,6 +3,10 @@ name: Hermes nightly
 # The contract suite (test/contract) against Hermes's newest release, so a
 # change that would break Murmur shows up before the pinned Hermes is bumped.
 # Run it by hand to try any image first, such as an Umbrel build to pin next.
+#
+# Hermes's own image has no murmur-mail (email for agents, which Umbrel's image
+# bundles), so the one in the Umbrel image Murmur pins is put into it: the email
+# tests then check that plugin against Hermes's next release too.
 on:
   schedule:
     - cron: '17 4 * * *'
@@ -11,6 +15,9 @@ on:
       image:
         description: Hermes image to test
         default: nousresearch/hermes-agent:latest
+      mail_plugin:
+        description: murmur-mail to put into it ("pinned" for the pinned Umbrel image's; empty for the image's own)
+        default: pinned
 
 permissions:
   contents: read
@@ -20,6 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       HERMES_IMAGE: ${{ inputs.image || 'nousresearch/hermes-agent:latest' }}
+      MURMUR_MAIL_PLUGIN: ${{ github.event_name == 'schedule' && 'pinned' || inputs.mail_plugin }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0

@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { TestProject } from 'vitest/node'
 import { MODELS, startFakeModel } from './fake-model'
-import { startHermes, startMurmur } from './harness'
+import { MAIL_PLUGIN, startHermes, startMurmur } from './harness'
 
 declare module 'vitest' {
   export interface ProvidedContext {
@@ -28,7 +28,7 @@ export default async function setup(project: TestProject) {
     await model.close()
     throw error
   })
-  console.log(`Contract suite: Hermes ${hermes.version} (${hermes.image})`)
+  console.log(`Contract suite: Hermes ${hermes.version} (${hermes.image})${MAIL_PLUGIN ? `, with murmur-mail from ${MAIL_PLUGIN}` : ''}`)
   const dataDir = mkdtempSync(join(tmpdir(), 'murmur-contract-'))
   const murmur = await startMurmur(hermes.url, dataDir).catch(async (error) => {
     await Promise.all([hermes.stop(), model.close()])

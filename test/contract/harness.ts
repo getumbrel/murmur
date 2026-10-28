@@ -2,8 +2,10 @@
 // Murmur ships its built-in one, and Murmur's own server signed in to it.
 
 import { execFile, spawn, type ChildProcess } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { createServer } from 'node:net'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 
@@ -14,8 +16,8 @@ export const HERMES_USERNAME = 'murmur'
 export const HERMES_PASSWORD = 'contract-test-password'
 
 /** The Hermes Murmur ships (the umbrelOS package's), unless HERMES_IMAGE names another. */
-export function hermesImage() {
-  if (process.env.HERMES_IMAGE) return process.env.HERMES_IMAGE
+export function hermesImage({ pinned = false } = {}) {
+  if (process.env.HERMES_IMAGE && !pinned) return process.env.HERMES_IMAGE
   const compose = readFileSync(`${root}/umbrel/murmur/docker-compose.yml`, 'utf8')
   const image = compose.match(/^ {2}hermes:\n(?: {4}.*\n)*? {4}image: *(\S+)/m)?.[1]
   if (!image) throw new Error('No hermes image in umbrel/murmur/docker-compose.yml')
@@ -49,6 +51,34 @@ async function until<T>(what: string, timeoutMs: number, check: () => Promise<T 
   throw new Error(`Timed out waiting for ${what}${last ? ` (${String(last)})` : ''}`)
 }
 
+/**
+ * The murmur-mail plugin to put into the Hermes under test, for an image that
+ * doesn't bundle it (Hermes's own releases, in the nightly run) or to try a
+ * working copy without building an image. MURMUR_MAIL_PLUGIN is the plugin's
+ * folder (umbrel-context/plugins/murmur-mail in getumbrel/hermes-agent-umbrel),
+ * or `pinned` for the one in the Umbrel image Murmur pins. Unset: the image's own.
+ */
+export const MAIL_PLUGIN = process.env.MURMUR_MAIL_PLUGIN?.trim() || ''
+
+async function mailPlugin(): Promise<{ dir: string; done: () => void } | null> {
+  if (!MAIL_PLUGIN) return null
+  if (MAIL_PLUGIN !== 'pinned') return { dir: resolve(MAIL_PLUGIN), done: () => {} }
+  const pinned = hermesImage({ pinned: true })
+  const dir = mkdtempSync(join(tmpdir(), 'murmur-mail-plugin-'))
+  const holder = `murmur-contract-plugin-${process.pid}`
+  try {
+    await run('docker', ['rm', '-f', holder]).catch(() => {})
+    await run('docker', ['create', '--name', holder, pinned], { maxBuffer: 1 << 20 })
+    await run('docker', ['cp', `${holder}:/opt/hermes/plugins/murmur-mail/.`, dir])
+  } catch (error) {
+    rmSync(dir, { recursive: true, force: true })
+    throw new Error(`No murmur-mail plugin in the pinned Hermes image (${pinned}) to test with: ${String(error)}`)
+  } finally {
+    await run('docker', ['rm', '-f', holder]).catch(() => {})
+  }
+  return { dir, done: () => rmSync(dir, { recursive: true, force: true }) }
+}
+
 export type HermesContainer = { name: string; image: string; url: string; version: string; logs: () => Promise<string>; stop: () => Promise<void> }
 
 /**
@@ -60,8 +90,9 @@ export async function startHermes(image = hermesImage()): Promise<HermesContaine
   const name = `murmur-contract-${process.pid}`
   const port = await freePort()
   await run('docker', ['rm', '-f', name]).catch(() => {})
+  const plugin = await mailPlugin()
   await run('docker', [
-    'run', '-d', '--name', name,
+    plugin ? 'create' : 'run', ...(plugin ? [] : ['-d']), '--name', name,
     '-p', `127.0.0.1:${port}:9119`,
     // So Hermes can reach the fake model on this machine.
     '--add-host', 'host.docker.internal:host-gateway',
@@ -74,6 +105,12 @@ export async function startHermes(image = hermesImage()): Promise<HermesContaine
     '-e', 'HERMES_UMBREL_CONTEXT=0',
     image, 'gateway', 'run',
   ], { maxBuffer: 1 << 20 })
+  if (plugin) {
+    // Where Umbrel's image puts it: among Hermes's bundled plugins.
+    await run('docker', ['cp', `${plugin.dir}/.`, `${name}:/opt/hermes/plugins/murmur-mail`])
+    plugin.done()
+    await run('docker', ['start', name])
+  }
 
   const url = `http://127.0.0.1:${port}`
   // Hermes logs to both streams.

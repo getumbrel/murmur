@@ -137,8 +137,13 @@ describe('around a turn', () => {
     const set = await socket.request('config.set', { session_id: runtime, key: 'model', value: `murmur-fake-large --provider ${provider} --session` })
     expect(set).toMatchObject({ value: 'murmur-fake-large', confirm_required: false })
     await socket.request('config.set', { session_id: runtime, key: 'reasoning', value: 'high' })
-    await turn(socket, runtime, 'Which model? [[say: Large]]')
-    expect((await modelRequests()).filter((r) => r.body.tools?.length).at(-1)?.body.model).toBe('murmur-fake-large')
+    const ask = `Which model? ${runtime} [[say: Large]]`
+    await turn(socket, runtime, ask)
+    // This chat's own request: Hermes may ask the model about other chats in the background meanwhile.
+    const mine = (await modelRequests()).filter(
+      (r) => r.body.tools?.length && JSON.stringify(r.body.messages ?? []).includes(ask),
+    )
+    expect(mine.at(-1)?.body.model).toBe('murmur-fake-large')
     expect((await api.get('/api/model/info')).model).toBe('murmur-fake-small')
   })
 

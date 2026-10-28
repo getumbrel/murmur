@@ -21,6 +21,7 @@ import {
   checkMail,
   connectMail,
   disconnectMail,
+  ensureMailPlugin,
   fetchMailStatus,
   MAIL_ENV_KEYS,
   MailError,
@@ -33,6 +34,7 @@ import {
 import { agentName, api, connect, MURMUR, modelRequests, newChat, q, sleep, turn, type Socket } from './client'
 import { toolsTag } from './fake-model'
 import { MAIL_HOST, MAILBOXES, PORTS, startGreenMail, type GreenMail } from './greenmail'
+import { MAIL_PLUGIN } from './harness'
 
 const run = promisify(execFile)
 const hermes = inject('hermes')
@@ -61,10 +63,14 @@ beforeAll(async () => {
     throw new Error(
       `The Hermes image under test (${hermes.image}) has no murmur-mail plugin, so Murmur can't offer email. ` +
         'Pin a getumbrel/hermes-agent-umbrel release that bundles murmur-mail in umbrel/murmur/docker-compose.yml, ' +
-        'or test a local build: HERMES_IMAGE=murmur-local/hermes-agent-umbrel:v0.22.5-mail npm run test:contract',
+        'test a local build (HERMES_IMAGE=murmur-local/hermes-agent-umbrel:v0.22.5-mail npm run test:contract), ' +
+        'or put the plugin into this image: MURMUR_MAIL_PLUGIN=pinned (the pinned image’s) or MURMUR_MAIL_PLUGIN=<its folder>.',
     )
   mail = await startGreenMail(hermes.container)
   startGateway()
+  // Put into a Hermes of Nous's own (the nightly run), it has no Umbrel start-up to switch it on:
+  // Murmur switches it on itself, as it does for an agent made since Hermes started.
+  if (MAIL_PLUGIN) await ensureMailPlugin('default')
   // Nothing is answered for the tests: an approval waits until a test answers it.
   socket = await connect()
 }, 180_000)
