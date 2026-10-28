@@ -71,6 +71,11 @@ if (typeof window !== 'undefined') {
     seen = showing = true
     write(SEEN)
   }
+  // Safari fetches the Home Screen icon on its own, and over a certificate the
+  // phone doesn't trust (an Umbrel's, usually) that fails even after "visit
+  // this website", leaving a grey letter. The page's own requests get
+  // through, so it hands Safari the picture itself.
+  if (ios && !umbrelApp && !standalone()) void inlineIcon()
   // The first reply that comes back in full, anywhere.
   if (!chatted) {
     const stop = useChats.subscribe((s) => {
@@ -80,6 +85,24 @@ if (typeof window !== 'undefined') {
       stop()
       notify()
     })
+  }
+}
+
+async function inlineIcon() {
+  const link = document.querySelector<HTMLLinkElement>('link[rel="apple-touch-icon"]')
+  if (!link) return
+  try {
+    const res = await fetch(link.href)
+    const picture = await res.blob()
+    if (!res.ok || !picture.type.startsWith('image/')) return
+    link.href = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(reader.result as string)
+      reader.onerror = () => reject(reader.error)
+      reader.readAsDataURL(picture)
+    })
+  } catch {
+    // Safari fetches the address itself, as it would have anyway.
   }
 }
 
