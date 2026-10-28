@@ -119,6 +119,7 @@ export function Roster({ density, selectedId, openChatId, onEdit, onDelete, onRe
                 density={density}
                 selected={entry.key === selectedId}
                 openChatId={entry.key === selectedId ? openChatId : undefined}
+                alone={entries.length === 1}
                 last={i === entries.length - 1}
                 fresh={freshArrival(entry.key)}
                 onEdit={() => onEdit(entry.agent)}
@@ -210,11 +211,12 @@ function AgentRow({
   density,
   selected,
   openChatId,
+  alone,
   last,
   fresh,
   onEdit,
   onDelete,
-}: Shared & { agent: Agent; openChatId?: string; onEdit: () => void; onDelete?: () => void }) {
+}: Shared & { agent: Agent; openChatId?: string; alone?: boolean; onEdit: () => void; onDelete?: () => void }) {
   const status = useAgentStatus(agent.id)
   const [menu, setMenu] = useState(false)
   const press = useLongPress(() => setMenu(true))
@@ -291,7 +293,9 @@ function AgentRow({
             last={last}
             newChat={`/chat/${agent.id}/new`}
           />
-          {!roomy && <NestedChats id={chatsId} agent={agent} open={expanded} openChatId={openChatId} />}
+          {!roomy && (
+            <NestedChats id={chatsId} agent={agent} open={expanded} openChatId={openChatId} fill={alone} />
+          )}
         </div>
       </Popover.Anchor>
       <RowMenu

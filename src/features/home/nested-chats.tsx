@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import * as Popover from '@radix-ui/react-popover'
 import { AnimatePresence, motion, useIsPresent } from 'motion/react'
 import { Link, useLocation } from 'wouter'
 import { ArrowRight, MoreHorizontal, Pin, Repeat, SquarePen } from 'lucide-react'
+import { create } from 'zustand'
 import type { Agent } from '@/state/agents'
 import { Grow } from '@/ui/grow'
 import { Skeleton } from '@/ui/skeleton'
@@ -15,27 +16,37 @@ import { RowMenu, useLongPress } from './row-menu'
 // An agent's pinned and latest chats, tucked under its row in the sidebar,
 // with a way through to all of them on its page. Text only, on the row's name
 // column, so the list stays calm. Right-click a chat, or its "…", to pin,
-// rename, archive or delete it.
+// rename, archive or delete it. An agent alone in the sidebar fills it: as
+// many chats as there's room for, down to the foot.
 
 const SHOWN = 4
 
-/** Pinned chats always, then the latest four of the rest: a pin never costs a recent one its place. */
-const sidebarChats = (chats: AgentChat[]) => [
-  ...chats.filter((c) => c.pinned),
-  ...chats.filter((c) => !c.pinned).slice(0, SHOWN),
-]
+/**
+ * Pinned chats always, then the latest of the rest: four, or as many as there's
+ * `room` for. A pin never costs a recent one its place.
+ */
+const sidebarChats = (chats: AgentChat[], room = 0) => {
+  const pinned = chats.filter((c) => c.pinned)
+  return [...pinned, ...chats.filter((c) => !c.pinned).slice(0, Math.max(SHOWN, room - pinned.length))]
+}
 const spring = { type: 'spring', duration: 0.34, bounce: 0 } as const
+
+/** How many chats fit under each agent that has the sidebar to itself. */
+const useRoom = create<Record<string, number | undefined>>(() => ({}))
 
 export function NestedChats({
   id,
   agent,
   open,
   openChatId,
+  fill,
 }: {
   id: string
   agent: Agent
   open: boolean
   openChatId?: string
+  /** Alone in the sidebar: list as many chats as fit. */
+  fill?: boolean
 }) {
   return (
     <AnimatePresence initial={false}>
@@ -43,13 +54,14 @@ export function NestedChats({
         <motion.div
           key="chats"
           id={id}
+          data-nested-chats=""
           initial={{ height: 0, opacity: 0 }}
           animate={{ height: 'auto', opacity: 1 }}
           exit={{ height: 0, opacity: 0, transition: { ...spring, duration: 0.26 } }}
           transition={spring}
           className="overflow-hidden"
         >
-          <List agent={agent} openChatId={openChatId} />
+          <List agent={agent} openChatId={openChatId} fill={fill} />
         </motion.div>
       )}
     </AnimatePresence>
@@ -59,21 +71,62 @@ export function NestedChats({
 /** Does the sidebar show this chat under its agent (so the agent's own row needn't be highlighted)? */
 export function useShowsChat(agentId: string, open: boolean, chatId: string | undefined) {
   const { data } = useAgentChatList(open && chatId ? agentId : undefined)
-  return !!chatId && !!data && sidebarChats(data).some((c) => c.id === chatId)
+  const room = useRoom((s) => s[agentId])
+  return !!chatId && !!data && sidebarChats(data, room).some((c) => c.id === chatId)
 }
 
-function List({ agent, openChatId }: { agent: Agent; openChatId?: string }) {
+/**
+ * Keeps `useRoom` up to date for an agent whose chats fill the sidebar: the
+ * rows `list` has, plus as many more as the sidebar has room left for (fewer
+ * when it's over), less one for "All chats". Sizes come from layout, not what's
+ * on screen, so the count is the same while the chats unfold as once they're
+ * open, and it follows the window, a card arriving above or below, or one put away.
+ */
+function useFill(agentId: string, fill: boolean, list: RefObject<HTMLElement | null>) {
+  useLayoutEffect(() => {
+    const ul = list.current
+    const fold = ul?.closest<HTMLElement>('[data-nested-chats]')
+    const scroller = fold?.closest<HTMLElement>('[data-sidebar-list]')
+    const content = scroller?.firstElementChild as HTMLElement | null | undefined
+    if (!fill || !ul || !fold || !scroller || !content) return
+    const measure = () => {
+      const [first, second] = ul.children as HTMLCollectionOf<HTMLElement>
+      if (!second) return
+      const pitch = second.offsetTop - first.offsetTop
+      const pad = getComputedStyle(scroller)
+      const height = scroller.clientHeight - parseFloat(pad.paddingTop) - parseFloat(pad.paddingBottom)
+      // The list's height, less everything else in it, is the chats' to take.
+      const free = height - (content.offsetHeight - fold.offsetHeight)
+      const fits = ul.children.length + Math.floor((free - ul.offsetHeight) / pitch)
+      useRoom.setState({ [agentId]: fits - 1 })
+    }
+    // Before the first paint, so the list opens full rather than growing into it.
+    measure()
+    const observer = new ResizeObserver(measure)
+    for (const el of [scroller, content, ul]) observer.observe(el)
+    return () => {
+      observer.disconnect()
+      useRoom.setState({ [agentId]: undefined })
+    }
+  }, [agentId, fill, list])
+}
+
+function List({ agent, openChatId, fill = false }: { agent: Agent; openChatId?: string; fill?: boolean }) {
   const { data, isPending, filing } = useAgentChatList(agent.id)
-  const chats = data ? sidebarChats(data) : []
+  const room = useRoom((s) => s[agent.id])
+  const chats = data ? sidebarChats(data, room) : []
   const act = useChatActions(agent.id)
   const [renaming, setRenaming] = useState<AgentChat | null>(null)
   const [, navigate] = useLocation()
+  const list = useRef<HTMLUListElement>(null)
+  useFill(agent.id, fill, list)
   // Folding away: out of reach (and out of ⌥↑/⌥↓'s walk) while it goes.
   const leaving = !useIsPresent()
   return (
     // Content (and the row highlights) on the name column: 8px + 10px + a 40px Buddy + 12px.
     <Grow>
       <ul
+        ref={list}
         className="space-y-px pt-0.5 pb-2 pl-13"
         aria-label={`${agent.name}’s recent chats`}
         data-leaving={leaving || undefined}

@@ -336,7 +336,8 @@ export function Sidebar() {
             busy={search.searching}
           />
         </div>
-        <motion.div layoutScroll className="min-h-0 flex-1 overflow-y-auto pt-1 pb-4">
+        {/* With one agent, its chats fill this down to the foot (features/home/nested-chats.tsx). */}
+        <motion.div layoutScroll data-sidebar-list="" className="min-h-0 flex-1 overflow-y-auto pt-1 pb-4">
           {searching ? (
             <SearchResults
               key="results"
