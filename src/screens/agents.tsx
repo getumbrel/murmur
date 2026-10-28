@@ -7,13 +7,14 @@ import { useIsWide } from '@/lib/use-media'
 import { useAgents, type Agent } from '@/state/agents'
 import { useBusyAgents } from '@/state/status'
 import { useAgentActions } from '@/features/home/actions'
+import { agentAt } from '@/features/home/roster'
 import { AgentCard, NewAgentCard } from '@/features/agent-page/agent-card'
 import { PageBar } from '@/features/agent-page/page-bar'
 import { usePageScroll } from '@/features/agent-page/scroll'
 
 // All agents: everyone you can talk to, as a gallery of cards, with a card
 // for making another. The main agent leads; the rest follow by who you
-// talked to last (anyone busy right now counts as now).
+// talked to last (one at work stays put until it replies, as in the roster).
 
 // Cards arrive once, a beat apart; never again on the way back.
 let greeted = false
@@ -30,8 +31,7 @@ export function AgentsScreen() {
     if (agents) greeted = true
   }, [agents])
 
-  const now = Date.now()
-  const at = (a: Agent) => (busy.includes(a.id) ? now : Math.max(a.lastChat?.at ?? 0, Number(a.botMeta?.created) || 0))
+  const at = (a: Agent) => agentAt(a, busy)
   const sorted = agents && [...agents].sort((a, b) => Number(b.isDefault) - Number(a.isDefault) || at(b) - at(a))
 
   return (

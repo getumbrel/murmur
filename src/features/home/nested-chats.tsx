@@ -15,9 +15,10 @@ import { RowMenu, useLongPress } from './row-menu'
 
 // An agent's pinned and latest chats, tucked under its row in the sidebar,
 // with a way through to all of them on its page. Text only, on the row's name
-// column, so the list stays calm. Right-click a chat, or its "…", to pin,
-// rename, archive or delete it. An agent alone in the sidebar fills it: as
-// many chats as there's room for, down to the foot.
+// column, so the list stays calm: a chat the agent is working in keeps its
+// place, its title aglow, and moves up when the reply lands. Right-click a
+// chat, or its "…", to pin, rename, archive or delete it. An agent alone in the
+// sidebar fills it: as many chats as there's room for, down to the foot.
 
 const SHOWN = 4
 
@@ -200,7 +201,7 @@ function ChatItem({
   selected: boolean
   menu: ReturnType<typeof chatOptions>['menu']
 }) {
-  const unread = useUnread(agent, chat)
+  const unread = useUnread(chat)
   const [open, setOpen] = useState(false)
   const press = useLongPress(() => setOpen(true))
   const has = menu.length > 0
@@ -214,7 +215,17 @@ function ChatItem({
       className={has ? clearsMore : undefined}
       nav
     >
-      <span className={cn('min-w-0 flex-1 truncate', unread && 'font-medium text-ink')}>{chat.title}</span>
+      <span
+        className={cn(
+          'min-w-0 flex-1 truncate',
+          unread && 'font-medium text-ink',
+          chat.busy === 'working' && 'text-shimmer',
+          chat.busy === 'waiting' && 'font-medium text-accent',
+        )}
+      >
+        {chat.title}
+        {chat.busy && <span className="sr-only">{chat.busy === 'waiting' ? ', needs you' : ', working'}</span>}
+      </span>
       {/* Trailing, so every title keeps the list's left edge. */}
       <span className={cn('flex flex-none items-center gap-1.5', has && makesWay)}>
         {chat.pinned && (

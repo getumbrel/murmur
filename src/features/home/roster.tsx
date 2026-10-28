@@ -7,7 +7,7 @@ import { ChevronRight, MoreHorizontal, Pencil, PencilLine, Plus, Trash2 } from '
 import { Orb, OrbStack } from '@/ui/orb'
 import { Button } from '@/ui/button'
 import { fetchAgentChats, useAgentChats, useAgents, type Agent } from '@/state/agents'
-import { useAgentStatus, useBusyAgents, useChatUnread, useNeedsYou } from '@/state/status'
+import { settledAt, useAgentStatus, useBusyAgents, useChatUnread, useNeedsYou } from '@/state/status'
 import { prefetchGroup, useGroupSummaries } from '@/state/groups'
 import { useAccessRequests } from '@/state/access'
 import { RequestCard } from '@/features/access/request-card'
@@ -76,8 +76,8 @@ export function Roster({ density, selectedId, openChatId, onEdit, onDelete, onRe
     )
   }
 
-  // Most recent conversation first (anyone busy right now counts as now, and
-  // a brand-new agent counts from its birth); the main agent wins ties.
+  // Most recent conversation first (an agent at work stays where it was until
+  // it replies, and a brand-new one counts from its birth); the main agent wins ties.
   const now = Date.now()
   // Wait for groups too, or ones that were always there would read as new.
   if (groupsLoaded) noteArrivals([...agents.map((a) => a.id), ...groups.map((g) => `group:${g.id}`)])
@@ -86,7 +86,7 @@ export function Roster({ density, selectedId, openChatId, onEdit, onDelete, onRe
       kind: 'agent' as const,
       key: agent.id,
       agent,
-      at: busy.includes(agent.id) ? now : Math.max(agent.lastChat?.at ?? 0, Number(agent.botMeta?.created) || 0),
+      at: agentAt(agent, busy),
     })),
     ...groups.map((group) => ({
       kind: 'group' as const,
@@ -144,6 +144,14 @@ export function Roster({ density, selectedId, openChatId, onEdit, onDelete, onRe
 }
 
 const isMain = (e: Entry) => e.kind === 'agent' && e.agent.isDefault
+
+/** When an agent last had its say, for ordering: held while it's at work, so it moves when the reply lands. */
+export const agentAt = (agent: Agent, busy: string[]) =>
+  settledAt(
+    `agent:${agent.id}`,
+    Math.max(agent.lastChat?.at ?? 0, Number(agent.botMeta?.created) || 0),
+    busy.includes(agent.id),
+  )
 
 // ── Arrivals ────────────────────────────────────────────────────────────────
 // Someone new in the roster (made here or in another app) gets a one-time

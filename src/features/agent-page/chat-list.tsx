@@ -301,7 +301,7 @@ function ChatRow({
   }
   const press = useLongPress((at) => openMenu(at ?? 'row'))
   const via = !chat.routine && sourceLabel(chat.source)
-  const unread = useUnread(agent, chat)
+  const unread = useUnread(chat)
   const row = useRef<HTMLLIElement>(null)
   const width = useRef(0)
   const dragging = useRef(false)
@@ -469,9 +469,10 @@ function ChatRow({
                 <span className="flex items-baseline gap-2">
                   <span
                     title={chat.title}
-                    className={cn('min-w-0 flex-1 truncate text-body', unread && 'font-semibold')}
+                    className={cn('min-w-0 flex-1 truncate text-body', unread && 'font-semibold', busyTitle(chat))}
                   >
                     {chat.title}
+                    <BusyLabel chat={chat} />
                   </span>
                   {unread && (
                     <span aria-label="New messages" className="size-2 flex-none self-center rounded-full bg-accent" />
@@ -605,8 +606,9 @@ function PlainLine({
   return (
     <span className="min-w-0 flex-1">
       <span className="flex min-w-0 items-baseline gap-2">
-        <span title={chat.title} className={cn('min-w-0 truncate text-body', unread && 'font-semibold')}>
+        <span title={chat.title} className={cn('min-w-0 truncate text-body', unread && 'font-semibold', busyTitle(chat))}>
           {chat.title}
+          <BusyLabel chat={chat} />
         </span>
         {unread && <span aria-label="New messages" className="size-2 flex-none self-center rounded-full bg-accent" />}
         <span
@@ -628,6 +630,15 @@ function PlainLine({
       )}
     </span>
   )
+}
+
+/** A title while the agent works in its chat: aglow, or in its colour while it waits on you. */
+const busyTitle = (chat: AgentChat) =>
+  chat.busy === 'working' ? 'text-shimmer' : chat.busy === 'waiting' ? 'font-medium text-accent' : undefined
+
+function BusyLabel({ chat }: { chat: AgentChat }) {
+  if (!chat.busy) return null
+  return <span className="sr-only">{chat.busy === 'waiting' ? ', needs you' : ', working'}</span>
 }
 
 /** The way into Archived, after the chats. */

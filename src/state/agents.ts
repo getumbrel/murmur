@@ -23,6 +23,7 @@ import { listProfileNames, listProfiles } from '@/hermes/compat'
 import { isQuietExcerpt, isRunBrief, runTitle } from '@shared/routines.ts'
 import { agentName, botTitle } from '@shared/agents.ts'
 import { fetchRunResult, knowRun, runOf } from '@/state/routines'
+import { refreshActivity } from '@/state/status'
 
 type LastSession = {
   id: string
@@ -319,7 +320,8 @@ export function useFreshAgents() {
     const off = gateway.onEvent((ev) => {
       if (ev.type !== 'sessions.changed') return
       clearTimeout(timer)
-      timer = setTimeout(() => qc.invalidateQueries({ queryKey: agentsKey }), 700)
+      // After hearing who's mid-turn, so the roster holds a busy agent in place (state/status.ts).
+      timer = setTimeout(() => refreshActivity().then(() => qc.invalidateQueries({ queryKey: agentsKey })), 700)
     })
     return () => {
       off()

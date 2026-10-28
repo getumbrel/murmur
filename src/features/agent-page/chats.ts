@@ -7,7 +7,7 @@ import { toSummary, useAgentChats, useAgents, type Agent, type ChatSummary, type
 import { replaceGone } from '@/lib/transitions'
 import { routineRunsKey, useContinuedRuns, useRoutineNews, type RoutineRun } from '@/state/routines'
 import { deleteChat, updateChat, type ChatChange } from '@/state/chats'
-import { useChatUnread } from '@/state/status'
+import { settledAt, useChatActivities, useChatUnread, type ChatActivity } from '@/state/status'
 import { resultLine, standingResults } from '@shared/routines.ts'
 
 // One agent's chats as people think of them, most recently active first: its
@@ -17,6 +17,7 @@ import { resultLine, standingResults } from '@shared/routines.ts'
 // you've replied in is a chat of its own, labelled. Pinned chats come along
 // even when they're older than the list's window; archived ones wait in their
 // own list. Pins and archives are Hermes's own, so Hermes Desktop agrees.
+// A chat mid-turn keeps its place until its reply lands (state/status.ts).
 
 export type AgentChat = ChatSummary & {
   /** A routine's run: its newest result, or one you've replied in. */
@@ -29,6 +30,10 @@ export type AgentChat = ChatSummary & {
   pinned?: boolean
   /** Out of the list and in Archived: search still finds it, and the agent still remembers it. */
   archived?: boolean
+  /** Mid-turn: held where it was, its title aglow, until the reply lands. */
+  busy?: ChatActivity
+  /** The newest to have had its say: the one conversation that can be new to you. */
+  latest?: boolean
 }
 
 type Row = SessionRow & { last_active?: number; pinned?: boolean; archived?: boolean; hidden?: boolean | number }
@@ -99,20 +104,28 @@ export function useAgentChatList(of: Agent | string | undefined, { results = tru
     staleTime: 10_000,
   })
   const gone = useGone((s) => s.ids)
+  const working = useChatActivities()
   const mainAt = (typeof of === 'string' ? roster?.find((a) => a.id === of) : of)?.mainChatAt
   const data = useMemo(() => {
     if (!conversations.data) return undefined
     const seen = activity.data?.at ?? {}
     const pins = activity.data?.pinned ?? []
     const pinned = new Set(pins.map((c) => c.id))
-    const chats: AgentChat[] = conversations.data.map((c) => ({
-      ...c,
-      at: (c.main ? mainAt : seen[c.id]) || c.startedAt,
-      ...(pinned.has(c.id) && { pinned: true }),
-    }))
+    /** Where it stood before a turn still going on in it began. */
+    const steady = (c: AgentChat): AgentChat => {
+      const busy = working[c.id]
+      return { ...c, at: settledAt(c.id, c.at, !!busy), ...(busy && { busy }) }
+    }
+    const chats: AgentChat[] = conversations.data.map((c) =>
+      steady({
+        ...c,
+        at: (c.main ? mainAt : seen[c.id]) || c.startedAt,
+        ...(pinned.has(c.id) && { pinned: true }),
+      }),
+    )
     // Pins older than the window, where they'd have been. (With every chat's last move known,
     // that's the list's own order, so one moved back from Archived lands in its place too.)
-    for (const pin of pins) if (!chats.some((c) => c.id === pin.id)) chats.push(pin)
+    for (const pin of pins) if (!chats.some((c) => c.id === pin.id)) chats.push(steady(pin))
     if (activity.data) chats.sort((a, b) => b.at - a.at)
     const line = (run: RoutineRun, found?: string): AgentChat => ({
       id: run.id,
@@ -129,12 +142,14 @@ export function useAgentChatList(of: Agent | string | undefined, { results = tru
     const newest = (news.data ?? []).flatMap((n) => (n.latest ? [n.latest] : []))
     const standing = new Set(standingResults(newest.map((n) => n.run), continued))
     const lines = [
-      ...continued.map((run) => line(run)),
+      ...continued.map((run) => steady(line(run))),
       ...newest.filter((n) => standing.has(n.run)).map((n) => line(n.run, n.text)),
     ].sort((a, b) => b.at - a.at)
     // A chat just deleted stays gone while its Undo is offered.
-    return merge(chats, lines).filter((c) => !gone.has(c.id))
-  }, [conversations.data, runs.data, news.data, activity.data, mainAt, gone])
+    const all = merge(chats, lines).filter((c) => !gone.has(c.id))
+    const latest = all.reduce<AgentChat | undefined>((a, c) => (!c.result && (!a || c.at > a.at) ? c : a), undefined)
+    return all.map((c) => (c === latest ? { ...c, latest: true } : c))
+  }, [conversations.data, runs.data, news.data, activity.data, mainAt, gone, working])
   // The first time, wait for the routines too, so their lines don't push the chats down a beat later.
   const waiting = results && !news.data && news.isPending
   return {
@@ -170,13 +185,13 @@ export function useArchivedChats(agentId: string | undefined) {
 }
 
 /**
- * Is this chat in the list new to you? Hermes only says when an agent's newest
- * conversation last moved, so that's the one that can be; a routine's result
- * knows its own time.
+ * Is this chat in the list new to you? Only the newest one to have had its say
+ * can be, as on the agent's row, and a routine's result, which knows its own
+ * time. A chat the agent is working in is held where it was meanwhile, so a
+ * reply that came in elsewhere keeps its dot until this one's lands.
  */
-export function useUnread(agent: Agent, chat: AgentChat) {
-  const known = chat.result || agent.lastChat?.id === chat.id
-  return useChatUnread(known ? chat.id : undefined, chat.result ? chat.at : agent.lastChat?.at)
+export function useUnread(chat: AgentChat) {
+  return useChatUnread(chat.result || chat.latest ? chat.id : undefined, chat.at)
 }
 
 // ── What you can do to a chat ────────────────────────────────────────────────

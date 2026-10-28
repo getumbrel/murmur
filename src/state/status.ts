@@ -5,6 +5,7 @@
 // live sessions, which knows their stored id but not their agent, so owners
 // are looked up from each agent's chat list once.
 
+import { useMemo } from 'react'
 import { create } from 'zustand'
 import { useShallow } from 'zustand/react/shallow'
 import { gateway, rpc } from '@/hermes/gateway'
@@ -86,7 +87,21 @@ function schedulePoll(busy: boolean) {
 
 function refresh() {
   if (document.visibilityState !== 'visible') return schedulePoll(false)
-  refreshRemote().catch(() => schedulePoll(false))
+  void refreshActivity()
+}
+
+let asking: Promise<void> | undefined
+
+/**
+ * Asks Hermes which chats are mid-turn in other apps; calls while one is out
+ * share its answer. Chat lists wait for this before they take in a change
+ * (state/sync.ts), so a chat that has just started working never moves first.
+ */
+export function refreshActivity(): Promise<void> {
+  asking ??= refreshRemote()
+    .catch(() => schedulePoll(false))
+    .finally(() => (asking = undefined))
+  return asking
 }
 
 // ── Wiring ──────────────────────────────────────────────────────────────────
@@ -230,6 +245,72 @@ export function useBusyAgents(): string[] {
   return [...new Set([...local, ...remote])]
 }
 
+// ── Mid-turn ────────────────────────────────────────────────────────────────
+// Hermes stamps a chat's last activity with every step of a turn (your
+// message, each tool call it stores, a heartbeat), not just when the agent
+// speaks. So from the moment a chat is asked until its reply lands, lists
+// hold it (and its agent) where they were, its title glows instead, and it
+// isn't new to you yet. Then it moves, once.
+
+/** A chat mid-turn: working on it, or waiting on you (an approval or a question). */
+export type ChatActivity = 'working' | 'waiting'
+
+/** Chats mid-turn right now, here or in another app, by stored id. */
+export function useChatActivities(): Readonly<Record<string, ChatActivity>> {
+  wireStatus()
+  const local = useChats(useShallow((s) => localActivities(s.chats)))
+  const remote = useStatus(useShallow((s) => Object.fromEntries(Object.entries(s.remote).map(([id, r]) => [id, r.status]))))
+  return useMemo(() => mergeActivities(local, remote), [local, remote])
+}
+
+/** What the chats on this page are doing; one attached here and at rest says so too. */
+export function localActivities(chats: Record<string, Pick<Chat, 'id' | 'status' | 'runtimeId'>>) {
+  const out: Record<string, ChatActivity | 'idle'> = {}
+  for (const c of Object.values(chats)) {
+    if (c.status === 'waiting') out[c.id] = 'waiting'
+    else if (BUSY.has(c.status)) out[c.id] = 'working'
+    else if (c.runtimeId) out[c.id] = 'idle'
+  }
+  return out
+}
+
+/**
+ * Hermes's list of chats mid-turn (polled, so a beat behind), with each chat
+ * attached here speaking for itself, the moment it changes.
+ */
+export function mergeActivities(local: Record<string, ChatActivity | 'idle'>, remote: Record<string, ChatActivity>) {
+  const out: Record<string, ChatActivity> = { ...remote }
+  for (const [id, now] of Object.entries(local)) {
+    if (now === 'idle') delete out[id]
+    else out[id] = now
+  }
+  return out
+}
+
+/**
+ * Where each chat, or agent, stands in its list: when it last came to rest,
+ * or (`rested: false`) when first seen, if that was mid-turn.
+ */
+const settled = new Map<string, { at: number; rested: boolean }>()
+
+/**
+ * Where a list should place something that last moved `at`: there, unless
+ * it's mid-turn, when it stays where it was before the turn began (or where
+ * it was first seen, if that was mid-turn). Keys are chat ids, or anything
+ * else that's held the same way.
+ */
+export function settledAt(key: string, at: number, busy: boolean) {
+  const was = settled.get(key)
+  if (!busy || !was) settled.set(key, { at, rested: !busy })
+  return busy && was ? was.at : at
+}
+
+/** When a chat last came to rest, as far as this page saw. */
+const restedAt = (chatId: string | undefined) => {
+  const was = chatId ? settled.get(chatId) : undefined
+  return was?.rested ? was.at : undefined
+}
+
 // ── Unread ──────────────────────────────────────────────────────────────────
 // Hermes never marks anything unread, so Murmur keeps its own watermarks (like
 // Hermes Desktop): when you last looked at each chat. A chat is unread when it
@@ -291,9 +372,13 @@ export function setViewingChat(chatId: string | undefined) {
   if (useSeen.getState().viewing !== chatId) useSeen.setState({ viewing: chatId })
 }
 
-/** Did this chat move since you last looked? `at` is its last activity (ms). */
+/**
+ * Did this chat move since you last looked? `at` is its last activity (ms).
+ * Mid-turn, only what came before the turn counts: the rest isn't said yet.
+ */
 export function useChatUnread(chatId: string | undefined, at: number | undefined) {
-  return useSeen((s) => isUnread(s, chatId, at))
+  const busy = !!useChatActivities()[chatId ?? '']
+  return useSeen((s) => isUnread(s, chatId, busy ? restedAt(chatId) : at))
 }
 
 function isUnread(s: SeenStore, chatId: string | undefined, at: number | undefined) {
@@ -301,9 +386,10 @@ function isUnread(s: SeenStore, chatId: string | undefined, at: number | undefin
   return at > (s.seen[chatId] ?? s.since) + SLACK
 }
 
-/** How many of these chats moved since you last looked. */
+/** How many of these chats moved since you last looked (mid-turn, before the turn began). */
 export function useUnreadCount(chats: { id: string; at: number }[]) {
-  const key = chats.map((c) => `${c.id}@${c.at}`).join('|')
+  const busy = useChatActivities()
+  const key = chats.map((c) => `${c.id}@${busy[c.id] ? (restedAt(c.id) ?? 0) : c.at}`).join('|')
   return useSeen((s) => key.split('|').filter((pair) => {
     if (!pair) return false
     const [id, at] = pair.split('@')

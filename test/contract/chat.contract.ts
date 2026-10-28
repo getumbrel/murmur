@@ -5,6 +5,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { clearUnread, titleTaken, updateChat } from '@/state/chats'
 import { api, connect, modelRequests, newChat, q, sleep, turn, whenIdle, type Socket } from './client'
+import { toolsTag } from './fake-model'
 
 let socket: Socket
 beforeAll(async () => {
@@ -159,6 +160,36 @@ describe('a running turn', () => {
     await socket.request('session.interrupt', { session_id: runtime })
     const done = await socket.event('message.complete', runtime)
     expect(done.payload?.status).toBe('interrupted')
+  })
+
+  it('stamps the chat newer with every step, not just the reply, and lists it as working until then', async () => {
+    // Why a chat mid-turn keeps its place in Murmur's lists (src/state/status.ts).
+    const { runtime, stored } = await newChat(socket)
+    await turn(socket, runtime, 'First [[say: One]]')
+    const lastActive = async () =>
+      (await api.get(`/api/sessions?${q('default')}&limit=60&order=recent`)).sessions.find((s: { id: string }) => s.id === stored)
+        ?.last_active as number
+    const status = async () =>
+      (await socket.request<{ sessions: { session_key: string; status: string }[] }>('session.active_list', {})).sessions.find(
+        (s) => s.session_key === stored,
+      )?.status
+    const before = await lastActive()
+    await sleep(1100)
+
+    const from = socket.events.length
+    const sleeps = [1, 2].map(() => ({ name: 'terminal', args: { command: 'sleep 2' } }))
+    await socket.request('prompt.submit', { session_id: runtime, text: `Two steps ${toolsTag(sleeps)}` })
+    await socket.until('the first step', () => socket.events.slice(from).find((e) => e.type === 'tool.complete' && e.session_id === runtime))
+    await sleep(300)
+    const mid = await lastActive()
+    expect(mid).toBeGreaterThan(before)
+    expect(await status()).toBe('working')
+
+    await socket.until('the reply', () => socket.events.slice(from).find((e) => e.type === 'message.complete' && e.session_id === runtime))
+    expect(await lastActive()).toBeGreaterThan(mid)
+    // It comes to rest as the turn wraps up.
+    for (let i = 0; i < 40 && (await status()) === 'working'; i++) await sleep(250)
+    expect(await status()).not.toBe('working')
   })
 
   it('takes a nudge mid-turn with session.steer', async () => {
