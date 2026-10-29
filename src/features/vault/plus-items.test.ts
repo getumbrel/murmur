@@ -35,7 +35,7 @@ describe('the + menu’s passwords and cards', () => {
     expect(cards).toEqual({ line: 'Let Hermes check out for you', none: true, brand: undefined })
   })
 
-  it('names the sites as people say them, each once, and shows their marks', () => {
+  it('names the sites as people say them, each once, and shows their icons', () => {
     const { logins } = vaultGlance(
       [
         login('https://www.notion.so'),
@@ -48,7 +48,7 @@ describe('the + menu’s passwords and cards', () => {
     expect(logins).toEqual({
       line: 'Notion, PayPal and bank.example',
       none: false,
-      sites: ['notion', 'paypal', 'bank'],
+      sites: ['www.notion.so', 'www.paypal.com', 'bank.example'],
     })
   })
 

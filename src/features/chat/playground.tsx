@@ -13,6 +13,7 @@ import { ERROR_ACTION_LABEL, explainError } from './errors'
 import { Composer, useKeyboardInset, type PlusItem } from './composer'
 import { AppStack } from '@/features/apps/apps-glyph'
 import { CardFace } from '@/features/vault/card-face'
+import { SiteIcon } from '@/features/vault/site-icon'
 import { AppsIcon, CardIcon, IconChip, PasswordsIcon } from '@/ui/icons'
 import { toolLabel } from './tool-labels'
 
@@ -33,8 +34,10 @@ const MORE: PlusItem[] = [
     key: 'passwords',
     label: 'Passwords',
     icon: <IconChip icon={PasswordsIcon} size={32} radius={10} />,
-    aside: none ? undefined : <AppStack names={['github', 'amazon']} />,
-    detail: none ? 'Let Atlas sign in for you' : 'GitHub and amazon.com',
+    aside: none ? undefined : (
+      <AppStack names={['github.com', 'amazon.com']} icon={(host, size) => <SiteIcon host={host} size={size} />} />
+    ),
+    detail: none ? 'Let Atlas sign in for you' : 'github.com and amazon.com',
     onSelect: () => toast('The Passwords sheet opens here.'),
   },
   {

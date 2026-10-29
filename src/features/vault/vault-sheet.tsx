@@ -547,7 +547,8 @@ function ItemForm({
                 className="block"
               >
                 {kind === 'login' ? (
-                  <SiteIcon host={host} size={64} />
+                  // The site's own icon once it's the one saved or given, never for an address mid-typing.
+                  <SiteIcon host={host} size={64} ask={host === (entry?.origin ? hostOf(entry.origin) : site)} />
                 ) : (
                   <IconChip icon={HomeIcon} size={64} radius={16} />
                 )}

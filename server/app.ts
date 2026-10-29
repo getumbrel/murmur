@@ -14,6 +14,7 @@ import { handleNotifications, startNotifications, stopNotifications, type Native
 import { isOAuthReturn } from './oauth-return.ts'
 import { createProxy, refuse } from './proxy.ts'
 import { handleSetup, setupSettled, startSetup } from './setup.ts'
+import { handleSiteIcon } from './site-icons.ts'
 import { handleTelegram, startTelegram, stopTelegram } from './telegram.ts'
 
 // Model servers commonly installed alongside Hermes on umbrelOS.
@@ -258,6 +259,7 @@ export function startServer(options: ServerOptions = {}): Promise<RunningServer>
       if (await handleConnection(req, res, path)) return
       if (await handleTelegram(req, res, path)) return
       if (await handleNotifications(req, res, path)) return
+      if (await handleSiteIcon(req, res, url)) return
       if (path === '/murmur/local') return sendJson(res, 200, { servers: await discoverLocal() })
       sendJson(res, 404, { error: 'not_found' })
     } catch (error) {

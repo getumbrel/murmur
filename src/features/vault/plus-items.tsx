@@ -6,7 +6,7 @@ import { AppStack } from '@/features/apps/apps-glyph'
 import { namesLine } from '@/features/apps/glance'
 import { MARKS } from '@/features/apps/marks'
 import { CardFace } from './card-face'
-import { siteKey } from './site-icon'
+import { SiteIcon, siteKey } from './site-icon'
 
 // Passwords and cards in the composer's +, after the apps: the sites the
 // agent can sign in to and the cards it can pay with, named underneath and
@@ -25,7 +25,13 @@ export function useVaultPlusItems(agent: Agent | undefined, onOpen: (start?: Vau
       label: 'Passwords',
       icon: <IconChip icon={PasswordsIcon} size={32} radius={10} />,
       detail: <PlusLine text={logins?.line} />,
-      aside: <PlusAside>{!!logins?.sites.length && <AppStack names={logins.sites} />}</PlusAside>,
+      aside: (
+        <PlusAside>
+          {!!logins?.sites.length && (
+            <AppStack names={logins.sites} icon={(host, size) => <SiteIcon host={host} size={size} />} />
+          )}
+        </PlusAside>
+      ),
       onSelect: () => onOpen(fresh(logins) ? 'login' : undefined),
     },
     {
@@ -54,7 +60,8 @@ export function vaultGlance(
     logins: {
       line: logins.length ? namesLine(hosts.map(siteName)) : `Let ${agentName} sign in for you`,
       none: !logins.length,
-      sites: [...new Set(hosts.map(siteKey))],
+      // The first saved for each site.
+      sites: hosts.filter((host, i) => hosts.findIndex((h) => siteKey(h) === siteKey(host)) === i),
     },
     cards: {
       line: !cards.length

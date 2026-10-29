@@ -19,6 +19,9 @@ const ART: Record<string, string> = Object.fromEntries(
   ),
 )
 
+/** Whether Murmur draws this app's icon itself (its real one, or its mark on its colour), rather than an initial. */
+export const drawsIcon = (name: string) => name === EMAIL_ICON || !!ART[name] || !!MARKS[name]?.[2]
+
 /** The app's name the way its maker writes it. */
 export function appName(name: string) {
   if (name === EMAIL_ICON) return 'Email'
