@@ -62,6 +62,8 @@ type Props = {
   onOpenChange: (open: boolean) => void
   /** Hands off to Passwords, on a new login: its website filled in when a search was one. */
   onAddLogin: (site?: string) => void
+  /** Opened from a chat: a question to try (email's "What needs me in my inbox today?") is asked there, not in a new chat. */
+  onAsk?: (question: string) => void
 }
 
 type Route =
@@ -75,7 +77,7 @@ type Route =
 
 const depth = (r: Route) => (r.to === 'list' ? 0 : r.to === 'email-form' || r.to === 'email-password' ? 2 : 1)
 
-export function AppsSheet({ agent, open, onOpenChange, onAddLogin }: Props) {
+export function AppsSheet({ agent, open, onOpenChange, onAddLogin, onAsk }: Props) {
   const qc = useQueryClient()
   const [, navigate] = useLocation()
   const reduce = useReducedMotion()
@@ -158,8 +160,9 @@ export function AppsSheet({ agent, open, onOpenChange, onAddLogin }: Props) {
 
   const close = () => onOpenChange(false)
   const askInbox = () => {
-    queueOpeningLine(agent.id, INBOX_QUESTION)
     close()
+    if (onAsk) return onAsk(INBOX_QUESTION)
+    queueOpeningLine(agent.id, INBOX_QUESTION)
     navigate(`/chat/${agent.id}/new`)
   }
 

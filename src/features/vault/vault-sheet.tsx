@@ -46,11 +46,12 @@ type Props = {
   open: boolean
   onOpenChange: (open: boolean) => void
   /**
-   * A new login asked for elsewhere (the Apps sheet, for an app it doesn't
-   * have): the sheet opens on it, its website filled in when one was given.
-   * Each ask is a new object.
+   * A new item asked for elsewhere (a login from the Apps sheet, for an app it
+   * doesn't have; a login or card from the composer's +, when there are none
+   * yet): the sheet opens on its form, its website filled in when one was
+   * given. Each ask is a new object.
    */
-  newLogin?: { site?: string }
+  adding?: { kind: VaultKind; site?: string }
 }
 
 type View =
@@ -69,7 +70,7 @@ const KINDS: Record<VaultKind, { group: string; noun: string; icon: (p: IconProp
 }
 const ORDER: VaultKind[] = ['login', 'payment', 'address']
 
-export function VaultSheet({ agent, open, onOpenChange, newLogin }: Props) {
+export function VaultSheet({ agent, open, onOpenChange, adding }: Props) {
   const vault = useVault(agent.id, { enabled: open })
   const [view, setView] = useState<View>({ name: 'list' })
   // Which way the views slide: deeper goes left, back comes from the left.
@@ -77,10 +78,13 @@ export function VaultSheet({ agent, open, onOpenChange, newLogin }: Props) {
   const [fresh, setFresh] = useState<string>()
 
   // A new ask opens on its form from the first frame; Back is the list.
-  const [asked, setAsked] = useState(newLogin)
-  if (newLogin !== asked) {
-    setAsked(newLogin)
-    if (newLogin) setView({ name: 'new', kind: 'login', site: newLogin.site })
+  const [asked, setAsked] = useState(adding)
+  if (adding !== asked) {
+    setAsked(adding)
+    if (adding) {
+      setForward(true)
+      setView({ name: 'new', kind: adding.kind, site: adding.site })
+    }
   }
 
   const go = (next: View) => {

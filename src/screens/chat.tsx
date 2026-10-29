@@ -33,10 +33,15 @@ import { commandList, isCurated, type CommandName } from '@/features/commands/co
 import { useCatalog } from '@/features/commands/use-catalog'
 import { useUmbrelKey } from '@/features/chat/umbrel-key'
 import { ChatConnectCard } from '@/features/chat/connect-card'
+import { AppsSheet } from '@/features/apps'
+import { useAppsPlusItem } from '@/features/apps/plus-item'
+import { VaultSheet } from '@/features/vault'
+import { useVaultPlusItems } from '@/features/vault/plus-items'
 import { stopSpeaking, useSpeech } from '@/features/voice/speech'
 import { useConnection } from '@/hermes/gateway'
 import { useChatUsage } from '@/state/insights'
 import { useRunOf } from '@/state/routines'
+import type { VaultKind } from '@/state/vault'
 import { useFinePointer, useIsWide } from '@/lib/use-media'
 import { useUpFrom } from '@/lib/transitions'
 import {
@@ -216,6 +221,18 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
     // Only when the blank chat first shows for this agent.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [opening, agentId])
+
+  // The agent's apps, passwords and cards, from the composer's +: each opens over the chat, and an app's
+  // question to try is asked here. Apps' "Add a login" opens Passwords over the chat too.
+  const [appsSheet, setAppsSheet] = useState(false)
+  const appsItem = useAppsPlusItem(agent, () => setAppsSheet(true))
+  const [vaultSheet, setVaultSheet] = useState(false)
+  const [adding, setAdding] = useState<{ kind: VaultKind; site?: string }>()
+  const vaultItems = useVaultPlusItems(agent, (start) => {
+    if (start) setAdding({ kind: start })
+    setVaultSheet(true)
+  })
+  const ask = (question: string) => (busy ? fill(question) : void post(question))
 
   const onSend = (text: string, files: File[]) => {
     if (rewrite && id && !files.length) {
@@ -564,6 +581,7 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
                 </>
               )}
               onBeforeSend={umbrelKey.beforeSend}
+              more={appsItem && [appsItem, ...vaultItems]}
               accessory={
                 agent && (
                   <>
@@ -594,6 +612,20 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
           />
         )}
         {agent && <ChatInfoSheet open={info} onOpenChange={setInfo} agent={agent} usage={usage} runtimeId={chat?.runtimeId} />}
+        {agent && (
+          <AppsSheet
+            agent={agent}
+            open={appsSheet}
+            onOpenChange={setAppsSheet}
+            onAddLogin={(site) => {
+              setAppsSheet(false)
+              setAdding({ kind: 'login', site })
+              setVaultSheet(true)
+            }}
+            onAsk={ask}
+          />
+        )}
+        {agent && <VaultSheet agent={agent} open={vaultSheet} onOpenChange={setVaultSheet} adding={adding} />}
 
         <DropZone
           disabled={!agent || !!starting}

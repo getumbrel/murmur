@@ -10,6 +10,7 @@ import { useUpFrom } from '@/lib/transitions'
 import { speakerOf, useAgents } from '@/state/agents'
 import { useAgentStatus } from '@/state/status'
 import { createChat, send } from '@/state/chats'
+import type { VaultKind } from '@/state/vault'
 import { useAgentActions } from '@/features/home/actions'
 import { MemorySheet, rememberMessage } from '@/features/memory'
 import { TelegramSheet } from '@/features/telegram'
@@ -47,7 +48,7 @@ export function AgentScreen({ agentId }: { agentId: string }) {
   const { page, title, scrolled, under, onScroll } = usePageScroll<HTMLHeadingElement>(`agent:${agentId}`)
   const [sheet, setSheet] = useState<Sheet | null>(null)
   // A login asked for from Apps, for an app it doesn't have: Passwords opens on it.
-  const [newLogin, setNewLogin] = useState<{ site?: string }>()
+  const [adding, setAdding] = useState<{ kind: VaultKind; site?: string }>()
   // A routine opened from what it found, showing that result.
   const [news, setNews] = useState<{ id: string; runId?: string } | null>(null)
   const [newsShown, setNewsShown] = useState(news)
@@ -208,11 +209,11 @@ export function AgentScreen({ agentId }: { agentId: string }) {
           agent={agent}
           {...sheetProps('apps')}
           onAddLogin={(site) => {
-            setNewLogin({ site })
+            setAdding({ kind: 'login', site })
             setSheet('passwords')
           }}
         />
-        <VaultSheet agent={agent} {...sheetProps('passwords')} newLogin={newLogin} />
+        <VaultSheet agent={agent} {...sheetProps('passwords')} adding={adding} />
         <TelegramSheet agent={agent} {...sheetProps('telegram')} />
         <WhatsAppSheet agent={agent} {...sheetProps('whatsapp')} />
         {actions.sheets}

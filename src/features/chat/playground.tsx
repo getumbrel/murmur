@@ -10,10 +10,42 @@ import type { ApprovalChoice, ChatItem, Speaker } from './types'
 import { ErrorNote, Thread } from './thread'
 import { Toaster, toast } from 'sonner'
 import { ERROR_ACTION_LABEL, explainError } from './errors'
-import { Composer, useKeyboardInset } from './composer'
+import { Composer, useKeyboardInset, type PlusItem } from './composer'
+import { AppStack } from '@/features/apps/apps-glyph'
+import { CardFace } from '@/features/vault/card-face'
+import { AppsIcon, CardIcon, IconChip, PasswordsIcon } from '@/ui/icons'
 import { toolLabel } from './tool-labels'
 
 const ATLAS: Speaker = { id: 'atlas', name: 'Atlas', hue: 278 }
+
+/** The + menu's apps, passwords and cards, as an agent with a few would show them (?apps=none for one with none yet). */
+const none = new URLSearchParams(location.search).get('apps') === 'none'
+const MORE: PlusItem[] = [
+  {
+    key: 'apps',
+    label: 'Apps',
+    icon: <IconChip icon={AppsIcon} size={32} radius={10} />,
+    aside: none ? undefined : <AppStack names={['gmail', 'slack', 'github']} />,
+    detail: none ? 'Email, Google Calendar and more' : 'Gmail, Slack and GitHub',
+    onSelect: () => toast('The Apps sheet opens here.'),
+  },
+  {
+    key: 'passwords',
+    label: 'Passwords',
+    icon: <IconChip icon={PasswordsIcon} size={32} radius={10} />,
+    aside: none ? undefined : <AppStack names={['github', 'amazon']} />,
+    detail: none ? 'Let Atlas sign in for you' : 'GitHub and amazon.com',
+    onSelect: () => toast('The Passwords sheet opens here.'),
+  },
+  {
+    key: 'cards',
+    label: 'Cards',
+    icon: <IconChip icon={CardIcon} size={32} radius={10} />,
+    aside: none ? undefined : <CardFace size="row" brand="visa" />,
+    detail: none ? 'Let Atlas check out for you' : 'Visa •••• 4242',
+    onSelect: () => toast('The Passwords sheet opens on its cards here.'),
+  },
+]
 const JUNIPER: Speaker = { id: 'juniper', name: 'Juniper', hue: 160 }
 const WREN: Speaker = { id: 'wren', name: 'Wren', hue: 28 }
 
@@ -679,6 +711,7 @@ function Chat({ scene }: { scene: Scene }) {
               busy={busy}
               draftKey={`playground-${scene}`}
               placeholder={group ? 'Message the group' : 'Message Atlas'}
+              more={group ? undefined : MORE}
               // Dictation transcribes with the main agent's speech settings.
               voice="default"
             />

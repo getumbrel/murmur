@@ -12,10 +12,7 @@ import { cn } from '@/lib/cn'
 import { TelegramGlyph } from '@/features/telegram'
 import { WhatsAppGlyph } from '@/features/whatsapp'
 import { AppsGlyph } from '@/features/apps'
-import { useAgentApps, useConnections } from '@/state/apps'
-import { useMailStatus } from '@/state/mail'
-import { useConnectedHostedApps, useHostedConnections } from '@/state/hosted-apps'
-import { mailIcon } from '@/features/apps/email-form'
+import { useAppsGlance } from '@/features/apps/glance'
 import { useVault } from '@/state/vault'
 
 // The six things you do with an agent besides talking to it, as tiles that
@@ -38,14 +35,7 @@ export function QuickActions({ agent, onRoutines, onMemory, onApps, onPasswords,
   const telegram = useTelegram(agent.id)
   const pairing = usePairing(agent.id)?.phase
   const whatsapp = useWhatsApp(agent.id)
-  const apps = useAgentApps(agent.id).data
-  const mail = useMailStatus(agent.id).data
-  const viaNous = useConnectedHostedApps().data
-  const directBusy = useConnections((all) =>
-    Object.entries(all).some(([key, c]) => key.startsWith(`${agent.id}\n`) && c.phase !== 'done' && c.phase !== 'failed'),
-  )
-  const nousBusy = useHostedConnections((all) => Object.values(all).some((c) => c.phase !== 'done' && c.phase !== 'failed'))
-  const appsBusy = directBusy || nousBusy
+  const apps = useAppsGlance(agent.id)
   const vault = useVault(agent.id)
   const linking = useLinks((s) => s.byAgent[agent.id]?.phase)
   const asking = useAccess(agent.id).data?.pending
@@ -64,13 +54,8 @@ export function QuickActions({ agent, onRoutines, onMemory, onApps, onPasswords,
         ? `${memories.data.length} saved`
         : 'Empty'
   // Its own apps, its email and apps through Nous (which every agent shares), as icons in the folder.
-  const appsOn = [
-    ...(mail?.account && mail.enabled && !mail.off ? [mailIcon(mail.account.provider)] : []),
-    ...(apps ?? []).filter((a) => a.enabled && !a.name.startsWith('umbrel-')).map((a) => a.name),
-    ...(viaNous ?? []).filter((c) => c.account.state === 'connected').map((c) => c.app.icon),
-  ]
-  const appsAny = (apps?.length ?? 0) + (mail?.account ? 1 : 0) + (viaNous?.length ?? 0)
-  const appsNote = appsBusy ? 'Connecting' : !apps ? undefined : appsOn.length ? `${appsOn.length} on` : appsAny ? 'Off' : 'None yet'
+  const appsOn = apps.on.map((a) => a.icon)
+  const appsNote = apps.busy ? 'Connecting' : !apps.loaded ? undefined : appsOn.length ? `${appsOn.length} on` : apps.any ? 'Off' : 'None yet'
   const passwordsNote = vault.isPending
     ? undefined
     : vault.isError

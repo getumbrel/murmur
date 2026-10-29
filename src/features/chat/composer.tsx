@@ -23,9 +23,12 @@ import { parseCommand, type Command } from '@/features/commands/commands'
 import { useAutoGrow, useDraft } from './use-draft'
 import { useKeyboardInset } from './use-keyboard-inset'
 import { DictationNote, DictationPanel, MicButton, canDictate, useDictation } from '@/features/voice/dictation'
+import { IconChip, PicturesIcon } from '@/ui/icons'
+import { PlusMenu, usePlusMenu, type PlusItem } from './plus-menu'
 import './composer.css'
 
 export { useKeyboardInset } from './use-keyboard-inset'
+export type { PlusItem } from './plus-menu'
 
 /** Lets the screen hand files to the composer (e.g. dropped anywhere on the chat) or fill it in. */
 export type ComposerHandle = {
@@ -69,6 +72,11 @@ type Props = {
   above?: (text: string) => ReactNode
   /** Sees the text before it's sent; return true when it handled it, and nothing is sent. */
   onBeforeSend?: (text: string) => boolean
+  /**
+   * More that + offers after photos and files (an agent's apps, passwords and cards). Without any, + is
+   * the file picker.
+   */
+  more?: PlusItem[]
 }
 
 type Attachment = { id: string; file: File; url?: string }
@@ -109,6 +117,7 @@ export function Composer({
   voice,
   above,
   onBeforeSend,
+  more,
 }: Props) {
   const [text, setText, clearDraft] = useDraft(draftKey)
 
@@ -191,6 +200,24 @@ export function Composer({
   })
   const paletteId = useId()
 
+  // + offers photos and files, then whatever the screen adds (an agent's apps). Alone, it's the file picker.
+  const plus = usePlusMenu()
+  const plusId = useId()
+  const capsule = useRef<HTMLDivElement>(null)
+  const plusButton = useRef<HTMLButtonElement>(null)
+  const pick = () => picker.current?.click()
+  const menu = !!more?.length
+  const plusItems: PlusItem[] = [
+    {
+      key: 'files',
+      label: anyFile ? 'Photos & files' : 'Photos',
+      icon: <IconChip icon={PicturesIcon} size={32} radius={10} />,
+      onSelect: pick,
+    },
+    ...(more ?? []),
+  ]
+  const plusLabel = menu ? 'Add photos, files and more' : anyFile ? 'Add photos or files' : 'Add images'
+
   // Talk instead of type: the words land here to look over, never sent by themselves.
   const [micOk] = useState(canDictate)
   const dictation = useDictation({
@@ -200,6 +227,11 @@ export function Composer({
       focus()
     },
   })
+  // The menu steps aside for the mic, and for a composer that's switched off.
+  const { close: closePlus } = plus
+  useEffect(() => {
+    if (disabled || dictation.active) closePlus()
+  }, [disabled, dictation.active, closePlus])
 
   const hasContent = text.trim().length > 0 || images.length > 0
   const mode: 'send' | 'stop' | 'mic' =
@@ -226,6 +258,14 @@ export function Composer({
   }
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    // With the + menu open, the arrows go into it; typing carries on, and closes it (as Esc did).
+    if (plus.open && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+      e.preventDefault()
+      const items = document.getElementById(plusId)?.querySelectorAll<HTMLElement>('[role=menuitem]')
+      return items?.[e.key === 'ArrowDown' ? 0 : items.length - 1]?.focus()
+    }
+    if (plus.open) plus.close()
+    if (e.defaultPrevented) return
     if (palette.onKeyDown(e)) return
     if (e.key === 'Escape' && editing && onCancelEdit) {
       e.preventDefault()
@@ -279,14 +319,41 @@ export function Composer({
 
   const attach = (
     <button
+      ref={plusButton}
       type="button"
-      onClick={() => picker.current?.click()}
+      // A tap leaves focus, and the keyboard, where they were.
+      onPointerDown={(e) => menu && e.preventDefault()}
+      onClick={(e) => {
+        if (!menu) return pick()
+        if (plus.open) return plus.close()
+        // (A click with no pointer behind it came from the keyboard.)
+        plus.show(e.detail === 0)
+      }}
+      onKeyDown={(e) => {
+        if (!menu || plus.open || e.key !== 'ArrowUp') return
+        e.preventDefault()
+        plus.show(true)
+      }}
       disabled={disabled}
-      aria-label={anyFile ? 'Add photos or files' : 'Add images'}
-      title={anyFile ? 'Add photos or files' : 'Add images'}
-      className="pressable relative flex size-9 flex-none items-center justify-center rounded-full text-ink-2 hover:bg-fill-2 hover:text-ink disabled:opacity-40 after:absolute after:-inset-1"
+      aria-label={plusLabel}
+      title={plusLabel}
+      aria-haspopup={menu ? 'menu' : undefined}
+      aria-expanded={menu ? plus.open : undefined}
+      aria-controls={menu && plus.open ? plusId : undefined}
+      className={cn(
+        'pressable relative flex size-9 flex-none items-center justify-center rounded-full disabled:opacity-40 after:absolute after:-inset-1',
+        plus.open ? 'bg-fill-2 text-ink' : 'text-ink-2 hover:bg-fill-2 hover:text-ink',
+      )}
     >
-      <Plus size={20} strokeWidth={1.75} />
+      {/* Open, the + turns into the × that closes it. */}
+      <motion.span
+        initial={false}
+        animate={{ rotate: plus.open ? 45 : 0 }}
+        transition={{ type: 'spring', stiffness: 520, damping: 32 }}
+        className="flex"
+      >
+        <Plus size={20} strokeWidth={1.75} />
+      </motion.span>
     </button>
   )
 
@@ -329,9 +396,11 @@ export function Composer({
     <MotionConfig reducedMotion="user">
       <div className={cn('px-3 sm:px-6 sm:pb-6', keyboard ? 'pb-3' : 'pb-[max(env(safe-area-inset-bottom),12px)]', className)}>
         <div className="relative">
-          {commands && <CommandPalette state={palette} id={paletteId} />}
+          {commands && !plus.open && <CommandPalette state={palette} id={paletteId} />}
           {above?.(text)}
+          {menu && <PlusMenu state={plus} id={plusId} items={plusItems} capsule={capsule} trigger={plusButton} />}
           <div
+            ref={capsule}
             className="composer glass relative rounded-[26px] shadow-float"
             data-busy={busy || undefined}
             data-dragging={dragging || undefined}
