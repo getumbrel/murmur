@@ -132,6 +132,8 @@ describe('around a turn', () => {
 
   it('switches one chat’s model and thinking, leaving the agent’s alone', async () => {
     const { runtime } = await newChat(socket)
+    // Hermes 0.22.5 drops a pick that lands while the chat's agent is still being built, so pick once it's up.
+    await socket.event('session.info', runtime)
     const { provider } = await api.get('/api/model/options')
     // What chats.ts sends when a chat's model is picked.
     const set = await socket.request('config.set', { session_id: runtime, key: 'model', value: `murmur-fake-large --provider ${provider} --session` })
@@ -143,7 +145,7 @@ describe('around a turn', () => {
     const mine = (await modelRequests()).filter(
       (r) => r.body.tools?.length && JSON.stringify(r.body.messages ?? []).includes(ask),
     )
-    expect(mine.at(-1)?.body.model).toBe('murmur-fake-large')
+    expect(mine.at(-1)?.body).toMatchObject({ model: 'murmur-fake-large', reasoning_effort: 'high' })
     expect((await api.get('/api/model/info')).model).toBe('murmur-fake-small')
   })
 

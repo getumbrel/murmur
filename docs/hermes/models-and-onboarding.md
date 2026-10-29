@@ -509,8 +509,11 @@ Either form works [LIVE]; both validate the pick:
   * On `confirm_required:true`, resend with `confirm_expensive_model:true`.
   * Mid-turn switches come back `deferred` and apply at the next turn.
   * Without `session_id`: `4001 "config.set model requires a live session; …"` [LIVE].
-  * **Unverified:** on a lazy session (agent not yet built), the next `session.info` still showed the
-    old model. Rely on the `session.info` event after the first turn.
+  * Before the agent is built, the pick is pinned on the chat and its build uses it. A pick that lands
+    *while* the agent is being built (from just after `session.create` until its first `session.info`,
+    ~150 ms warm, seconds after Hermes starts) is dropped by Hermes 0.22.5, thinking level too: the
+    build read the chat before the pick, and `config.set` found no agent to switch, yet returns success
+    [LIVE + source]. Umbrel's image doesn't patch this yet, so the contract test picks after `session.info`.
 
 ### 5.5 Connected providers (Settings screen) and disconnect
 
