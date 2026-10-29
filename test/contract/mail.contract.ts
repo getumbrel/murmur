@@ -17,6 +17,7 @@ import { JsonRpcGatewayClient, type GatewayEvent } from '@/hermes/vendor/json-rp
 import type { ServerRequest } from '@/hermes/vendor/json-rpc-channel'
 import { createAgent } from '@/state/agents'
 import {
+  addMailPlugin,
   changeMailPassword,
   checkMail,
   connectMail,
@@ -59,15 +60,18 @@ let socket: Socket
 let other: string | undefined
 
 beforeAll(async () => {
+  startGateway()
+  // A Hermes of someone's own, given the plugin the way Murmur gives it one.
+  if (MAIL_PLUGIN === 'add') await addMailPlugin(qc, 'default')
   if (!(await fetchMailStatus('default')))
     throw new Error(
       `The Hermes image under test (${hermes.image}) has no murmur-mail plugin, so Murmur can't offer email. ` +
         'Pin a getumbrel/hermes-agent-umbrel release that bundles murmur-mail in umbrel/murmur/docker-compose.yml, ' +
         'test a local build (HERMES_IMAGE=murmur-local/hermes-agent-umbrel:v0.22.5-mail npm run test:contract), ' +
-        'or put the plugin into this image: MURMUR_MAIL_PLUGIN=pinned (the pinned image’s) or MURMUR_MAIL_PLUGIN=<its folder>.',
+        'or put the plugin into this image: MURMUR_MAIL_PLUGIN=pinned (the pinned image’s), MURMUR_MAIL_PLUGIN=<its folder>, ' +
+        'or MURMUR_MAIL_PLUGIN=add (Murmur adds it from GitHub).',
     )
   mail = await startGreenMail(hermes.container)
-  startGateway()
   // Put into a Hermes of Nous's own (the nightly run), it has no Umbrel start-up to switch it on:
   // Murmur switches it on itself, as it does for an agent made since Hermes started.
   if (MAIL_PLUGIN) await ensureMailPlugin('default')
@@ -188,8 +192,10 @@ describe('connecting', () => {
     await rpc('profiles.create', { name: copy, share_auth: true }, 120_000)
     try {
       expect(await envFile(copy)).toContain('MURMUR_MAIL_ADDRESS=ada@example.com')
-      // …which isn't that agent's: the plugin ignores it, and looking clears it away.
-      expect(await fetchMailStatus(copy)).toMatchObject({ enabled: false, configured: false, account: null })
+      // …which isn't that agent's: the plugin ignores it, and looking clears it away
+      // (where Hermes keeps plugins per agent, once the agent has one: then it's on).
+      if (MAIL_PLUGIN === 'add') await addMailPlugin(qc, copy)
+      expect(await fetchMailStatus(copy)).toMatchObject({ enabled: MAIL_PLUGIN === 'add', configured: false, account: null })
       expect(await envFile(copy)).not.toMatch(/MURMUR_MAIL_/)
     } finally {
       await api.call('DELETE', `/api/profiles/${copy}`)
@@ -198,10 +204,13 @@ describe('connecting', () => {
     other = await createAgent({ name: `Contract Mail ${Date.now().toString(36)}`, hue: 120, role: 'Mail' })
     for (let i = 0; i < 40 && /MURMUR_MAIL_/.test(await envFile(other)); i++) await sleep(250)
     expect(await envFile(other)).not.toMatch(/MURMUR_MAIL_/)
-    expect(await fetchMailStatus(other)).toMatchObject({ enabled: false, configured: false, account: null })
+    // Where Hermes keeps plugins per agent, it has none until Murmur adds it.
+    if (MAIL_PLUGIN === 'add') expect(await fetchMailStatus(other)).toBeNull()
+    else expect(await fetchMailStatus(other)).toMatchObject({ enabled: false, configured: false, account: null })
   }, 180_000)
 
   it('is each agent’s own, and switches the plugin on for an agent made since Hermes started', async () => {
+    if (MAIL_PLUGIN === 'add') await addMailPlugin(qc, other!)
     await connectMail(qc, other!, account('cy'))
     expect(await fetchMailStatus(other!)).toMatchObject({ enabled: true, configured: true, account: { address: MAILBOXES.cy.address } })
     expect((await fetchMailStatus('default'))?.account?.address).toBe(MAILBOXES.ada.address)

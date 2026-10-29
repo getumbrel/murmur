@@ -5,8 +5,9 @@
 //
 // It runs in Hermes as the `murmur-mail` plugin that Umbrel's Hermes image
 // bundles (getumbrel/hermes-agent-umbrel, umbrel-context/plugins/murmur-mail).
-// A Hermes without it answers 404 to the plugin's status route: then there's
-// no email to offer, and fetchMailStatus says so with null.
+// A Hermes without it answers 404 to the plugin's status route, and
+// fetchMailStatus says so with null: then Murmur offers to add it to the
+// agent with Hermes's own plugin installer (addMailPlugin).
 //
 // Each agent has its own account, kept in that agent's own .env (the keys
 // below), written and removed here through Hermes's /api/env. The plugin
@@ -19,6 +20,7 @@
 // copy in another agent, and fetchMailStatus clears such a copy away.
 
 import { useQuery, type QueryClient } from '@tanstack/react-query'
+import { create } from 'zustand'
 import { api, HermesError } from '@/hermes/rest'
 import { rpc } from '@/hermes/gateway'
 
@@ -260,9 +262,9 @@ export const mailKey = (profile: string) => ['mail', profile] as const
 export const mailHealthKey = (profile: string) => ['mail-health', profile] as const
 
 /**
- * The agent's email, or null when this Hermes has no email to offer (no Email
- * tile). A copy of another agent's account found in this agent's .env is
- * cleared away on the way (see the top of this file).
+ * The agent's email, or null when the agent's Hermes doesn't have the plugin
+ * (addMailPlugin adds it). A copy of another agent's account found in this
+ * agent's .env is cleared away on the way (see the top of this file).
  */
 export async function fetchMailStatus(profile: string): Promise<MailStatus | null> {
   let wire: WireStatus
@@ -314,14 +316,100 @@ async function switchMailTools(profile: string, on: boolean) {
   await api.put(`/api/config?${q(profile)}`, { config: { agent: { disabled_toolsets: next } } })
 }
 
-/** useQuery over fetchMailStatus: `data === null` means no email on this Hermes. */
-export function useMailStatus(profile: string, enabled = true) {
+/**
+ * useQuery over fetchMailStatus: `data === null` means the agent's Hermes has
+ * no email yet. While `watch`, that's asked again every few seconds, so a
+ * plugin added some other way (by hand, or from another tab) shows at once.
+ */
+export function useMailStatus(profile: string, enabled = true, { watch = false } = {}) {
   return useQuery({
     queryKey: mailKey(profile),
     enabled,
     queryFn: () => fetchMailStatus(profile),
     staleTime: 60_000,
+    refetchInterval: (query) => (watch && query.state.data === null ? 4000 : false),
   })
+}
+
+// ── Adding it ───────────────────────────────────────────────────────────────
+
+/**
+ * Where the plugin comes from for a Hermes without it (Nous's own image, a
+ * Hermes installed with pip, Umbrel's before v0.22.5-1): its folder in
+ * getumbrel/hermes-agent-umbrel, at the commit of the Umbrel image Murmur pins
+ * (umbrel/murmur/docker-compose.yml), so what an agent gets is the plugin
+ * Murmur is tested with. It moves with that image.
+ */
+export const MAIL_PLUGIN_SOURCE = {
+  repo: 'getumbrel/hermes-agent-umbrel',
+  path: 'umbrel-context/plugins/murmur-mail',
+  // v0.22.5-1
+  ref: 'fc056034e64ca8a3dc46968edf4b6f28dc0982cf',
+} as const
+
+/** What Hermes's installer takes: the repo, then the plugin's folder in it. */
+const SOURCE = `${MAIL_PLUGIN_SOURCE.repo}/${MAIL_PLUGIN_SOURCE.path}`
+
+/** The plugin's code, at that commit. */
+export const MAIL_PLUGIN_URL = `https://github.com/${MAIL_PLUGIN_SOURCE.repo}/tree/${MAIL_PLUGIN_SOURCE.ref}/${MAIL_PLUGIN_SOURCE.path}`
+
+/** The same install by hand, where Hermes runs, for one agent (`default` is the main one). */
+export const mailPluginCommand = (profile: string) =>
+  `hermes ${profile === 'default' ? '' : `-p ${profile} `}plugins install ${SOURCE} --ref ${MAIL_PLUGIN_SOURCE.ref} --enable`
+
+/** A clone can take a while on a slow line; Hermes itself gives one five minutes. */
+const INSTALL_MS = 5 * 60_000
+
+/** What went wrong adding the plugin, in a sentence: Hermes's error is about git, not about email. */
+export function pluginErrorText(error: unknown) {
+  const said = error instanceof Error ? error.message : String(error ?? '')
+  if (/download|clone|fetch|resolve|unable to access|could not read|timed? ?out|network|certificate|ssl|tls/i.test(said))
+    return 'Hermes couldn’t download it. Check that it can reach github.com, then try again.'
+  if (/connection|not connected/i.test(said)) return 'Couldn’t reach Hermes. Check that it’s running, then try again.'
+  return 'Hermes couldn’t add it. Try again in a moment.'
+}
+
+type PluginRow = { name: string; key: string }
+
+const adding = new Map<string, Promise<void>>()
+
+/** Agents Murmur is adding the plugin to right now, so the sheet still shows it after a close and reopen. */
+export const useAddingMailPlugin = create<Record<string, boolean>>(() => ({}))
+
+/**
+ * Gives an agent whose Hermes has no email the murmur-mail plugin, with
+ * Hermes's own installer (the one behind its Plugins page): cloned at
+ * MAIL_PLUGIN_SOURCE's commit and switched on for this agent, live in the
+ * running Hermes, no restart. Hermes keeps plugins per agent, so each agent
+ * gets its own. A copy that's there but switched off is switched on instead.
+ * Resolves once the plugin answers for the agent; throws an Error with the
+ * words to show. A second call while one runs joins it.
+ */
+export function addMailPlugin(qc: QueryClient, profile: string) {
+  const running = adding.get(profile)
+  if (running) return running
+  const job = installMailPlugin(qc, profile).finally(() => {
+    adding.delete(profile)
+    useAddingMailPlugin.setState({ [profile]: false })
+  })
+  adding.set(profile, job)
+  useAddingMailPlugin.setState({ [profile]: true })
+  return job
+}
+
+async function installMailPlugin(qc: QueryClient, profile: string) {
+  try {
+    const { plugins } = await rpc<{ plugins?: PluginRow[] | null }>('plugins.manage', { action: 'list', profile })
+    if (plugins?.some((p) => p.name === MAIL_PLUGIN || p.key === MAIL_PLUGIN))
+      await rpc('plugins.manage', { action: 'toggle', key: MAIL_PLUGIN, enable: true, profile })
+    else
+      await rpc('plugins.manage', { action: 'install', identifier: SOURCE, ref: MAIL_PLUGIN_SOURCE.ref, enable: true, profile }, INSTALL_MS)
+  } catch (e) {
+    throw new Error(pluginErrorText(e))
+  }
+  const status = await fetchMailStatus(profile).catch(() => null)
+  qc.setQueryData(mailKey(profile), status)
+  if (!status) throw new Error('Hermes added it, but isn’t answering for it yet. Restart Hermes, then try again.')
 }
 
 // ── Checking ────────────────────────────────────────────────────────────────
@@ -656,11 +744,13 @@ export async function changeMailPassword(qc: QueryClient, profile: string, passw
  * Clears another agent's account out of this agent's .env: Hermes copies the
  * main agent's .env into each agent it makes. The plugin never uses the copy;
  * this keeps its password from lingering. Worth calling right after making an
- * agent; fetchMailStatus does it whenever it finds one.
+ * agent; fetchMailStatus does it whenever it finds one. An agent just made on
+ * a Hermes that adds the plugin per agent has none to say so, and no account
+ * of its own yet either: what it has is the copy.
  */
 export async function forgetInheritedMail(profile: string) {
-  const wire = await api.get<WireStatus>(route('status', profile)).catch(() => null)
-  if (wire?.inherited) await clearMailKeys(profile)
+  const wire = await api.get<WireStatus>(route('status', profile)).catch((e) => (e instanceof HermesError && e.status === 404 ? 'none' : null))
+  if (wire === 'none' || wire?.inherited) await clearMailKeys(profile)
 }
 
 async function clearMailKeys(profile: string) {

@@ -182,8 +182,10 @@ Email isn't Hermes's own: it's the `murmur-mail` plugin that Umbrel's image bund
 ([getumbrel/hermes-agent-umbrel](https://github.com/getumbrel/hermes-agent-umbrel), `umbrel-context/plugins/murmur-mail`).
 One account per agent, from Gmail, iCloud Mail, Fastmail, Yahoo Mail or anywhere else, signed in with an app
 password over IMAP and SMTP. Mail goes straight between the provider and Hermes. The agent can search, read and
-draft; every send waits for the person to approve that exact message. A Hermes without the plugin answers `404`
-to its status route, and Murmur shows no Email tile.
+draft; every send waits for the person to approve that exact message. A Hermes without the plugin (Nous's own
+image, one installed with pip) answers `404` to its status route. Email still leads the wall there, and its first
+tap adds the plugin with Hermes's own installer (`addMailPlugin`), from GitHub at the commit of the Umbrel image
+Murmur pins, for that agent, without a restart. Hermes keeps installed plugins per agent, so each agent gets its own.
 
 | Step | Hermes |
 |---|---|
@@ -192,10 +194,11 @@ to its status route, and Murmur shows no Email tile.
 | Sign in, before saving anything | `POST /api/plugins/murmur-mail/check?profile=` with the whole account (`address`, `password`, `imap_host`/`_port`/`_security`, `smtp_…`, `provider`, `save_sent`) → `{ok:true, account, newest}` (the three newest messages, the proof) or `{ok:false, error:{kind, where, detail}}` |
 | Save | `PUT /api/env {key, value, profile}` for each `MURMUR_MAIL_*` key: `AGENT` first, `PASSWORD` last; an earlier account's extras are `DELETE /api/env {key, profile}` |
 | Switch the plugin on for an agent made since Hermes started | RPC `plugins.manage {action:'toggle', key:'murmur-mail', enable:true, profile}` |
+| Add it to a Hermes without it | RPC `plugins.manage {action:'list', profile}`, then `{action:'install', identifier:'getumbrel/hermes-agent-umbrel/umbrel-context/plugins/murmur-mail', ref, enable:true, profile}`: Hermes clones it into the agent's `plugins/`, switches it on and reloads, and its routes answer from the next request. A copy that's there but off gets `toggle` instead. By hand, `hermes [-p agent] plugins install … --enable` needs a Hermes restart before the tools load |
 | Bring the tools to the agent's next chat | `PUT /api/config {config:{plugins:{entries:{'murmur-mail':{settings:{account}}}}}}` |
 | A new password | `POST …/check {password}` (laid over the saved account), then `PUT /api/env` `MURMUR_MAIL_PASSWORD` |
 | Remove | `DELETE /api/env` for every `MURMUR_MAIL_*` key, then `account: ''` in the plugin's settings |
-| A new agent | `GET …/status` → `inherited: true` → delete the copied keys (`createAgent` calls `forgetInheritedMail`) |
+| A new agent | `GET …/status` → `inherited: true` (or `404`, on a Hermes that adds the plugin per agent) → delete the copied keys (`createAgent` calls `forgetInheritedMail`) |
 
 **In a chat.** The tools are `email_search`, `email_read`, `email_draft` and `email_send` (toolset `email`).
 Hermes loads plugin tools on demand, so the model reaches them through `tool_search` and `tool_call`, but

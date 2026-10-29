@@ -1,5 +1,5 @@
-// What the Apps sheet's wall offers, in order: Email first (when the agent's
-// Hermes has it and the agent has none yet), then everyday apps, Hermes's own
+// What the Apps sheet's wall offers, in order: Email first (until the agent
+// has an account, on any Hermes), then everyday apps, Hermes's own
 // and those through Nous among them by how much they're used, then developer
 // tools. Nothing already connected, and nothing that can't connect. Search
 // covers all of it, by name, what it does, and the names people know it by.
@@ -33,7 +33,7 @@ export function arrangeWall({
   /** Nous's apps (none when this Hermes can't reach them). */
   hosted: readonly HostedApp[]
   nameOf: (name: string) => string
-  /** Offer email: this Hermes has it and the agent hasn't connected an account. */
+  /** Offer email: the agent hasn't connected an account (a Hermes without the plugin gets it added first). */
   email: boolean
   /** Hermes's apps the agent already has. */
   added: ReadonlySet<string>

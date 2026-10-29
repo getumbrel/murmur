@@ -27,6 +27,7 @@ export function Home({
   servers,
   failed,
   mail,
+  mailMissing,
   mailHealth,
   hosted,
   connectedHosted,
@@ -42,8 +43,10 @@ export function Home({
   catalog: CatalogApp[] | undefined
   servers: AppServer[] | undefined
   failed: boolean
-  /** The agent's email: undefined while Murmur asks, null when this Hermes has none. */
+  /** The agent's email: undefined while Murmur asks, null when it has none to show. */
   mail: MailStatus | null | undefined
+  /** The agent's Hermes doesn't have email yet: the Email tile still leads, and adds it. */
+  mailMissing: boolean
   mailHealth: MailHealth | undefined
   /** Nous's apps: undefined while Murmur asks. */
   hosted: HostedCatalog | undefined
@@ -78,11 +81,11 @@ export function Home({
         direct: catalog ?? [],
         hosted: hosted?.available ? hosted.apps : [],
         nameOf: appName,
-        email: !!mail && !mail.configured,
+        email: mail ? !mail.configured : mailMissing,
         added: new Set(servers?.map((s) => s.name)),
         connectedSlugs: new Set(viaNous.map((c) => c.app.slug)),
       }),
-    [catalog, hosted, mail, servers, viaNous],
+    [catalog, hosted, mail, mailMissing, servers, viaNous],
   )
   // The wall waits for what decides its order (email leads, Nous's apps sit among the rest), so nothing jumps.
   const ready = !!catalog && mail !== undefined && (hosted !== undefined || waited)

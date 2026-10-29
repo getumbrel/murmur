@@ -56,12 +56,14 @@ async function until<T>(what: string, timeoutMs: number, check: () => Promise<T 
  * doesn't bundle it (Hermes's own releases, in the nightly run) or to try a
  * working copy without building an image. MURMUR_MAIL_PLUGIN is the plugin's
  * folder (umbrel-context/plugins/murmur-mail in getumbrel/hermes-agent-umbrel),
- * or `pinned` for the one in the Umbrel image Murmur pins. Unset: the image's own.
+ * or `pinned` for the one in the Umbrel image Murmur pins. `add` puts nothing in:
+ * the email tests have Murmur add it from GitHub, as it does for a Hermes of
+ * someone's own (addMailPlugin). Unset: the image's own.
  */
 export const MAIL_PLUGIN = process.env.MURMUR_MAIL_PLUGIN?.trim() || ''
 
 async function mailPlugin(): Promise<{ dir: string; done: () => void } | null> {
-  if (!MAIL_PLUGIN) return null
+  if (!MAIL_PLUGIN || MAIL_PLUGIN === 'add') return null
   if (MAIL_PLUGIN !== 'pinned') return { dir: resolve(MAIL_PLUGIN), done: () => {} }
   const pinned = hermesImage({ pinned: true })
   const dir = mkdtempSync(join(tmpdir(), 'murmur-mail-plugin-'))

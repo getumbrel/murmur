@@ -5,8 +5,10 @@ name: Hermes nightly
 # Run it by hand to try any image first, such as an Umbrel build to pin next.
 #
 # Hermes's own image has no murmur-mail (email for agents, which Umbrel's image
-# bundles), so the one in the Umbrel image Murmur pins is put into it: the email
-# tests then check that plugin against Hermes's next release too.
+# bundles), so each night runs twice: once with the one in the Umbrel image
+# Murmur pins put into it, checking that plugin against Hermes's next release
+# too, and once with Murmur adding it from GitHub, as it does for someone
+# running that release themselves.
 on:
   schedule:
     - cron: '17 4 * * *'
@@ -16,7 +18,7 @@ on:
         description: Hermes image to test
         default: nousresearch/hermes-agent:latest
       mail_plugin:
-        description: murmur-mail to put into it ("pinned" for the pinned Umbrel image's; empty for the image's own)
+        description: murmur-mail to put into it ("pinned" for the pinned Umbrel image's, "add" for Murmur to add it; empty for the image's own)
         default: pinned
 
 permissions:
@@ -25,9 +27,13 @@ permissions:
 jobs:
   hermes-contract:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        mail_plugin: ${{ github.event_name == 'schedule' && fromJSON('["pinned","add"]') || fromJSON(format('["{0}"]', inputs.mail_plugin)) }}
     env:
       HERMES_IMAGE: ${{ inputs.image || 'nousresearch/hermes-agent:latest' }}
-      MURMUR_MAIL_PLUGIN: ${{ github.event_name == 'schedule' && 'pinned' || inputs.mail_plugin }}
+      MURMUR_MAIL_PLUGIN: ${{ matrix.mail_plugin }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -39,5 +45,5 @@ jobs:
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: hermes-contract-logs
+          name: hermes-contract-logs-${{ matrix.mail_plugin || 'own' }}
           path: test-results/contract/

@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } fr
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { ArrowUp, ArrowUpRight, Check, ChevronDown } from 'lucide-react'
+import { ArrowUp, ArrowUpRight, Check, ChevronDown, Copy } from 'lucide-react'
 import { Button } from '@/ui/button'
 import { ConfirmCard } from '@/ui/confirm-card'
 import { Grow } from '@/ui/grow'
@@ -14,16 +14,20 @@ import { cn } from '@/lib/cn'
 import { haptic } from '@/lib/haptics'
 import type { Agent } from '@/state/agents'
 import {
+  addMailPlugin,
   changeMailPassword,
   connectMail,
   disconnectMail,
   looksLikeAddress,
+  mailPluginCommand,
   mailWebUrl,
+  MAIL_PLUGIN_URL,
   MAIL_PROVIDER_ORDER,
   MAIL_PROVIDERS,
   MailError,
   providerFor,
   setMailEnabled,
+  useAddingMailPlugin,
   type MailHealth,
   type MailProof,
   type MailProviderId,
@@ -31,6 +35,7 @@ import {
   type MailStatus,
 } from '@/state/mail'
 import { relativeDay } from '@/features/chat-screen/relative-day'
+import { useCopy } from '@/features/chat/use-copy'
 import { AppIcon } from './app-icon'
 import { CodeField } from './code-field'
 import {
@@ -49,7 +54,7 @@ import {
   type MailField,
   type ServerDraft,
 } from './email-form'
-import { AppHeader, Heading, Pair, RowStatus, ease } from './parts'
+import { AppHeader, Heading, OutLink, Pair, RowStatus, ease } from './parts'
 
 // An agent's own email: one account, connected with an app password (or,
 // for another account, its password and servers). The agent can search, read
@@ -124,24 +129,151 @@ export function EmailRow({
 
 // ── Choosing ────────────────────────────────────────────────────────────────
 
-export function EmailStart({ agent, onPick }: { agent: Agent; onPick: (provider: MailProviderId) => void }) {
+/**
+ * Where an agent's email starts: the providers to pick from. On a Hermes
+ * without the plugin (`missing`), a button adds it first, and the providers
+ * take the button's place the moment Hermes has it.
+ */
+export function EmailStart({
+  agent,
+  missing,
+  onPick,
+}: {
+  agent: Agent
+  missing: boolean
+  onPick: (provider: MailProviderId) => void
+}) {
+  const reduce = useReducedMotion()
+  const swap = {
+    initial: { opacity: 0, y: reduce ? 0 : 6 },
+    animate: { opacity: 1, y: 0, transition: { duration: 0.3, ease } },
+    exit: { opacity: 0, transition: { duration: 0.12 } },
+  }
   return (
     <div className="pb-1">
       <Pair agent={agent} icon={mailIcon('other')} state="linking" />
-      <Heading title={`Give ${agent.name} your email`}>It can search, read and draft. Sending always asks you first.</Heading>
+      <Heading title={`Give ${agent.name} your email`}>
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.span key={missing ? 'missing' : 'ready'} {...swap} className="block">
+            {missing
+              ? 'This Hermes doesn’t have email yet. Murmur can add it in a few seconds, as a small open-source plugin.'
+              : 'It can search, read and draft. Sending always asks you first.'}
+          </motion.span>
+        </AnimatePresence>
+      </Heading>
+      <AnimatePresence mode="wait" initial={false}>
+        {missing ? (
+          <motion.div key="add" {...swap}>
+            <AddPlugin agent={agent} />
+          </motion.div>
+        ) : (
+          <motion.div key="pick" {...swap} className="mt-7">
+            <ListGroup>
+              {MAIL_PROVIDER_ORDER.map((id) => (
+                <ListRow
+                  key={id}
+                  icon={<AppIcon name={mailIcon(id)} size={30} />}
+                  title={MAIL_PROVIDERS[id].name}
+                  subtitle={id === 'other' ? 'Work, school or your own domain' : undefined}
+                  chevron
+                  onClick={() => onPick(id)}
+                />
+              ))}
+            </ListGroup>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
+/**
+ * One tap gives the agent the plugin, with Hermes's own installer
+ * (addMailPlugin). If Hermes can't, it says why, and how to add it by hand.
+ */
+function AddPlugin({ agent }: { agent: Agent }) {
+  const qc = useQueryClient()
+  const adding = useAddingMailPlugin((all) => !!all[agent.id])
+  const [slow, setSlow] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  // A download takes a few seconds: say what's happening once it's clearly not instant.
+  useEffect(() => {
+    if (!adding) return setSlow(false)
+    const t = setTimeout(() => setSlow(true), 1400)
+    return () => clearTimeout(t)
+  }, [adding])
+
+  const add = async () => {
+    setError(null)
+    try {
+      await addMailPlugin(qc, agent.id)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  return (
+    <div>
+      <div className="mt-3 text-center">
+        <OutLink href={MAIL_PLUGIN_URL}>
+          See the plugin
+          <ArrowUpRight size={14} strokeWidth={2.2} aria-hidden />
+        </OutLink>
+      </div>
       <div className="mt-7">
-        <ListGroup>
-          {MAIL_PROVIDER_ORDER.map((id) => (
-            <ListRow
-              key={id}
-              icon={<AppIcon name={mailIcon(id)} size={30} />}
-              title={MAIL_PROVIDERS[id].name}
-              subtitle={id === 'other' ? 'Work, school or your own domain' : undefined}
-              chevron
-              onClick={() => onPick(id)}
-            />
-          ))}
-        </ListGroup>
+        <Button variant="accent" size="lg" onClick={() => void add()} loading={adding}>
+          {error ? 'Try again' : 'Add email'}
+        </Button>
+      </div>
+      <AnimatePresence initial={false} mode="popLayout">
+        {error ? (
+          <motion.div key="error" initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.24, ease }}>
+            <p role="alert" className="mt-2 px-4 text-center text-footnote text-pretty text-danger">
+              {error}
+            </p>
+            <ByHand profile={agent.id} />
+          </motion.div>
+        ) : (
+          slow && (
+            <motion.p
+              key="slow"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.24, ease }}
+              className="mt-2 text-center text-footnote text-ink-3"
+            >
+              Hermes is downloading it. This takes a few seconds.
+            </motion.p>
+          )
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
+/** The same install, to run where Hermes runs. The providers show here on their own once it's in. */
+function ByHand({ profile }: { profile: string }) {
+  const { copied, copy } = useCopy()
+  const command = mailPluginCommand(profile)
+  return (
+    <div className="mt-7">
+      <p className="px-4 text-footnote text-pretty text-ink-2">Or add it yourself where Hermes runs, then restart Hermes:</p>
+      <div className="mt-2 flex items-center gap-1 rounded-xl bg-fill-1 pr-1.5">
+        {/* One line that scrolls, fading out at the edge: the copy button is the way to take it. */}
+        <code className="no-scrollbar min-w-0 flex-1 overflow-x-auto py-3 pl-4 font-mono text-[12.5px] whitespace-nowrap text-ink-2 [mask-image:linear-gradient(to_right,black_calc(100%-28px),transparent)] select-all">
+          {command}
+        </code>
+        <button
+          type="button"
+          onClick={() => void copy(command)}
+          aria-label={copied ? 'Copied' : 'Copy command'}
+          title="Copy"
+          className="pressable relative grid size-8 flex-none place-items-center rounded-full text-ink-3 hover:bg-fill-2 hover:text-ink-2 after:absolute after:-inset-1.5"
+        >
+          {copied ? <Check size={15} strokeWidth={2.2} /> : <Copy size={15} strokeWidth={1.9} />}
+        </button>
       </div>
     </div>
   )

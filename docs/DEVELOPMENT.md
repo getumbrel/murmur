@@ -101,9 +101,9 @@ Murmur depends on a lot of Hermes behaviour that no type can describe, such as h
   # here
   HERMES_IMAGE=murmur-local/hermes-agent-umbrel:v0.22.5-mail npm run test:contract
   ```
-  Or put the plugin into any image as it starts: `MURMUR_MAIL_PLUGIN=<hermes-agent-umbrel>/umbrel-context/plugins/murmur-mail` tests a working copy without building (into the pinned image, say), and `MURMUR_MAIL_PLUGIN=pinned` takes the one in the pinned Umbrel image. The plugin's own unit tests live with it, in that repo's `tests/`.
+  Or put the plugin into any image as it starts: `MURMUR_MAIL_PLUGIN=<hermes-agent-umbrel>/umbrel-context/plugins/murmur-mail` tests a working copy without building (into the pinned image, say), and `MURMUR_MAIL_PLUGIN=pinned` takes the one in the pinned Umbrel image. `MURMUR_MAIL_PLUGIN=add` puts nothing in: the email tests have Murmur add it from GitHub, the way it does for a Hermes of someone's own (`addMailPlugin`), so Hermes needs to reach github.com. The plugin's own unit tests live with it, in that repo's `tests/`.
 - **Another Hermes.** Set `HERMES_IMAGE` to test against a different image, for example `HERMES_IMAGE=nousresearch/hermes-agent:latest npm run test:contract`.
-- **In CI.** `ci.yml` runs the suite on every pull request against the pinned Hermes. `hermes-nightly.yml` runs it every night against Hermes's newest release, with the pinned image's `murmur-mail` put into it (`MURMUR_MAIL_PLUGIN=pinned`), so the email tests check that plugin against Hermes's next release too. It can also be started by hand with any image, such as an Umbrel build you're about to pin.
+- **In CI.** `ci.yml` runs the suite on every pull request against the pinned Hermes. `hermes-nightly.yml` runs it every night against Hermes's newest release, twice: with the pinned image's `murmur-mail` put into it (`MURMUR_MAIL_PLUGIN=pinned`), so the email tests check that plugin against Hermes's next release too, and with Murmur adding it (`MURMUR_MAIL_PLUGIN=add`), as it does for anyone running that release themselves. It can also be started by hand with any image, such as an Umbrel build you're about to pin.
 
 When the suite finds something new about Hermes, add a test for it here, rather than another probe script in `docs/hermes/scripts/`. Those scripts remain for exploring.
 
@@ -120,7 +120,7 @@ When the suite finds something new about Hermes, add a test for it here, rather 
    done
    curl -fsSL "https://raw.githubusercontent.com/NousResearch/hermes-agent/$TAG/LICENSE" -o src/hermes/vendor/LICENSE
    ```
-3. Update the tag in `src/hermes/vendor/README.md`, and the image in `umbrel/murmur/docker-compose.yml`, `docker-compose.yml` and `dev/docker-compose.yml` (which upgrades `dev/hermes-data` in place on its next start).
+3. Update the tag in `src/hermes/vendor/README.md`, and the image in `umbrel/murmur/docker-compose.yml`, `docker-compose.yml` and `dev/docker-compose.yml` (which upgrades `dev/hermes-data` in place on its next start). If the new image's `murmur-mail` changed, move `MAIL_PLUGIN_SOURCE.ref` in `src/state/mail.ts` to the hermes-agent-umbrel commit it was built from, so a Hermes of someone's own gets the same plugin.
 4. Run `npm run typecheck`. Contract drift shows up as type errors.
 5. Run `npm run test:contract`. It tests the image you just pinned, and any behaviour Murmur relies on that changed fails there, the `murmur-mail` plugin's included (the Umbrel image must bundle it; see above).
 

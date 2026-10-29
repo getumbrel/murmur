@@ -26,9 +26,11 @@ vi.mock('@/hermes/gateway', () => ({ rpc: (...args: unknown[]) => rpc(...args) }
 
 const mail = await import('./mail')
 const {
+  MAIL_PLUGIN_SOURCE,
   MAIL_PROVIDERS,
   MAIL_PROVIDER_ORDER,
   accountFor,
+  addMailPlugin,
   changeMailPassword,
   cleanAppPassword,
   connectMail,
@@ -39,12 +41,15 @@ const {
   healthOf,
   isSendApproval,
   mailErrorText,
+  mailPluginCommand,
   mailWebUrl,
   parsePort,
+  pluginErrorText,
   providerFor,
   readMailResult,
   readSendApproval,
   toCheck,
+  useAddingMailPlugin,
 } = mail
 
 const qc = {
@@ -79,6 +84,7 @@ let env: Record<string, string>
 beforeEach(() => {
   calls.length = 0
   rpc.mockClear()
+  rpc.mockImplementation(() => Promise.resolve({}))
   for (const key of Object.keys(routes)) delete routes[key]
   env = {}
   routes['GET /api/env'] = () => Object.fromEntries(Object.keys(env).map((k) => [k, { is_set: true }]))
@@ -170,7 +176,7 @@ describe('the account', () => {
 })
 
 describe('status', () => {
-  it('is null on a Hermes without the plugin, so there’s no Email tile', async () => {
+  it('is null on a Hermes without the plugin, which Murmur then offers to add', async () => {
     delete routes['GET /api/plugins/murmur-mail/status']
     expect(await fetchMailStatus('default')).toBeNull()
   })
@@ -201,10 +207,87 @@ describe('status', () => {
     expect(env).toEqual({ OPENAI_API_KEY: 'sk' })
   })
 
+  it('clears the copy from an agent just made on a Hermes without the plugin', async () => {
+    env = { MURMUR_MAIL_AGENT: 'default', MURMUR_MAIL_ADDRESS: 'ada@gmail.com', MURMUR_MAIL_PASSWORD: 'pw', OPENAI_API_KEY: 'sk' }
+    delete routes['GET /api/plugins/murmur-mail/status']
+    await forgetInheritedMail('scout')
+    expect(env).toEqual({ OPENAI_API_KEY: 'sk' })
+  })
+
   it('leaves an agent’s own account alone when asked to forget a copy', async () => {
     env = { MURMUR_MAIL_AGENT: 'scout', MURMUR_MAIL_PASSWORD: 'pw' }
     await forgetInheritedMail('scout')
     expect(env).toEqual({ MURMUR_MAIL_AGENT: 'scout', MURMUR_MAIL_PASSWORD: 'pw' })
+  })
+})
+
+describe('adding it', () => {
+  const SOURCE = 'getumbrel/hermes-agent-umbrel/umbrel-context/plugins/murmur-mail'
+  // Hermes's plugins.manage, for an agent that has `installed` (and answers for it once added).
+  const hermes = (installed: string[] = []) =>
+    rpc.mockImplementation(async (...args: unknown[]) => {
+      const [, params] = args as [string, { action: string }]
+      if (params.action === 'list') return { plugins: installed.map((name) => ({ name, key: name })) }
+      routes['GET /api/plugins/murmur-mail/status'] = () => status()
+      return { ok: true }
+    })
+  const { setQueryData } = qc as unknown as { setQueryData: ReturnType<typeof vi.fn> }
+  beforeEach(() => {
+    delete routes['GET /api/plugins/murmur-mail/status']
+    setQueryData.mockClear()
+  })
+
+  it('installs the plugin at the pinned commit for the agent, then reads its email', async () => {
+    hermes(['some-other-plugin'])
+    await addMailPlugin(qc, 'scout')
+    expect(rpc).toHaveBeenCalledWith('plugins.manage', { action: 'install', identifier: SOURCE, ref: MAIL_PLUGIN_SOURCE.ref, enable: true, profile: 'scout' }, 300_000)
+    expect(rpc).not.toHaveBeenCalledWith('plugins.manage', expect.objectContaining({ action: 'toggle' }))
+    expect(setQueryData).toHaveBeenCalledWith(['mail', 'scout'], expect.objectContaining({ configured: false, account: null }))
+  })
+
+  it('switches on a copy that’s there but off, rather than installing another', async () => {
+    hermes(['murmur-mail'])
+    await addMailPlugin(qc, 'default')
+    expect(rpc).toHaveBeenCalledWith('plugins.manage', { action: 'toggle', key: 'murmur-mail', enable: true, profile: 'default' })
+    expect(rpc).not.toHaveBeenCalledWith('plugins.manage', expect.objectContaining({ action: 'install' }), expect.anything())
+  })
+
+  it('runs once for an agent however many times it’s asked, and says so while it does', async () => {
+    hermes()
+    const first = addMailPlugin(qc, 'scout')
+    expect(addMailPlugin(qc, 'scout')).toBe(first)
+    expect(useAddingMailPlugin.getState()).toMatchObject({ scout: true })
+    await first
+    expect(rpc.mock.calls.filter(([, p]) => (p as { action: string }).action === 'install')).toHaveLength(1)
+    expect(useAddingMailPlugin.getState()).toMatchObject({ scout: false })
+  })
+
+  it('says what went wrong in words, and can be tried again', async () => {
+    rpc.mockImplementation(() => Promise.reject(new Error("git clone failed: fatal: unable to access 'https://github.com/…': Could not resolve host: github.com")))
+    await expect(addMailPlugin(qc, 'scout')).rejects.toThrow('Hermes couldn’t download it. Check that it can reach github.com, then try again.')
+    expect(useAddingMailPlugin.getState()).toMatchObject({ scout: false })
+    hermes()
+    await expect(addMailPlugin(qc, 'scout')).resolves.toBeUndefined()
+  })
+
+  it('doesn’t claim email works until the plugin answers for the agent', async () => {
+    rpc.mockImplementation(async (...args: unknown[]) => ((args[1] as { action: string }).action === 'list' ? { plugins: [] } : { ok: true }))
+    await expect(addMailPlugin(qc, 'scout')).rejects.toThrow('Hermes added it, but isn’t answering for it yet. Restart Hermes, then try again.')
+    expect(setQueryData).toHaveBeenCalledWith(['mail', 'scout'], null)
+  })
+
+  it('keeps git out of what it says', () => {
+    expect(pluginErrorText(new Error('Timed out after 300s'))).toMatch(/^Hermes couldn’t download it/)
+    expect(pluginErrorText(new Error('SSL certificate problem: unable to get local issuer certificate'))).toMatch(/^Hermes couldn’t download it/)
+    expect(pluginErrorText(new Error('gateway not connected'))).toBe('Couldn’t reach Hermes. Check that it’s running, then try again.')
+    expect(pluginErrorText(new Error('plugin.yaml missing'))).toBe('Hermes couldn’t add it. Try again in a moment.')
+    expect(pluginErrorText(undefined)).toBe('Hermes couldn’t add it. Try again in a moment.')
+  })
+
+  it('gives the same install by hand, for the agent', () => {
+    expect(mailPluginCommand('default')).toBe(`hermes plugins install ${SOURCE} --ref ${MAIL_PLUGIN_SOURCE.ref} --enable`)
+    expect(mailPluginCommand('scout')).toBe(`hermes -p scout plugins install ${SOURCE} --ref ${MAIL_PLUGIN_SOURCE.ref} --enable`)
+    expect(MAIL_PLUGIN_SOURCE.ref).toMatch(/^[0-9a-f]{40}$/)
   })
 })
 

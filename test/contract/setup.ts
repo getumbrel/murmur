@@ -28,7 +28,7 @@ export default async function setup(project: TestProject) {
     await model.close()
     throw error
   })
-  console.log(`Contract suite: Hermes ${hermes.version} (${hermes.image})${MAIL_PLUGIN ? `, with murmur-mail from ${MAIL_PLUGIN}` : ''}`)
+  console.log(`Contract suite: Hermes ${hermes.version} (${hermes.image})${MAIL_PLUGIN === 'add' ? ', murmur-mail added by Murmur' : MAIL_PLUGIN ? `, with murmur-mail from ${MAIL_PLUGIN}` : ''}`)
   const dataDir = mkdtempSync(join(tmpdir(), 'murmur-contract-'))
   const murmur = await startMurmur(hermes.url, dataDir).catch(async (error) => {
     await Promise.all([hermes.stop(), model.close()])

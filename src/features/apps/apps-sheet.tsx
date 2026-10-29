@@ -48,7 +48,8 @@ import { ease } from './parts'
 // of apps to add. Three kinds, one wall:
 // - Hermes's own apps (direct.tsx): per agent, signed into in a new tab.
 // - Email (email.tsx): the agent's own account, with an app password. It
-//   leads the wall when this Hermes has it (Umbrel's image does).
+//   leads the wall; on a Hermes without the plugin (Umbrel's image has it),
+//   its first tap adds it.
 // - Apps through Nous Research (hosted.tsx): Slack, Asana and others Hermes
 //   can't sign in to itself, asked about once, for every agent at once.
 // Each opens a view of its own; the sheet's title becomes a way back.
@@ -71,17 +72,20 @@ export function AppsSheet({ agent, open, onOpenChange }: Props) {
   const reduce = useReducedMotion()
   // Fetched with the page, so the wall is there the moment the sheet opens.
   const catalog = useCatalog()
-  const mail = useMailStatus(agent.id)
+  const [route, setRoute] = useState<Route>({ to: 'list' })
+  // Watched while Email is open on a Hermes without it, so a plugin added by hand shows by itself.
+  const mail = useMailStatus(agent.id, true, { watch: open && route.to === 'email' })
   const hosted = useHostedCatalog()
   const servers = useAgentApps(agent.id, open)
   const connectedHosted = useConnectedHostedApps(open)
   const consent = useHostedConsent(open && hosted.data?.available === true)
   const status = mail.isError ? null : mail.data
+  // Hermes said the agent has no email (no plugin), rather than not answering.
+  const missing = mail.data === null
   const mailConfigured = !!status?.configured && !!status.account
   // Each check is a real sign-in: only while the sheet is open, and only for an account that's on.
   const mailHealth = useMailHealth(agent.id, open && mailConfigured && !!status && mailOn(status)).data
 
-  const [route, setRoute] = useState<Route>({ to: 'list' })
   const [dir, setDir] = useState(1)
   const [draft, setDraft] = useState<MailDraft>(emptyDraft)
   const [connected, setConnected] = useState<Connected | null>(null)
@@ -186,6 +190,7 @@ export function AppsSheet({ agent, open, onOpenChange }: Props) {
             servers={servers.data}
             failed={catalog.isError || servers.isError}
             mail={mail.isPending ? undefined : status}
+            mailMissing={missing}
             mailHealth={mailHealth}
             hosted={hosted.isError ? { available: false, apps: [] } : hosted.data}
             connectedHosted={connectedHosted.data}
@@ -223,7 +228,7 @@ export function AppsSheet({ agent, open, onOpenChange }: Props) {
             onRemoved={() => go({ to: 'list' })}
           />
         ) : (
-          <EmailStart agent={agent} onPick={(provider) => go({ to: 'email-form', provider })} />
+          <EmailStart agent={agent} missing={missing} onPick={(provider) => go({ to: 'email-form', provider })} />
         )
       case 'email-form':
       case 'email-password': {
