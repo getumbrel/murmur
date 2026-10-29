@@ -14,6 +14,8 @@ const login = (origin: string): VaultEntry => ({
   kind: 'login',
   label: origin.slice(8),
   origin,
+  anySite: false,
+  usedOn: [],
   otp: false,
 })
 const card = (label: string): VaultEntry => ({
@@ -21,6 +23,8 @@ const card = (label: string): VaultEntry => ({
   kind: 'payment',
   label,
   origin: 'https://shop.example',
+  anySite: false,
+  usedOn: [],
   otp: false,
 })
 

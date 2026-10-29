@@ -1,12 +1,15 @@
 import { memo, useLayoutEffect, useRef, useState } from 'react'
 import { motion } from 'motion/react'
 import * as Popover from '@radix-ui/react-popover'
-import { Ban, Check, Clock, Ellipsis } from 'lucide-react'
+import { Ban, Check, Clock, Ellipsis, LockKeyhole } from 'lucide-react'
 import { Orb } from '@/ui/orb'
 import { Button, IconButton } from '@/ui/button'
 import { cn } from '@/lib/cn'
 import type { SendApproval } from '@/state/mail-chat'
-import type { ApprovalChoice, ChatItem } from './types'
+import { cardFromLabel } from '@/state/vault'
+import { CardFace } from '@/features/vault/card-face'
+import { SiteIcon } from '@/features/vault/site-icon'
+import type { ApprovalChoice, CardPayment, ChatItem } from './types'
 import { Swap, arrive } from './collapse'
 
 type Item = Extract<ChatItem, { kind: 'approval' }>
@@ -21,6 +24,9 @@ const RECEIPT = {
 /** An email's card asks Send or Don't send, and its receipt says which. */
 const EMAIL = { once: 'Send', deny: 'Don’t send' } as const
 const EMAIL_RECEIPT = { approved: 'Send approved', denied: 'Not sent' } as const
+/** A saved card's asks Use card or Not now. */
+const PAY = { once: 'Use card', deny: 'Not now' } as const
+const PAY_RECEIPT = { approved: 'Card used', denied: 'Card not used' } as const
 
 export const ApprovalCard = memo(function ApprovalCard({
   item,
@@ -114,12 +120,26 @@ function Card({
         )}
       </div>
 
-      {item.email ? <EmailPreview email={item.email} /> : item.command && <Command text={item.command} prose={item.prose} />}
+      {item.email ? (
+        <EmailPreview email={item.email} />
+      ) : item.payment ? (
+        <PaymentPreview payment={item.payment} />
+      ) : (
+        item.command && <Command text={item.command} prose={item.prose} />
+      )}
 
-      <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-        {button('deny', item.email ? EMAIL.deny : 'Don’t allow', 'secondary')}
-        {button('always', 'Always allow', 'secondary')}
-        {button('once', item.email ? EMAIL.once : 'Allow', 'primary')}
+      <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center">
+        {item.payment && (
+          <p className="flex min-w-0 flex-1 items-center gap-1.5 text-caption text-ink-3">
+            <LockKeyhole size={12} strokeWidth={2} aria-hidden className="flex-none" />
+            <span className="min-w-0">Goes only to this site, never into this chat.</span>
+          </p>
+        )}
+        <div className="flex flex-col-reverse gap-2 sm:ml-auto sm:flex-row sm:justify-end">
+          {button('deny', item.email ? EMAIL.deny : item.payment ? PAY.deny : 'Don’t allow', 'secondary')}
+          {button('always', 'Always allow', 'secondary')}
+          {button('once', item.email ? EMAIL.once : item.payment ? PAY.once : 'Allow', 'primary')}
+        </div>
       </div>
     </motion.section>
   )
@@ -167,11 +187,13 @@ function Receipt({ item, fresh }: { item: Item; fresh: boolean }) {
       ? 'Request timed out'
       : item.email
         ? EMAIL_RECEIPT[allowed ? 'approved' : 'denied']
-        : item.choice
-          ? RECEIPT[item.choice]
-          : allowed
-            ? 'Allowed'
-            : 'Not allowed'
+        : item.payment
+          ? PAY_RECEIPT[allowed ? 'approved' : 'denied']
+          : item.choice
+            ? RECEIPT[item.choice]
+            : allowed
+              ? 'Allowed'
+              : 'Not allowed'
   const Icon = item.status === 'expired' ? Clock : allowed ? Check : Ban
   return (
     <p
@@ -187,6 +209,44 @@ function Receipt({ item, fresh }: { item: Item; fresh: boolean }) {
         {item.command && (!item.prose || item.email) ? item.command : item.title}
       </span>
     </p>
+  )
+}
+
+/**
+ * The site the card goes to and the card. The name the site is registered
+ * under is in full ink and what comes before it quieter ("www.", "checkout."),
+ * so a look-alike such as "bestbuy.com.deals.shop" reads as the shop it is.
+ */
+function PaymentPreview({ payment }: { payment: CardPayment }) {
+  const { brand } = cardFromLabel(payment.card)
+  const host = payment.host.replace(/:\d+$/, '')
+  const name = payment.site && (host === payment.site || host.endsWith(`.${payment.site}`)) ? payment.site : host
+  const lead = payment.host.slice(0, host.length - name.length)
+  const rest = payment.host.slice(host.length)
+  return (
+    <div className="mt-3 overflow-hidden rounded-sm bg-sunken ring-[0.5px] ring-line">
+      <div className="flex items-center gap-3 px-3 py-2.5">
+        <SiteIcon host={payment.host} size={32} />
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-body font-semibold tracking-[-0.01em]">
+            <span className="text-ink-3">{lead}</span>
+            {name}
+            <span className="text-ink-3">{rest}</span>
+          </p>
+          {payment.first !== undefined && (
+            <p className={cn('text-footnote', payment.first ? 'text-warning' : 'text-ink-3')}>
+              {payment.first ? 'First time here' : 'Used here before'}
+            </p>
+          )}
+        </div>
+      </div>
+      <div className="hairline-t flex items-center gap-3 px-3 py-2.5">
+        <span className="flex w-8 flex-none justify-center">
+          <CardFace size="row" brand={brand} />
+        </span>
+        <p className="min-w-0 flex-1 truncate text-subhead text-ink">{payment.card}</p>
+      </div>
+    </div>
   )
 }
 

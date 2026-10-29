@@ -13,6 +13,7 @@ const {
   luhn,
   originOf,
   parseExpiry,
+  readVaultList,
   toEntries,
   toWire,
   vaultActions,
@@ -139,6 +140,26 @@ describe('a card', () => {
     })
   })
 
+  it('can be for any website, sent without one', () => {
+    const card = {
+      kind: 'payment',
+      site: '',
+      anySite: true,
+      number: '4242 4242 4242 4242',
+      expiry: '12 / 30',
+      cvc: '123',
+    } as const
+    expect(toWire(card)).toEqual({
+      kind: 'payment',
+      label: 'Visa •••• 4242',
+      any_site: true,
+      secret: { card_number: '4242424242424242', exp_month: '12', exp_year: '2030', cvc: '123' },
+    })
+    // A site typed before the switch went on isn't sent.
+    expect(toWire({ ...card, site: 'www.amazon.com' })).not.toHaveProperty('origin')
+    expect(toWire({ ...card, anySite: false })).toBeUndefined()
+  })
+
   it('isn’t sent with a number that fails, a passed expiry or the wrong length of code', () => {
     const card = { kind: 'payment', site: 'amazon.com', number: '4242424242424242', expiry: '12 / 30', cvc: '123' } as const
     expect(toWire({ ...card, number: '4242424242424241' })).toBeUndefined()
@@ -175,11 +196,91 @@ describe('the list', () => {
     expect(entries[1]).toMatchObject({ kind: 'login', origin: 'https://zeta.com', identifier: 'z', otp: true })
     expect(entries[1].added?.toISOString()).toBe('2026-10-20T10:00:00.000Z')
   })
+
+  it('says which cards are for any website, and where each has been used', () => {
+    const [card] = toEntries([
+      {
+        id: 'c',
+        kind: 'payment',
+        label: 'Visa •••• 4242',
+        origin: null,
+        any_site: true,
+        backend: 'local',
+        used_on: [
+          { origin: 'https://www.bestbuy.com', at: '2026-10-28T18:00:00+00:00' },
+          { origin: 'https://www.ikea.com' },
+        ],
+      },
+    ])
+    expect(card).toMatchObject({ anySite: true, origin: undefined })
+    expect(card.usedOn).toEqual([
+      { origin: 'https://www.bestbuy.com', at: new Date('2026-10-28T18:00:00Z') },
+      { origin: 'https://www.ikea.com', at: undefined },
+    ])
+    expect(
+      toEntries([{ id: 'a', kind: 'payment', label: 'Visa', origin: 'https://shop.com', backend: 'local' }])[0],
+    ).toMatchObject({ anySite: false, usedOn: [] })
+  })
+
+  it('knows whether this Hermes can keep a card for any website', async () => {
+    rpc
+      .mockReset()
+      .mockResolvedValueOnce({ items: [], features: ['any_site'] })
+      .mockResolvedValueOnce({ items: [] })
+    await expect(readVaultList('default')).resolves.toEqual({ entries: [], anySite: true })
+    await expect(readVaultList('default')).resolves.toEqual({ entries: [], anySite: false })
+  })
+})
+
+describe('where a card can be used', () => {
+  const card = {
+    id: 'c',
+    kind: 'payment',
+    label: 'Visa •••• 4242',
+    origin: 'https://www.amazon.com',
+    anySite: false,
+    usedOn: [],
+    otp: false,
+  } as const
+  const cache = () => {
+    let data: unknown = { entries: [card], anySite: true }
+    return {
+      invalidateQueries: vi.fn(),
+      getQueryData: () => data,
+      setQueryData: (_key: unknown, next: unknown) => void (data = typeof next === 'function' ? next(data) : next),
+      get entries() {
+        return (data as { entries: { anySite: boolean; origin?: string }[] }).entries
+      },
+    }
+  }
+
+  it('changes on its own, without the card', async () => {
+    rpc.mockReset().mockResolvedValue({})
+    const qc = cache()
+    await vaultActions(qc as never, 'default').moveCard(card, { anySite: true })
+    expect(rpc).toHaveBeenLastCalledWith('vault.update', { profile: 'default', id: 'c', any_site: true })
+    expect(qc.entries[0]).toMatchObject({ anySite: true, origin: undefined })
+    await vaultActions(qc as never, 'default').moveCard(card, { site: 'www.ikea.com/checkout' })
+    expect(rpc).toHaveBeenLastCalledWith('vault.update', {
+      profile: 'default',
+      id: 'c',
+      origin: 'https://www.ikea.com',
+    })
+  })
+
+  it('goes back when Hermes says no', async () => {
+    rpc.mockReset().mockRejectedValue(Object.assign(new Error('a login stays bound'), { code: 5095 }))
+    const qc = cache()
+    await expect(vaultActions(qc as never, 'default').moveCard(card, { anySite: true })).rejects.toThrow(
+      'Hermes couldn’t change that',
+    )
+    expect(qc.entries[0]).toMatchObject({ anySite: false, origin: 'https://www.amazon.com' })
+  })
 })
 
 describe('changing an item', () => {
   const qc = () => ({ invalidateQueries: vi.fn(), setQueryData: vi.fn(), getQueryData: vi.fn() })
-  const old = { id: 'old', kind: 'login', label: 'github.com', otp: false } as const
+  const old = { id: 'old', kind: 'login', label: 'github.com', anySite: false, usedOn: [], otp: false } as const
   const input = { kind: 'login', site: 'github.com', identifier: 'me', password: 'new' } as const
 
   it('adds the new one before the old one goes', async () => {

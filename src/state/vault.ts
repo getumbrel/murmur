@@ -3,18 +3,24 @@
 // handles; a password, card number or address never reaches it, the chat or
 // this app's cache. Each agent has its own vault.
 //
-// Hermes lists metadata only, adds and removes. It has no edit and never
-// hands a secret back, so a change is a new item taking the old one's place:
-// added first, so nothing is lost if a step fails, then the old one goes.
-// Hermes fills an item only on the exact site it was saved for, so every
-// item here names one.
+// Hermes lists metadata only, adds and removes. It never hands a secret back,
+// so a change is a new item taking the old one's place: added first, so
+// nothing is lost if a step fails, then the old one goes. Hermes fills an item
+// only on the exact site it was saved for, so every item here names one, except
+// a card for any website: that one Hermes fills on any secure checkout, and
+// asks before every payment, naming the site. Where a card may be used changes
+// on its own (vault.update), without typing the card again.
 //
 // Secrets go straight from a form's own state into one request. Nothing here
 // keeps them: no query cache, no mutation cache (so no useMutation), no store.
 
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { rpc } from '@/hermes/gateway'
-import type { VaultItem as WireItem } from '@/hermes/vendor/gateway-contract.generated'
+import type { VaultItem } from '@/hermes/vendor/gateway-contract.generated'
+
+/** A newer Hermes also says where a card may be used; the vendored contract predates it. */
+type WireItem = VaultItem & { any_site?: boolean | null; used_on?: { origin: string; at?: string }[] | null }
+type WireList = { items?: WireItem[]; features?: string[] }
 
 export type VaultKind = 'login' | 'payment' | 'address'
 
@@ -24,6 +30,10 @@ export type VaultEntry = {
   label: string
   /** The site it's used on: scheme://host[:port]. */
   origin?: string
+  /** A card for any website. */
+  anySite: boolean
+  /** The sites a card has been used on, the latest first. */
+  usedOn: readonly { origin: string; at?: Date }[]
   /** A login's email, phone or username. Not a secret: the agent types it itself. */
   identifier?: string
   /** A login with an authenticator key: Hermes makes its sign-in codes. */
@@ -35,6 +45,8 @@ export type LoginInput = { kind: 'login'; site: string; identifier: string; pass
 export type CardInput = {
   kind: 'payment'
   site: string
+  /** Any website instead of `site`. */
+  anySite?: boolean
   number: string
   /** "MM / YY", as the field shows it. */
   expiry: string
@@ -70,6 +82,8 @@ export function toEntries(items: WireItem[] | undefined): VaultEntry[] {
       kind: item.kind as VaultKind,
       label: item.label,
       origin: item.origin ?? undefined,
+      anySite: !!item.any_site,
+      usedOn: (item.used_on ?? []).map((u) => ({ origin: u.origin, at: u.at ? new Date(u.at) : undefined })),
       identifier: item.identifier ?? undefined,
       otp: !!item.has_otp,
       added: item.created_at ? new Date(item.created_at) : undefined,
@@ -77,31 +91,48 @@ export function toEntries(items: WireItem[] | undefined): VaultEntry[] {
     .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }))
 }
 
-/** The agent's items, fresh from Hermes. */
-export async function readVault(agentId: string) {
+export type Vault = {
+  entries: VaultEntry[]
+  /** This Hermes can keep a card for any website. */
+  anySite: boolean
+}
+
+/** The agent's items, fresh from Hermes, and what its vault can do. */
+export async function readVaultList(agentId: string): Promise<Vault> {
   try {
-    return toEntries((await rpc<{ items?: WireItem[] }>('vault.list', { profile: agentId })).items)
+    const list = await rpc<WireList>('vault.list', { profile: agentId })
+    return { entries: toEntries(list.items), anySite: !!list.features?.includes('any_site') }
   } catch (error) {
     throw friendly(error, 'Hermes couldn’t open these passwords. Try again in a moment.')
   }
 }
 
+export const readVault = async (agentId: string) => (await readVaultList(agentId)).entries
+
+const vaultQuery = (agentId: string, enabled: boolean) => ({
+  queryKey: vaultKey(agentId),
+  queryFn: () => readVaultList(agentId),
+  enabled,
+  // The agent can save a login mid-chat, so a sheet opening reads it fresh.
+  staleTime: 5_000,
+})
+
 export function useVault(agentId: string, { enabled = true } = {}) {
-  return useQuery({
-    queryKey: vaultKey(agentId),
-    queryFn: () => readVault(agentId),
-    enabled,
-    // The agent can save a login mid-chat, so a sheet opening reads it fresh.
-    staleTime: 5_000,
-  })
+  return useQuery({ ...vaultQuery(agentId, enabled), select: (vault: Vault) => vault.entries })
+}
+
+/** Whether this agent's Hermes can keep a card for any website (an older one can't). */
+export function useAnySiteCards(agentId: string, { enabled = true } = {}) {
+  return !!useQuery({ ...vaultQuery(agentId, enabled), select: (vault: Vault) => vault.anySite }).data
 }
 
 // ── Saving ──────────────────────────────────────────────────────────────────
 
 /** What Hermes is sent for an input, or undefined while it isn't complete. */
 export function toWire(input: VaultInput) {
-  const origin = originOf(input.site)
-  if (!origin) return undefined
+  const anySite = input.kind === 'payment' && !!input.anySite
+  const origin = anySite ? undefined : originOf(input.site)
+  if (!origin && !anySite) return undefined
   switch (input.kind) {
     case 'login': {
       const identifier = input.identifier.trim()
@@ -109,7 +140,7 @@ export function toWire(input: VaultInput) {
       const otp = input.otp?.trim()
       return {
         kind: 'login' as const,
-        label: hostOf(origin),
+        label: hostOf(origin!),
         origin,
         secret: {
           identifier_type: identifierType(identifier),
@@ -129,7 +160,7 @@ export function toWire(input: VaultInput) {
       return {
         kind: 'payment' as const,
         label: cardLabel(number),
-        origin,
+        ...(anySite ? { any_site: true } : { origin }),
         secret: {
           card_number: number,
           exp_month: expiry.month,
@@ -177,6 +208,8 @@ function friendly(error: unknown, failed = 'Hermes couldn’t save that. Check i
   if (code !== VAULT_FAILED) return new VaultError('Can’t reach Hermes. Check that it’s running, then try again.')
   if (/authenticator key|otpauth|totp/i.test(message))
     return new VaultError('That setup key doesn’t look right. Paste the key the site shows, or its otpauth:// link.')
+  if (/no vault item/i.test(message))
+    return new VaultError('That’s already gone. It may have been deleted somewhere else.')
   if (/origin/i.test(message)) return new VaultError('Check the website’s address.')
   return new VaultError(failed)
 }
@@ -191,6 +224,19 @@ async function add(agentId: string, input: VaultInput) {
   }
 }
 
+/** Where a card can be used: any website, or one. The card itself stays as it is. */
+export type CardSite = { anySite: true } | { site: string }
+
+async function moveCard(agentId: string, id: string, to: CardSite) {
+  const origin = 'site' in to ? originOf(to.site) : undefined
+  if ('site' in to && !origin) throw new VaultError('Check the website’s address.')
+  try {
+    await rpc('vault.update', { profile: agentId, id, ...(origin ? { origin } : { any_site: true }) })
+  } catch (error) {
+    throw friendly(error, 'Hermes couldn’t change that. Try again in a moment.')
+  }
+}
+
 async function remove(agentId: string, id: string) {
   try {
     await rpc('vault.remove', { profile: agentId, id })
@@ -202,7 +248,9 @@ async function remove(agentId: string, id: string) {
 export function vaultActions(qc: QueryClient, agentId: string) {
   const key = vaultKey(agentId)
   const refresh = () => qc.invalidateQueries({ queryKey: key })
-  const drop = (id: string) => qc.setQueryData<VaultEntry[]>(key, (list) => list?.filter((e) => e.id !== id))
+  const edit = (change: (entries: VaultEntry[]) => VaultEntry[]) =>
+    qc.setQueryData<Vault>(key, (vault) => vault && { ...vault, entries: change(vault.entries) })
+  const drop = (id: string) => edit((list) => list.filter((e) => e.id !== id))
 
   return {
     /** Saves a new item; its id once Hermes has it. */
@@ -219,8 +267,24 @@ export function vaultActions(qc: QueryClient, agentId: string) {
       return id
     },
 
+    /** Lets a card be used on any website, or only on one; shown at once, put back if Hermes says no. */
+    moveCard: async (entry: VaultEntry, to: CardSite) => {
+      const before = qc.getQueryData<Vault>(key)
+      const anySite = !('site' in to)
+      const origin = anySite ? undefined : originOf(to.site)
+      edit((list) => list.map((e) => (e.id === entry.id ? { ...e, anySite, origin } : e)))
+      try {
+        await moveCard(agentId, entry.id, to)
+      } catch (error) {
+        if (before) qc.setQueryData(key, before)
+        throw error
+      } finally {
+        void refresh()
+      }
+    },
+
     remove: async (entry: VaultEntry) => {
-      const before = qc.getQueryData<VaultEntry[]>(key)
+      const before = qc.getQueryData<Vault>(key)
       drop(entry.id)
       try {
         await remove(agentId, entry.id)

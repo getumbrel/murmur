@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
-import { LockKeyhole } from 'lucide-react'
+import { Check, LockKeyhole } from 'lucide-react'
 import { toast } from 'sonner'
 import { Sheet } from '@/ui/sheet'
 import { Button } from '@/ui/button'
@@ -10,6 +10,7 @@ import { Skeleton } from '@/ui/skeleton'
 import { ConfirmCard } from '@/ui/confirm-card'
 import { Label, SecretField, TextField } from '@/ui/field'
 import { ListGroup, ListRow } from '@/ui/list'
+import { Toggle } from '@/ui/toggle'
 import { CardIcon, HomeIcon, IconChip, PasswordsIcon, type IconProps } from '@/ui/icons'
 import { cn } from '@/lib/cn'
 import type { Agent } from '@/state/agents'
@@ -25,6 +26,7 @@ import {
   originOf,
   parseExpiry,
   toWire,
+  useAnySiteCards,
   useVault,
   useVaultActions,
   type VaultEntry,
@@ -36,10 +38,11 @@ import { SiteIcon, siteKey } from './site-icon'
 import './vault.css'
 
 // An agent's passwords: the logins it signs in with, the cards it pays with
-// and the addresses it fills in, each for one site. Hermes keeps them
-// encrypted and types them into the page for the agent, which never sees a
-// password or card number. Nothing here can show one back either, so a change
-// means typing it again.
+// and the addresses it fills in, each for one site (a card can be for any
+// website instead). Hermes keeps them encrypted and types them into the page
+// for the agent, which never sees a password or card number. Nothing here can
+// show one back either, so a change means typing it again; only where a card
+// may be used changes on its own.
 
 type Props = {
   agent: Agent
@@ -59,9 +62,10 @@ type View =
   | { name: 'item'; id: string }
   | { name: 'new'; kind: VaultKind; site?: string }
   | { name: 'change'; id: string }
+  | { name: 'site'; id: string }
 
 const ease = [0.16, 1, 0.3, 1] as const
-const depth = (view: View) => (view.name === 'list' ? 0 : view.name === 'change' ? 2 : 1)
+const depth = (view: View) => (view.name === 'list' ? 0 : view.name === 'change' || view.name === 'site' ? 2 : 1)
 
 const KINDS: Record<VaultKind, { group: string; noun: string; icon: (p: IconProps) => ReactNode; add: string }> = {
   login: { group: 'Logins', noun: 'login', icon: PasswordsIcon, add: 'Add a login' },
@@ -109,7 +113,7 @@ export function VaultSheet({ agent, open, onOpenChange, adding }: Props) {
   }, [fresh])
 
   const entries = vault.data ?? []
-  const found = view.name === 'item' || view.name === 'change' ? entries.find((e) => e.id === view.id) : undefined
+  const found = 'id' in view ? entries.find((e) => e.id === view.id) : undefined
   // Kept while a change lands: the old item leaves the list a moment before the view moves on.
   const kept = useRef<VaultEntry>(undefined)
   if (found) kept.current = found
@@ -136,12 +140,14 @@ export function VaultSheet({ agent, open, onOpenChange, adding }: Props) {
         : entry
           ? view.name === 'change'
             ? `Change ${KINDS[entry.kind].noun}`
-            : entry.label
+            : view.name === 'site'
+              ? 'One website'
+              : entry.label
           : 'Passwords'
   const back =
     view.name === 'list'
       ? undefined
-      : view.name === 'change'
+      : view.name === 'change' || view.name === 'site'
         ? { label: entry?.kind === 'payment' ? 'Card' : (entry?.label ?? 'Back'), onBack: () => go({ name: 'item', id: view.id }) }
         : { label: 'Passwords', onBack: () => go({ name: 'list' }) }
 
@@ -179,11 +185,14 @@ export function VaultSheet({ agent, open, onOpenChange, adding }: Props) {
               <ItemForm agent={agent} kind={view.kind} site={view.site} onSaved={saved} />
             ) : entry && view.name === 'change' ? (
               <ItemForm agent={agent} kind={entry.kind} entry={entry} onSaved={saved} />
+            ) : entry && view.name === 'site' ? (
+              <CardSite agent={agent} entry={entry} onDone={() => go({ name: 'item', id: entry.id })} />
             ) : entry ? (
               <ItemView
                 agent={agent}
                 entry={entry}
                 onChange={() => go({ name: 'change', id: entry.id })}
+                onPickSite={() => go({ name: 'site', id: entry.id })}
                 onDeleted={() => go({ name: 'list' })}
               />
             ) : null}
@@ -280,6 +289,7 @@ function Home({
 /** A login says who it signs in as; a card or an address, the site it's for. */
 function subtitleOf(entry: VaultEntry) {
   if (entry.kind === 'login') return entry.identifier
+  if (entry.anySite) return 'Any website'
   return entry.origin ? hostOf(entry.origin) : 'No website yet'
 }
 
@@ -317,17 +327,27 @@ function ItemView({
   agent,
   entry,
   onChange,
+  onPickSite,
   onDeleted,
 }: {
   agent: Agent
   entry: VaultEntry
   onChange: () => void
+  onPickSite: () => void
   onDeleted: () => void
 }) {
   const actions = useVaultActions(agent.id)
   const { noun } = KINDS[entry.kind]
   const host = entry.origin ? hostOf(entry.origin) : undefined
   const card = entry.kind === 'payment' ? cardFromLabel(entry.label) : undefined
+  // A Hermes that can keep a card for any website also says where each card has been used.
+  const anywhere = useAnySiteCards(agent.id) && entry.kind === 'payment'
+
+  const anySite = (on: boolean) => {
+    // Back to one website means saying which.
+    if (!on) return onPickSite()
+    actions.moveCard(entry, { anySite: true }).catch((error: Error) => toast.error(error.message))
+  }
 
   const remove = async () => {
     try {
@@ -365,19 +385,53 @@ function ItemView({
       </header>
 
       <div className="mt-7 space-y-6">
-        <ListGroup footer={entry.added && `Saved ${savedOn(entry.added)}`}>
-          {siteRow && <ListRow title="Website" detail={<Detail>{host ?? 'None'}</Detail>} />}
-          {entry.kind === 'login' && (
-            <>
+        {anywhere ? (
+          <>
+            <ListGroup
+              footer={
+                entry.anySite
+                  ? `${agent.name} asks you before every payment, and shows you the site.`
+                  : `${agent.name} can pay with it only on ${host ?? 'one website'}.`
+              }
+            >
               <ListRow
-                title={IDENTIFIER[identifierType(entry.identifier ?? '')]}
-                detail={<Detail>{entry.identifier}</Detail>}
+                title="Use on any website"
+                trailing={<Toggle checked={entry.anySite} onChange={anySite} label="Use on any website" />}
               />
-              <ListRow title="Password" detail={<Detail className="tracking-[0.12em]">••••••••</Detail>} />
-              {entry.otp && <ListRow title="Sign-in codes" detail={<Detail>Automatic</Detail>} />}
-            </>
-          )}
-        </ListGroup>
+              {!entry.anySite && (
+                <ListRow title="Website" detail={<Detail>{host ?? 'None'}</Detail>} onClick={onPickSite} chevron />
+              )}
+            </ListGroup>
+            <ListGroup title="Used on" footer={entry.added && `Saved ${savedOn(entry.added)}`}>
+              {entry.usedOn.length ? (
+                entry.usedOn.map((use) => (
+                  <ListRow
+                    key={use.origin}
+                    icon={<SiteIcon host={hostOf(use.origin)} size={28} />}
+                    title={hostOf(use.origin)}
+                    detail={use.at && <Detail>{dayOf(use.at)}</Detail>}
+                  />
+                ))
+              ) : (
+                <ListRow title={<span className="text-ink-3">Not used yet</span>} />
+              )}
+            </ListGroup>
+          </>
+        ) : (
+          <ListGroup footer={entry.added && `Saved ${savedOn(entry.added)}`}>
+            {siteRow && <ListRow title="Website" detail={<Detail>{host ?? 'None'}</Detail>} />}
+            {entry.kind === 'login' && (
+              <>
+                <ListRow
+                  title={IDENTIFIER[identifierType(entry.identifier ?? '')]}
+                  detail={<Detail>{entry.identifier}</Detail>}
+                />
+                <ListRow title="Password" detail={<Detail className="tracking-[0.12em]">••••••••</Detail>} />
+                {entry.otp && <ListRow title="Sign-in codes" detail={<Detail>Automatic</Detail>} />}
+              </>
+            )}
+          </ListGroup>
+        )}
 
         <ListGroup>
           <ListRow title={`Change ${noun}`} onClick={onChange} chevron />
@@ -387,7 +441,11 @@ function ItemView({
           className="mt-8"
           label={`Delete ${noun}`}
           title={`Delete this ${noun}?`}
-          body={deleteBody(agent.name, entry.kind, host)}
+          body={
+            entry.anySite
+              ? `${agent.name} won’t be able to pay with it anymore.`
+              : deleteBody(agent.name, entry.kind, host)
+          }
           confirm="Delete"
           onConfirm={remove}
         />
@@ -397,6 +455,109 @@ function ItemView({
 }
 
 const IDENTIFIER = { email: 'Email', phone: 'Phone', username: 'Username' } as const
+
+/** A card for any website going back to one: which. The sites it's been used on are a tap away. */
+function CardSite({ agent, entry, onDone }: { agent: Agent; entry: VaultEntry; onDone: () => void }) {
+  const actions = useVaultActions(agent.id)
+  const [site, setSite] = useState(entry.origin ? hostOf(entry.origin) : '')
+  const [touched, setTouched] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string>()
+  const origin = originOf(site)
+  const host = origin ? hostOf(origin) : undefined
+  // The site's own icon once it's one the card has been on, never for an address mid-typing.
+  const known = [entry.origin, ...entry.usedOn.map((use) => use.origin)].some((o) => o && hostOf(o) === host)
+
+  const pick = (value: string) => {
+    setSite(value)
+    setError(undefined)
+  }
+  const submit = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!origin || saving) return
+    setSaving(true)
+    try {
+      await actions.moveCard(entry, { site })
+      onDone()
+    } catch (err) {
+      setError((err as Error).message)
+      setSaving(false)
+    }
+  }
+
+  return (
+    <form onSubmit={submit} autoComplete="off" noValidate className="pb-1">
+      <header className="flex flex-col items-center pt-3 text-center">
+        <AnimatePresence mode="popLayout" initial={false}>
+          <motion.span
+            key={host ? siteKey(host) : 'none'}
+            initial={{ opacity: 0, scale: 0.85 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.9, transition: { duration: 0.12 } }}
+            transition={{ type: 'spring', duration: 0.4, bounce: 0.3 }}
+            className="block"
+          >
+            <SiteIcon host={host} size={64} ask={known} />
+          </motion.span>
+        </AnimatePresence>
+        <h2 className="mt-4 max-w-full truncate text-title font-semibold tracking-[-0.02em]">
+          {host ?? 'Which website?'}
+        </h2>
+      </header>
+
+      <div className="mt-7 space-y-6">
+        <Site
+          value={site}
+          onChange={(e) => pick(e.target.value)}
+          onBlur={() => setTouched(true)}
+          disabled={saving}
+          autoFocus={!entry.usedOn.length}
+          hint={`Where ${agent.name} can use it`}
+          placeholder="www.amazon.com"
+          problem={touched && site.trim() && !origin ? 'That doesn’t look like a website’s address.' : undefined}
+        />
+        {entry.usedOn.length > 0 && (
+          <ListGroup title="Used on">
+            {entry.usedOn.map((use) => (
+              <ListRow
+                key={use.origin}
+                icon={<SiteIcon host={hostOf(use.origin)} size={28} />}
+                title={hostOf(use.origin)}
+                onClick={() => pick(hostOf(use.origin))}
+                trailing={
+                  use.origin === origin && (
+                    <Check size={18} strokeWidth={2.5} className="flex-none text-accent" aria-label="Chosen" />
+                  )
+                }
+              />
+            ))}
+          </ListGroup>
+        )}
+      </div>
+
+      <AnimatePresence initial={false}>
+        {error && (
+          <motion.p
+            role="alert"
+            initial={{ opacity: 0, y: -4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.24, ease }}
+            className="mt-5 px-4 text-footnote text-pretty text-danger"
+          >
+            {error}
+          </motion.p>
+        )}
+      </AnimatePresence>
+
+      <div className="mt-7">
+        <Button type="submit" variant="accent" size="lg" disabled={!origin} loading={saving}>
+          Save
+        </Button>
+      </div>
+    </form>
+  )
+}
 
 function Detail({ children, className }: { children: ReactNode; className?: string }) {
   return <span className={cn('block max-w-[min(15rem,55vw)] truncate', className)}>{children}</span>
@@ -417,6 +578,12 @@ function savedOn(date: Date) {
 }
 const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
 
+/** "Today", "Yesterday", "12 October": the day it was last used. */
+function dayOf(date: Date) {
+  const on = savedOn(date)
+  return on.startsWith('on ') ? on.slice(3) : on.charAt(0).toUpperCase() + on.slice(1)
+}
+
 // ── Adding and changing ─────────────────────────────────────────────────────
 
 type Fields = {
@@ -436,10 +603,19 @@ type Fields = {
   country: string
 }
 
-function inputOf(kind: VaultKind, f: Fields): VaultInput {
+function inputOf(kind: VaultKind, f: Fields, anySite = false): VaultInput {
   if (kind === 'login') return { kind, site: f.site, identifier: f.identifier, password: f.password, otp: f.otp }
   if (kind === 'payment')
-    return { kind, site: f.site, number: f.number, expiry: f.expiry, cvc: f.cvc, name: f.name, postcode: f.postcode }
+    return {
+      kind,
+      site: f.site,
+      anySite,
+      number: f.number,
+      expiry: f.expiry,
+      cvc: f.cvc,
+      name: f.name,
+      postcode: f.postcode,
+    }
   return { kind, site: f.site, line1: f.line1, line2: f.line2, city: f.city, state: f.state, postcode: f.postcode, country: f.country }
 }
 
@@ -481,6 +657,10 @@ function ItemForm({
   }))
   const [touched, setTouched] = useState<Set<keyof Fields>>(new Set())
   const [otpOpen, setOtpOpen] = useState(!!entry?.otp)
+  // A new card is for any website, where Hermes can keep one that way.
+  const anywhere = useAnySiteCards(agent.id) && kind === 'payment'
+  const [anySite, setAnySite] = useState(entry ? entry.anySite : true)
+  const forAnySite = anywhere && anySite
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string>()
   const again = !!entry
@@ -497,7 +677,7 @@ function ItemForm({
     disabled: saving,
   })
 
-  const ready = !!toWire(inputOf(kind, f))
+  const ready = !!toWire(inputOf(kind, f, forAnySite))
   const origin = originOf(f.site)
   const digits = digitsOf(f.number)
   const brand = cardBrand(digits)
@@ -513,7 +693,7 @@ function ItemForm({
     if (!ready || saving) return
     setSaving(true)
     try {
-      const input = inputOf(kind, f)
+      const input = inputOf(kind, f, forAnySite)
       const id = entry ? await actions.replace(entry, input) : await actions.add(input)
       // Gone from here the moment Hermes has it.
       setF((prev) => ({ ...prev, password: '', otp: '', number: '', cvc: '', expiry: '' }))
@@ -671,7 +851,40 @@ function ItemForm({
               <Label>Billing ZIP or postcode</Label>
               <TextField {...field('postcode')} autoComplete="postal-code" placeholder="Optional" />
             </div>
-            <Site {...field('site')} hint={siteHint} placeholder="www.amazon.com" problem={problems.site} />
+            {anywhere ? (
+              <>
+                <div className="pt-3">
+                  <ListGroup
+                    footer={
+                      anySite
+                        ? `${agent.name} asks you before every payment, and shows you the site.`
+                        : `${agent.name} can pay with it only on this website.`
+                    }
+                  >
+                    <ListRow
+                      title="Use on any website"
+                      trailing={<Toggle checked={anySite} onChange={setAnySite} label="Use on any website" />}
+                    />
+                  </ListGroup>
+                </div>
+                <AnimatePresence initial={false}>
+                  {!anySite && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: 'auto' }}
+                      exit={{ opacity: 0, height: 0 }}
+                      transition={{ duration: 0.3, ease }}
+                      // Room for the field's focus ring inside the clip.
+                      className="-mx-1 overflow-hidden px-1"
+                    >
+                      <Site {...field('site')} placeholder="www.amazon.com" problem={problems.site} />
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </>
+            ) : (
+              <Site {...field('site')} hint={siteHint} placeholder="www.amazon.com" problem={problems.site} />
+            )}
           </>
         )}
 

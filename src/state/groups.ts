@@ -293,6 +293,8 @@ type Approval = {
   description?: string
   /** "mcp_elicitation" for a connected tool's request, which reads differently. */
   patternKey?: string
+  /** A saved card about to be entered on a site: which card, and where. */
+  payment?: unknown
   /** Log position it arrived at, for placing it once the turn is over. */
   after: number
   status: 'pending' | 'approved' | 'denied'
@@ -758,6 +760,7 @@ function onServerRequest(req: ServerRequest) {
           command: typeof params.command === 'string' ? params.command : undefined,
           description: typeof params.description === 'string' ? params.description : undefined,
           patternKey: typeof params.pattern_key === 'string' ? params.pattern_key : undefined,
+          payment: params.payment,
           after: l.cursor,
           status: 'pending',
         },
@@ -1009,6 +1012,7 @@ function castOf(members: GroupMember[]) {
       command: a.command,
       description: a.description,
       patternKeys: a.patternKey ? [a.patternKey] : [],
+      payment: a.payment,
     })
     return {
       kind: 'approval',

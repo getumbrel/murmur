@@ -1299,6 +1299,7 @@ function onServerRequest(req: ServerRequest) {
           : [],
       // (It can arrive a moment before the call itself; then tool.start fills it in.)
       call: tool ? callFor(id, tool) : undefined,
+      payment: params.payment,
     })
     patch(id, (c) => ({
       status: 'waiting',

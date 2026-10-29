@@ -7,6 +7,14 @@ export type Speaker = { id: string; name: string; hue: number }
 
 export type ApprovalChoice = 'once' | 'session' | 'always' | 'deny'
 
+/**
+ * A saved card the agent wants to fill in: which card ("Visa •••• 4242"), the
+ * page's host and the name it's registered under ("bestbuy.com"), both as the
+ * browser reports them, and whether a card has gone there before. A Hermes
+ * from before cards for any website says only the card and the host.
+ */
+export type CardPayment = { card: string; host: string; site?: string; first?: boolean }
+
 export type SecretAsk = 'login' | 'code' | 'key'
 
 export type ClarifyQuestion = {
@@ -98,6 +106,8 @@ export type ChatItem =
       tool?: string
       /** An email to send, shown whole on the card. */
       email?: SendApproval
+      /** A saved card to fill in, shown with the site it goes to. */
+      payment?: CardPayment
       choices: ApprovalChoice[]
       status: 'pending' | 'approved' | 'denied' | 'expired'
       /** What the person picked, once resolved. */

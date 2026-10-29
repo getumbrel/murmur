@@ -3,14 +3,16 @@
 // Hermes asking before it uses a tool on a server it doesn't fully trust, or
 // the tool itself asking you to confirm. Both arrive with pattern_key
 // "mcp_elicitation" and worded for developers ("MCP tool 'delete_files' on
-// UNTRUSTED server 'umbrel' wants to run…"), so they're retold here. Checks
+// UNTRUSTED server 'umbrel' wants to run…"), so they're retold here. So does
+// Hermes asking before it fills in a saved card ("Fill payment card 'Visa ••••
+// 4242' on https://www.bestbuy.com", with the site's details alongside). Checks
 // that aren't about a command (a plugin's rule, a write to a file that steers
 // SSH or agents) put a stand-in like "<terminal> (plugin approval rule)" where
 // the command goes; that's never shown, only what it stands for.
 
 import { isSendApproval, readSendApproval, type SendApproval } from '@/state/mail-chat'
 import { peopleOf, toolLabel } from './tool-labels'
-import type { ApprovalChoice } from './types'
+import type { ApprovalChoice, CardPayment } from './types'
 
 export type ApprovalText = {
   title: string
@@ -23,6 +25,8 @@ export type ApprovalText = {
   tool?: string
   /** An email the agent wants to send: the card shows it whole, and asks Send or Don't send. */
   email?: SendApproval
+  /** A saved card the agent wants to fill in: the card shows the site and the card. */
+  payment?: CardPayment
 }
 
 /** A tool call: Hermes's name for it, its arguments and its own one-line preview. */
@@ -37,9 +41,14 @@ type Request = {
   patternKeys?: string[]
   /** The tool call waiting on this, when it has already started. */
   call?: ToolCall
+  /** What Hermes sends with a card fill: the card, the page's origin, its site, and whether a card has gone there. */
+  payment?: unknown
 }
 
 const UNTRUSTED = /^MCP tool '([^']+)' on UNTRUSTED server '([^']+)'/
+// Hermes's card fill: "Fill payment card 'Visa •••• 4242' on https://www.bestbuy.com".
+const PAYMENT = /^Fill payment card '(.+)' on ([a-z][a-z0-9+.-]*:\/\/\S+)$/
+const SCHEME = /^[a-z][a-z0-9+.-]*:\/\//i
 // What Hermes says when a plugin asks without giving a reason.
 const NO_REASON = /^Plugin requires approval for (\S+)$/
 // Writes Hermes asks about, by their pattern key.
@@ -62,6 +71,7 @@ export function approvalText({
   choices,
   patternKeys = [],
   call,
+  payment,
 }: Request): ApprovalText {
   // An email (the murmur-mail plugin): every send is its own yes, never "always".
   const email = isSendApproval(patternKeys) ? readSendApproval(description) : null
@@ -84,6 +94,16 @@ export function approvalText({
       command: call && detailOf(call),
       choices: ONCE,
       tool,
+    }
+  }
+  const card = patternKeys.includes('mcp_elicitation') ? cardPayment(command, payment) : undefined
+  if (card) {
+    return {
+      title: `${who} wants to pay with your card`,
+      command: card.host,
+      prose: true,
+      choices: ONCE,
+      payment: card,
     }
   }
   if (patternKeys.includes('mcp_elicitation')) {
@@ -112,6 +132,20 @@ export function approvalText({
         : `${who} needs your OK`,
     command,
     choices: asked,
+  }
+}
+
+/** The card and the site a card fill names: Hermes's details when it sends them, else its words. */
+function cardPayment(command: string | undefined, details: unknown): CardPayment | undefined {
+  const said = PAYMENT.exec(command ?? '')
+  if (!said) return undefined
+  const d = (details && typeof details === 'object' ? details : {}) as Record<string, unknown>
+  const origin = typeof d.origin === 'string' ? d.origin : said[2]
+  return {
+    card: typeof d.card === 'string' && d.card ? d.card : said[1],
+    host: origin.replace(SCHEME, ''),
+    ...(typeof d.site === 'string' && d.site && { site: d.site }),
+    ...(typeof d.first_time === 'boolean' && { first: d.first_time }),
   }
 }
 

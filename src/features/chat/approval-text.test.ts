@@ -175,3 +175,42 @@ describe('sending an email', () => {
     expect(approvalText({ ...send, description: 'Deploys need your OK' }).email).toBeUndefined()
   })
 })
+
+// Hermes asks before it fills in a saved card, naming the page it's on.
+describe('paying with a saved card', () => {
+  const fill = {
+    command: "Fill payment card 'Visa •••• 4242' on https://www.bestbuy.com",
+    description: 'The agent wants to enter your saved card details into this checkout page.',
+    patternKeys: ['mcp_elicitation'],
+    choices: ['once', 'session', 'always', 'deny'] as ApprovalChoice[],
+  }
+
+  it('shows the site and the card, with what Hermes knows of the site', () => {
+    const payment = {
+      card: 'Visa •••• 4242',
+      origin: 'https://www.bestbuy.com',
+      site: 'bestbuy.com',
+      any_site: true,
+      first_time: true,
+    }
+    expect(approvalText({ who: 'Ada', ...fill, payment })).toEqual({
+      title: 'Ada wants to pay with your card',
+      command: 'www.bestbuy.com',
+      prose: true,
+      choices: ['once', 'deny'],
+      payment: { card: 'Visa •••• 4242', host: 'www.bestbuy.com', site: 'bestbuy.com', first: true },
+    })
+  })
+
+  it('reads the card and the site from the words of a Hermes that sends nothing more', () => {
+    expect(approvalText({ who: 'Ada', ...fill }).payment).toEqual({ card: 'Visa •••• 4242', host: 'www.bestbuy.com' })
+    expect(approvalText({ ...fill, command: "Fill payment card 'Visa' on http://127.0.0.1:8765" }).payment?.host).toBe(
+      '127.0.0.1:8765',
+    )
+  })
+
+  it('is only Hermes’s own card fill', () => {
+    expect(approvalText({ ...fill, patternKeys: [] }).payment).toBeUndefined()
+    expect(approvalText({ ...fill, command: 'Fill payment card on a page' }).payment).toBeUndefined()
+  })
+})

@@ -52,7 +52,18 @@ const MORE: PlusItem[] = [
 const JUNIPER: Speaker = { id: 'juniper', name: 'Juniper', hue: 160 }
 const WREN: Speaker = { id: 'wren', name: 'Wren', hue: 28 }
 
-type Scene = 'solo' | 'live' | 'group' | 'empty' | 'media' | 'cards' | 'secrets' | 'helpers' | 'wakes' | 'errors'
+type Scene =
+  | 'solo'
+  | 'live'
+  | 'group'
+  | 'empty'
+  | 'media'
+  | 'cards'
+  | 'secrets'
+  | 'pay'
+  | 'helpers'
+  | 'wakes'
+  | 'errors'
 
 let n = 0
 const uid = (p: string) => `${p}-${++n}`
@@ -536,7 +547,9 @@ function Chat({ scene }: { scene: Scene }) {
                   ? wakesHistory()
                   : scene === 'helpers'
                     ? helpersHistory()
-                    : [],
+                    : scene === 'pay'
+                      ? payHistory()
+                      : [],
   )
   const inset = useKeyboardInset()
   useErrand(scene === 'helpers', setItems)
@@ -779,6 +792,35 @@ function secretsHistory(): ChatItem[] {
   ]
 }
 
+/** A checkout: the agent's about to enter a card saved for any website. */
+function payHistory(): ChatItem[] {
+  const at = T0
+  return [
+    { kind: 'user', id: uid('u'), text: 'Order the Anker 7-in-1 USB-C hub from Best Buy, and ship it home', at },
+    tool('browser_navigate', { url: 'https://www.bestbuy.com/anker-7-in-1-usb-c-hub' }, at + 1000, 2400),
+    tool('browser_click', { element: 'Add to cart' }, at + 3600, 800),
+    tool('browser_navigate', { url: 'https://www.bestbuy.com/checkout' }, at + 4600, 1900),
+    {
+      kind: 'assistant',
+      id: uid('a'),
+      at,
+      streaming: false,
+      text: 'It’s in your cart: **$39.99**, free shipping, here Friday. Paying with your Visa.',
+    },
+    {
+      kind: 'approval',
+      id: uid('ap'),
+      requestId: 'pay',
+      title: 'Atlas wants to pay with your card',
+      command: 'www.bestbuy.com',
+      prose: true,
+      payment: { card: 'Visa •••• 4242', host: 'www.bestbuy.com', site: 'bestbuy.com', first: true },
+      choices: ['once', 'deny'],
+      status: 'pending',
+    },
+  ]
+}
+
 function cardsHistory(): ChatItem[] {
   const at = T0
   return [
@@ -812,6 +854,7 @@ const SCENES: { value: Scene; label: string }[] = [
   { value: 'empty', label: 'Empty' },
   { value: 'cards', label: 'Cards' },
   { value: 'secrets', label: 'Logins' },
+  { value: 'pay', label: 'Pay' },
   { value: 'helpers', label: 'Helpers' },
   { value: 'wakes', label: 'Wakes' },
   { value: 'errors', label: 'Errors' },
