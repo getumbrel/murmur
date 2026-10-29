@@ -41,9 +41,23 @@ import './vault.css'
 // password or card number. Nothing here can show one back either, so a change
 // means typing it again.
 
-type Props = { agent: Agent; open: boolean; onOpenChange: (open: boolean) => void }
+type Props = {
+  agent: Agent
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  /**
+   * A new login asked for elsewhere (the Apps sheet, for an app it doesn't
+   * have): the sheet opens on it, its website filled in when one was given.
+   * Each ask is a new object.
+   */
+  newLogin?: { site?: string }
+}
 
-type View = { name: 'list' } | { name: 'item'; id: string } | { name: 'new'; kind: VaultKind } | { name: 'change'; id: string }
+type View =
+  | { name: 'list' }
+  | { name: 'item'; id: string }
+  | { name: 'new'; kind: VaultKind; site?: string }
+  | { name: 'change'; id: string }
 
 const ease = [0.16, 1, 0.3, 1] as const
 const depth = (view: View) => (view.name === 'list' ? 0 : view.name === 'change' ? 2 : 1)
@@ -55,12 +69,19 @@ const KINDS: Record<VaultKind, { group: string; noun: string; icon: (p: IconProp
 }
 const ORDER: VaultKind[] = ['login', 'payment', 'address']
 
-export function VaultSheet({ agent, open, onOpenChange }: Props) {
+export function VaultSheet({ agent, open, onOpenChange, newLogin }: Props) {
   const vault = useVault(agent.id, { enabled: open })
   const [view, setView] = useState<View>({ name: 'list' })
   // Which way the views slide: deeper goes left, back comes from the left.
   const [forward, setForward] = useState(true)
   const [fresh, setFresh] = useState<string>()
+
+  // A new ask opens on its form from the first frame; Back is the list.
+  const [asked, setAsked] = useState(newLogin)
+  if (newLogin !== asked) {
+    setAsked(newLogin)
+    if (newLogin) setView({ name: 'new', kind: 'login', site: newLogin.site })
+  }
 
   const go = (next: View) => {
     setForward(depth(next) >= depth(view))
@@ -151,7 +172,7 @@ export function VaultSheet({ agent, open, onOpenChange }: Props) {
                 onAdd={(kind) => go({ name: 'new', kind })}
               />
             ) : view.name === 'new' ? (
-              <ItemForm agent={agent} kind={view.kind} onSaved={saved} />
+              <ItemForm agent={agent} kind={view.kind} site={view.site} onSaved={saved} />
             ) : entry && view.name === 'change' ? (
               <ItemForm agent={agent} kind={entry.kind} entry={entry} onSaved={saved} />
             ) : entry ? (
@@ -427,16 +448,19 @@ function ItemForm({
   agent,
   kind,
   entry,
+  site,
   onSaved,
 }: {
   agent: Agent
   kind: VaultKind
   entry?: VaultEntry
+  /** A new one's website, already known. */
+  site?: string
   onSaved: (id: string) => void
 }) {
   const actions = useVaultActions(agent.id)
   const [f, setF] = useState<Fields>(() => ({
-    site: entry?.origin ? hostOf(entry.origin) : '',
+    site: entry?.origin ? hostOf(entry.origin) : (site ?? ''),
     identifier: entry?.identifier ?? '',
     password: '',
     otp: '',
@@ -539,7 +563,7 @@ function ItemForm({
           <>
             <Site
               {...field('site')}
-              autoFocus
+              autoFocus={!site}
               placeholder="github.com"
               problem={problems.site}
             />
@@ -547,6 +571,7 @@ function ItemForm({
               <Label>Email or username</Label>
               <TextField
                 {...field('identifier')}
+                autoFocus={!!site}
                 placeholder="you@example.com"
                 autoComplete="off"
                 autoCapitalize="off"

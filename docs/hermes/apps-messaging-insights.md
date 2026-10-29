@@ -13,7 +13,8 @@ against a throwaway Hermes; what couldn't be (a real app sign-in, a linked phone
 apps first, each with an on/off switch and a quiet status; below, an icon wall with search, everyday apps
 first and "For developers" after. Umbrel opens Settings → Umbrel instead. The same sheet holds the agent's
 email (§7) and the apps that connect through Nous Research (§8): `apps-sheet.tsx` is a router, with a file per
-kind of app (`home.tsx` the list and wall, `direct.tsx` these, `email.tsx`, `hosted.tsx`).
+kind of app (`home.tsx` the list and wall, `direct.tsx` these, `email.tsx`, `hosted.tsx`). Anything else is
+`other.tsx`: no Hermes call, only a login saved in Passwords (§6), which Hermes fills in for the agent's browser.
 
 | Step | Hermes |
 |---|---|

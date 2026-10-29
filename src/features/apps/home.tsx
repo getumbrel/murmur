@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useLocation } from 'wouter'
 import { ListGroup, ListRow } from '@/ui/list'
 import { UmbrelIcon } from '@/ui/brand'
+import { useSheetHold } from '@/ui/sheet'
 import type { Agent } from '@/state/agents'
 import { useHermesOnUmbrel, UMBREL_SERVER } from '@/state/umbrel-mcp'
 import { useAppHealth, useConnections, type AppServer, type CatalogApp } from '@/state/apps'
@@ -11,11 +12,13 @@ import { AppIcon, appName, EMAIL_ICON } from './app-icon'
 import { AppRow, hostOf, isBusy } from './direct'
 import { EmailRow } from './email'
 import { HostedRow } from './hosted'
+import { OtherApp, WebsiteArt } from './other'
 import { RowsLoading, SearchField, Tile, WallGrid, WallLoading } from './parts'
 import { arrangeWall, itemHint, itemName, searchWall, type WallItem } from './wall'
 
 // The sheet's first view: what the agent can use (its apps, its email, apps
-// through Nous), each with how it's doing, then a wall of apps to add.
+// through Nous), each with how it's doing, then a wall of apps to add, ending
+// with Other: any website, signed in with a password (other.tsx).
 
 /** How long the wall waits for Nous's apps before showing without them (they join when they come). */
 const NOUS_WAIT_MS = 2000
@@ -36,6 +39,8 @@ export function Home({
   onEmail,
   onHosted,
   onOpenHosted,
+  onOther,
+  onAddLogin,
   onClose,
 }: {
   agent: Agent
@@ -56,11 +61,16 @@ export function Home({
   onEmail: () => void
   onHosted: (app: HostedApp) => void
   onOpenHosted: (connected: ConnectedHostedApp) => void
+  onOther: () => void
+  /** A login for a website the wall doesn't have, in Passwords: its address, when the search was one. */
+  onAddLogin: (site?: string) => void
   onClose: () => void
 }) {
   const [, navigate] = useLocation()
   const onUmbrel = useHermesOnUmbrel().data
   const [query, setQuery] = useState('')
+  // While there's a search the sheet keeps its height, so the field stays put as results come and go.
+  const { ref: held, hold } = useSheetHold()
   const health = useAppHealth(agent.id, servers, open)
   const connections = useConnections()
   const waited = useWaited(NOUS_WAIT_MS)
@@ -121,9 +131,15 @@ export function Home({
       <UmbrelIcon size={56} />
     </Tile>
   )
+  // Last of the everyday apps, and of every search that finds some.
+  const otherTile = (index: number) => (
+    <Tile key="other" name="Other" hint="Any website, with its username and password" index={index} onClick={onOther}>
+      <WebsiteArt size={56} />
+    </Tile>
+  )
 
   return (
-    <div className="space-y-7 pt-1">
+    <div ref={held} className="space-y-7 pt-1">
       {!servers ? (
         <RowsLoading />
       ) : (
@@ -164,7 +180,7 @@ export function Home({
       )}
 
       <section>
-        <div className="mb-4 flex items-center gap-3">
+        <div onInputCapture={hold} className="mb-4 flex items-center gap-3">
           <h3 className="min-w-0 flex-1 px-1 text-subhead font-semibold tracking-[-0.01em]">
             {has ? 'Add more' : `Give ${agent.name} an app`}
           </h3>
@@ -175,14 +191,20 @@ export function Home({
           <WallLoading />
         ) : words ? (
           found.length ? (
-            <WallGrid>{found.map(tile)}</WallGrid>
+            <WallGrid>
+              {found.map(tile)}
+              {otherTile(found.length)}
+            </WallGrid>
           ) : (
-            <p className="py-8 text-center text-subhead text-ink-3">No apps match “{words}”</p>
+            <div className="pt-2">
+              <OtherApp agent={agent} query={words} onAddLogin={onAddLogin} />
+            </div>
           )
         ) : (
           <>
             <WallGrid>
               {withLead(wall.everyday.map(tile), umbrelTile, wall.everyday[0]?.kind === 'email' ? 1 : 0)}
+              {otherTile(wall.everyday.length + (umbrelTile ? 1 : 0))}
             </WallGrid>
             {wall.developer.length > 0 && (
               <>

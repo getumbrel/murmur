@@ -690,6 +690,25 @@ export function PasswordsIcon(props: IconProps) {
   )
 }
 
+/** A website it signs in to: a browser window, and on its page a password field, filled in. */
+export function WebsiteIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect className="mi-tint" x="2.75" y="3.75" width="18.5" height="16.5" rx="4" />
+      <rect x="2.75" y="3.75" width="18.5" height="16.5" rx="4" />
+      <path d="M2.75 8.5h18.5" />
+      <rect x="5.75" y="11.75" width="12.5" height="5.5" rx="2.75" />
+      <g className="mi-solid">
+        <circle cx="5.9" cy="6.15" r="0.8" />
+        <circle cx="8.3" cy="6.15" r="0.8" />
+        <circle cx="9.25" cy="14.5" r="1.05" />
+        <circle cx="12" cy="14.5" r="1.05" />
+        <circle cx="14.75" cy="14.5" r="1.05" />
+      </g>
+    </Icon>
+  )
+}
+
 /** A payment card: its stripe, and the chip. */
 export function CardIcon(props: IconProps) {
   return (

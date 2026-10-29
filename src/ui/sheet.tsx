@@ -316,6 +316,28 @@ export function SheetPin({ query, className, children }: { query: string; classN
   )
 }
 
+/**
+ * The same hold, for a view whose search stays where it is in the flow above
+ * what it narrows (the Apps sheet's wall). `ref` goes on the view's root and
+ * `hold` on the field's first keystroke: from then on the view keeps the
+ * height it fills now, so nothing moves under the fingers as results come and
+ * go, and clearing the search finds it just as tall. The hold leaves with the
+ * view, and in a Grow the next view springs from the held height.
+ */
+export function useSheetHold<T extends HTMLElement = HTMLDivElement>() {
+  const ref = useRef<T>(null)
+  // Before the content narrows: what the view fills of the sheet now is what it keeps.
+  const hold = () => {
+    const el = ref.current
+    const body = el?.closest<HTMLElement>('[data-sheet-body]')
+    if (!el || !body || el.style.minHeight) return
+    const top = el.getBoundingClientRect().top - body.getBoundingClientRect().top + body.scrollTop
+    const padding = parseFloat(getComputedStyle(body).paddingBottom) || 0
+    el.style.minHeight = `${body.scrollTop + body.clientHeight - padding - top}px`
+  }
+  return { ref, hold }
+}
+
 /** Where a pinned element sits in its sheet's scroll when it isn't pinned. */
 function restingTop(el: HTMLElement, body: HTMLElement) {
   el.style.position = 'static'

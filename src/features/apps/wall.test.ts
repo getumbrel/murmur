@@ -7,7 +7,7 @@ vi.mock('@/lib/desktop', () => ({ isDesktop: false }))
 vi.mock('@/state/toolsets', () => ({ allowHostedApps: vi.fn() }))
 
 const { hostedAppFrom } = await import('@/state/hosted-apps-names')
-const { arrangeWall, itemName, matchesSearch, searchWall, EMAIL_TILE } = await import('./wall')
+const { arrangeWall, itemName, matchesSearch, searchWall, siteFrom, EMAIL_TILE } = await import('./wall')
 
 const direct = (name: string, description = `${name} things`): CatalogApp => ({
   name,
@@ -83,5 +83,22 @@ describe('searching', () => {
   it('names tiles the way their makers do', () => {
     expect(itemName(EMAIL_TILE, name)).toBe('Email')
     expect(itemName(wall().everyday[2], name)).toBe('Slack')
+  })
+})
+
+describe('a login for what the wall lacks', () => {
+  it('takes its website from a search that is already an address', () => {
+    expect(siteFrom('netflix.com')).toBe('netflix.com')
+    expect(siteFrom('  www.netflix.com ')).toBe('www.netflix.com')
+    expect(siteFrom('https://www.netflix.com/login')).toBe('https://www.netflix.com/login')
+    expect(siteFrom('umbrel.local:8080')).toBe('umbrel.local:8080')
+    expect(siteFrom('192.168.1.5:8123')).toBe('192.168.1.5:8123')
+  })
+
+  it('never makes one up from a name', () => {
+    expect(siteFrom('Netflix')).toBeUndefined()
+    expect(siteFrom('saf')).toBeUndefined()
+    expect(siteFrom('home assistant')).toBeUndefined()
+    expect(siteFrom()).toBeUndefined()
   })
 })

@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import type { ReactElement, ReactNode } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import { Check, Search } from 'lucide-react'
 import { Buddy } from '@/ui/buddy'
@@ -37,13 +37,21 @@ export function Link({ state, width = 'w-14', delay = 0 }: { state: 'linking' | 
   )
 }
 
-/** The app and the agent, side by side, and the link between them. */
-export function Pair({ agent, icon, state }: { agent: Agent; icon: string; state: 'linking' | 'linked' | 'broken' }) {
+/** The app and the agent, side by side, and the link between them. The app is its icon's name, or art of its own. */
+export function Pair({
+  agent,
+  icon,
+  state,
+}: {
+  agent: Agent
+  icon: string | ReactElement
+  state: 'linking' | 'linked' | 'broken'
+}) {
   const linked = state === 'linked'
   return (
     <div className="flex items-center justify-center pt-3">
       <span className="relative">
-        <AppIcon name={icon} size={68} className={lift} />
+        {typeof icon === 'string' ? <AppIcon name={icon} size={68} className={lift} /> : icon}
         <AnimatePresence>
           {linked && (
             <motion.span

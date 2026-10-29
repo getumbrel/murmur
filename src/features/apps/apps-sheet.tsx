@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { AnimatePresence, motion, useReducedMotion, type Variants } from 'motion/react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useLocation } from 'wouter'
@@ -42,6 +42,7 @@ import {
 } from './email'
 import { Home } from './home'
 import { HostedView, startHosted } from './hosted'
+import { OtherApp } from './other'
 import { ease } from './parts'
 
 // An agent's apps: the ones it can use, each with how it's doing, then a wall
@@ -52,9 +53,16 @@ import { ease } from './parts'
 //   its first tap adds it.
 // - Apps through Nous Research (hosted.tsx): Slack, Asana and others Hermes
 //   can't sign in to itself, asked about once, for every agent at once.
-// Each opens a view of its own; the sheet's title becomes a way back.
+// Each opens a view of its own; the sheet's title becomes a way back. Anything
+// else with a website is Other (other.tsx): a login, saved in Passwords.
 
-type Props = { agent: Agent; open: boolean; onOpenChange: (open: boolean) => void }
+type Props = {
+  agent: Agent
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  /** Hands off to Passwords, on a new login: its website filled in when a search was one. */
+  onAddLogin: (site?: string) => void
+}
 
 type Route =
   | { to: 'list' }
@@ -63,10 +71,11 @@ type Route =
   | { to: 'email-form'; provider: MailProviderId }
   | { to: 'email-password' }
   | { to: 'hosted'; slug: string; account?: string }
+  | { to: 'other' }
 
 const depth = (r: Route) => (r.to === 'list' ? 0 : r.to === 'email-form' || r.to === 'email-password' ? 2 : 1)
 
-export function AppsSheet({ agent, open, onOpenChange }: Props) {
+export function AppsSheet({ agent, open, onOpenChange, onAddLogin }: Props) {
   const qc = useQueryClient()
   const [, navigate] = useLocation()
   const reduce = useReducedMotion()
@@ -168,7 +177,9 @@ export function AppsSheet({ agent, open, onOpenChange }: Props) {
               ? account
                 ? accountTitle(account.provider)
                 : 'Email'
-              : hostedApp(route.slug).name
+              : route.to === 'other'
+                ? 'Other'
+                : hostedApp(route.slug).name
   const backLabel = route.to === 'email-form' || route.to === 'email-password' ? 'Email' : 'Apps'
 
   // One step deeper slides in from the right, one back from the left (a crossfade under reduced motion).
@@ -178,6 +189,11 @@ export function AppsSheet({ agent, open, onOpenChange }: Props) {
     exit: (d: number) => ({ opacity: 0, x: reduce ? 0 : -16 * d, transition: { duration: 0.14 } }),
   }
   const key = `${JSON.stringify(route)}${connected ? ':connected' : ''}`
+  // Each view opens at its top, however far down the last one was (Other is the wall's last tile).
+  const toTop = useCallback((el: HTMLElement | null) => {
+    const body = el?.closest<HTMLElement>('[data-sheet-body]')
+    if (body) body.scrollTop = 0
+  }, [])
 
   const view = () => {
     switch (route.to) {
@@ -202,6 +218,8 @@ export function AppsSheet({ agent, open, onOpenChange }: Props) {
               go({ to: 'hosted', slug: app.slug })
             }}
             onOpenHosted={(c) => go({ to: 'hosted', slug: c.app.slug, account: c.account.id })}
+            onOther={() => go({ to: 'other' })}
+            onAddLogin={onAddLogin}
             onClose={close}
           />
         )
@@ -252,6 +270,8 @@ export function AppsSheet({ agent, open, onOpenChange }: Props) {
           />
         )
       }
+      case 'other':
+        return <OtherApp agent={agent} onAddLogin={onAddLogin} />
       case 'hosted': {
         const app = hostedApp(route.slug)
         const accounts = connectedHosted.data?.filter((c) => c.app.slug === route.slug) ?? []
@@ -282,7 +302,7 @@ export function AppsSheet({ agent, open, onOpenChange }: Props) {
     >
       <Grow>
         <AnimatePresence mode="wait" initial={false} custom={dir}>
-          <motion.div key={key} custom={dir} variants={slide} initial="enter" animate="center" exit="exit">
+          <motion.div key={key} ref={toTop} custom={dir} variants={slide} initial="enter" animate="center" exit="exit">
             {view()}
           </motion.div>
         </AnimatePresence>

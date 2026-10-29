@@ -46,6 +46,8 @@ export function AgentScreen({ agentId }: { agentId: string }) {
   const actions = useAgentActions()
   const { page, title, scrolled, under, onScroll } = usePageScroll<HTMLHeadingElement>(`agent:${agentId}`)
   const [sheet, setSheet] = useState<Sheet | null>(null)
+  // A login asked for from Apps, for an app it doesn't have: Passwords opens on it.
+  const [newLogin, setNewLogin] = useState<{ site?: string }>()
   // A routine opened from what it found, showing that result.
   const [news, setNews] = useState<{ id: string; runId?: string } | null>(null)
   const [newsShown, setNewsShown] = useState(news)
@@ -202,8 +204,15 @@ export function AgentScreen({ agentId }: { agentId: string }) {
           }}
         />
         <MemorySheet agent={agent} {...sheetProps('memory')} onRemember={(text) => void remember(text)} />
-        <AppsSheet agent={agent} {...sheetProps('apps')} />
-        <VaultSheet agent={agent} {...sheetProps('passwords')} />
+        <AppsSheet
+          agent={agent}
+          {...sheetProps('apps')}
+          onAddLogin={(site) => {
+            setNewLogin({ site })
+            setSheet('passwords')
+          }}
+        />
+        <VaultSheet agent={agent} {...sheetProps('passwords')} newLogin={newLogin} />
         <TelegramSheet agent={agent} {...sheetProps('telegram')} />
         <WhatsAppSheet agent={agent} {...sheetProps('whatsapp')} />
         {actions.sheets}

@@ -6,6 +6,7 @@
 
 import { arrangeApps, type AppTile, type HostedApp } from '@/state/hosted-apps'
 import type { CatalogApp } from '@/state/apps'
+import { originOf } from '@/state/vault'
 
 export type WallItem = { kind: 'email'; key: 'email' } | AppTile
 
@@ -74,3 +75,10 @@ export function matchesSearch(item: WallItem, query: string, nameOf: (name: stri
 export function searchWall(wall: Wall, query: string, nameOf: (name: string) => string) {
   return [...wall.everyday, ...wall.developer].filter((item) => matchesSearch(item, query, nameOf))
 }
+
+/**
+ * A search for an address ("netflix.com") becomes the website of the login
+ * it ends in (other.tsx). A name never does: Hermes fills a login in only on
+ * the site it names, so a guessed one would be filled in on someone else's.
+ */
+export const siteFrom = (query = '') => (originOf(query) ? query.trim() : undefined)
