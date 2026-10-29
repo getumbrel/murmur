@@ -9,7 +9,7 @@ name: murmur
 
 services:
   murmur:
-    image: ghcr.io/getumbrel/murmur:0.8
+    image: ghcr.io/getumbrel/murmur:0.9
     # In a checkout of this repo, `docker compose up --build` builds it from source instead.
     build: .
     init: true
