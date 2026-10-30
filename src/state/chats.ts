@@ -7,7 +7,7 @@
 // runtime id is only used to talk to Hermes and to route its events.
 
 import { create } from 'zustand'
-import { gateway, rpc, type GatewayEvent, type ServerRequest } from '@/hermes/gateway'
+import { gateway, rpc, useConnection, whenOpen, type GatewayEvent, type ServerRequest } from '@/hermes/gateway'
 import { api, HermesError } from '@/hermes/rest'
 import { isMissingMethod } from '@/hermes/compat'
 import { restoreChatConnect } from '@/state/hosted-apps-chat'
@@ -19,6 +19,7 @@ import type { ApprovalChoice, ChatItem, ChatStatus, ClarifyQuestion, Reaction, S
 import { fileRef, parseUserMessage, rememberUpload, type UserAttachment } from '@/features/media/parse'
 import { toolMedia } from '@/features/media/tool-media'
 import { scoped } from '@/hermes/instance'
+import { held, hold, release, type Held } from '@/state/outbox'
 import {
   isTodoTool,
   planFromResult,
@@ -828,11 +829,30 @@ export async function send(id: string, text: string, files: File[] = [], opts: S
     text: shown,
     attachments: attachments.length ? attachments : undefined,
     at: Date.now(),
+    pending: true,
   }
   asked.set(id, Date.now())
-  patch(id, (c) => ({ items: [...c.items, item], status: busy ? c.status : 'thinking' }))
+  const after = Math.max(-1, ...chat.items.map((i) => rowOf(i) ?? -1))
+  // Waiting for the connection, it isn't thinking yet: that starts once Hermes is there to take it.
+  const now = busy || useConnection.getState().state !== 'open' ? undefined : 'thinking'
+  patch(id, (c) => ({ items: [...c.items, item], status: now ?? c.status }))
   unsent.set(itemId, { text, files })
+  hold(id, { id: itemId, text: shown, ...(files.length ? { files: files.map((f) => f.name) } : {}), after })
   await deliver(id, itemId, busy)
+}
+
+/**
+ * Messages that were still waiting on Hermes when this chat's page last
+ * closed, and never reached it: out of the outbox, for their words to go back
+ * in the box. One Hermes saved after all (its answer was lost) stays out.
+ */
+export function heldBack(id: string): Held[] {
+  const items = getChat(id)?.items ?? []
+  const here = new Set(items.map((i) => i.id))
+  const gone = held(id).filter((m) => !here.has(m.id))
+  release(id, gone.map((m) => m.id))
+  const saved = (m: Held) => items.some((i) => i.kind === 'user' && (i.rowId ?? -1) > (m.after ?? -1) && i.text === m.text)
+  return gone.filter((m) => !saved(m))
 }
 
 /**
@@ -847,6 +867,10 @@ async function deliver(id: string, itemId: string, steer = false) {
   if (!chat || !message) return
   const { text, files } = message
   try {
+    // Held while the connection's down; it's thinking from when it goes.
+    await whenOpen()
+    asked.set(id, Date.now())
+    patch(id, (c) => (isBusy(c) ? undefined : { status: 'thinking' }))
     const refs: string[] = []
     for (const [i, file] of files.entries()) {
       const up = attachmentOf(id, itemId, i)?.path
@@ -892,12 +916,20 @@ async function deliver(id: string, itemId: string, steer = false) {
       if (res.user_row_id != null) setRowId(id, itemId, res.user_row_id)
     }
     unsent.delete(itemId)
+    release(id, [itemId])
+    taken(id, itemId)
   } catch (e) {
+    taken(id, itemId)
     patch(id, (c) => ({
       status: 'error',
       items: [...c.items, { kind: 'error', id: uid('e'), message: attachError(e), retryable: true }],
     }))
   }
+}
+
+/** Hermes has the message, or answered it with an error: it's waiting on nothing now. */
+function taken(id: string, itemId: string) {
+  patch(id, (c) => ({ items: c.items.map((i) => (i.id === itemId && i.kind === 'user' ? { ...i, pending: undefined } : i)) }))
 }
 
 /** A message's words with its files' refs ahead of them, the way it goes to Hermes. */
@@ -1242,8 +1274,12 @@ async function retry(id: string) {
   const lastUser = chat?.items.findLast((i) => i.kind === 'user')
   if (!chat || !lastUser || lastUser.kind !== 'user') return
   asked.set(id, Date.now())
-  patch(id, (c) => ({ items: c.items.filter((i) => i.kind !== 'error'), status: 'thinking' }))
-  if (unsent.has(lastUser.id)) return deliver(id, lastUser.id)
+  const status = useConnection.getState().state === 'open' ? 'thinking' : 'idle'
+  patch(id, (c) => ({ items: c.items.filter((i) => i.kind !== 'error'), status }))
+  if (unsent.has(lastUser.id)) {
+    patch(id, (c) => ({ items: c.items.map((i) => (i.id === lastUser.id ? { ...i, pending: true } : i)) }))
+    return deliver(id, lastUser.id)
+  }
   const text = prompts.get(lastUser.id) ?? lastUser.text
   await onChat(id, 'prompt.submit', { text, profile: chat.profile }).catch((e) =>
     patch(id, (c) => ({
@@ -1402,6 +1438,7 @@ function forget(id: string) {
   asked.delete(id)
   viewing.delete(id)
   reach.delete(id)
+  release(id, held(id).map((m) => m.id))
   savePick(id, null)
 }
 

@@ -34,6 +34,8 @@ export type { PlusItem } from './plus-menu'
 export type ComposerHandle = {
   addFiles: (files: File[]) => void
   setText: (text: string) => void
+  /** What's in the box now. */
+  text: () => string
   focus: () => void
 }
 
@@ -178,6 +180,7 @@ export function Composer({
   useImperativeHandle(handle, () => ({
     addFiles: (files) => addImages(files),
     setText: (next) => setText(next),
+    text: () => text,
     focus,
   }))
 

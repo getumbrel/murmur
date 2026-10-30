@@ -43,6 +43,7 @@ export type ChatItem =
       images?: string[]
       attachments?: UserAttachment[]
       at: number
+      /** Not with Hermes yet: on its way, or waiting for the connection. */
       pending?: boolean
       /** Hermes's row id for this message once it's saved: lets you edit and resend it. */
       rowId?: number

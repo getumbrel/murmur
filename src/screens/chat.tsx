@@ -55,6 +55,7 @@ import {
   dismissItem,
   getChat,
   editableMessage,
+  heldBack,
   leaveChat,
   loadOlder,
   openChat,
@@ -126,12 +127,15 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
   }, [isDraft, agentId])
 
   const status = chat?.status ?? (starting ? 'thinking' : 'idle')
-  const busy = status === 'thinking' || status === 'working' || status === 'waiting'
   // A routine's run reads as a report, under what the routine is.
   const runOfChat = useRunOf(agentId, id)
   const run = useRunItems(runOfChat, useSolo(chat?.items ?? (starting ? [starting] : [])))
   const items = run.items
   const online = useConnection((s) => s.state === 'open' || !s.everOpened)
+  // Your message is waiting for the connection: Hermes hasn't got it, so nothing's thinking about it yet.
+  const connected = useConnection((s) => s.state === 'open')
+  const held = !connected && !!items.findLast((i) => i.kind === 'user' && i.pending)
+  const busy = (status === 'thinking' || status === 'working' || status === 'waiting') && !held
   const [typing, setTyping] = useState(false)
   const speaking = useSpeech((s) => s.profile === agentId && s.phase === 'playing')
   const mood = useOrbState(online ? status : 'offline', { typing, speaking })
@@ -181,6 +185,24 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
   }
 
   const composer = useRef<ComposerHandle>(null)
+
+  // Messages still waiting on Hermes when this page last closed never got
+  // there: their words come back in the box, ahead of anything typed since.
+  const ready = !!chat?.ready
+  useEffect(() => {
+    if (!id || !ready) return
+    const back = heldBack(id)
+    if (!back.length) return
+    const box = composer.current
+    box?.setText([...back.map((m) => m.text), box.text()].filter((t) => t.trim()).join('\n\n'))
+    const files = back.flatMap((m) => m.files ?? [])
+    const names = files.length > 1 ? `${files.slice(0, -1).join(', ')} and ${files.at(-1)}` : files[0]
+    const said = back.length > 1 ? 'Your messages didn’t reach Hermes. They’re' : 'Your message didn’t reach Hermes. It’s'
+    toast(`${said} ready to send again.`, {
+      description: names && `Attach ${names} again to send ${files.length > 1 ? 'them' : 'it'} too.`,
+    })
+  }, [id, ready])
+
   const fill = (text: string) => {
     composer.current?.setText(text)
     composer.current?.focus()
@@ -504,6 +526,7 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
           busy={busy}
           agent={speaker}
           onOlder={id && chat?.older ? () => loadOlder(id) : undefined}
+          waiting={!connected}
           lead={
             id && agent && runOfChat ? (
               <RunHeader

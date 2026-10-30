@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
 import type { UserAttachment } from '@/features/chat/types'
 import { cn } from '@/lib/cn'
 import { useMediaContext } from './context'
@@ -7,7 +7,16 @@ import { canShareFiles, download, formatSize, shareFile, useBlob, useFileSize, t
 import { Lightbox } from './lightbox'
 
 /** What the person attached, above their bubble: photos as thumbnails, files as chips. */
-export function UserAttachments({ items, className }: { items: UserAttachment[]; className?: string }) {
+export function UserAttachments({
+  items,
+  className,
+  children,
+}: {
+  items: UserAttachment[]
+  className?: string
+  /** Laid over them, like the clock on a message waiting to send. */
+  children?: ReactNode
+}) {
   const images = items.filter((a) => a.kind === 'image')
   const files = items.filter((a) => a.kind === 'file')
   return (
@@ -22,6 +31,7 @@ export function UserAttachments({ items, className }: { items: UserAttachment[];
       {files.map((a, i) => (
         <FileChip key={`${a.name}-${i}`} item={a} />
       ))}
+      {children}
     </div>
   )
 }

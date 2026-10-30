@@ -12,7 +12,7 @@ import {
   type RefObject,
 } from 'react'
 import { AnimatePresence, MotionConfig, motion, useReducedMotion } from 'motion/react'
-import { ArrowDown, Check, CircleAlert, Copy, PencilLine } from 'lucide-react'
+import { ArrowDown, Check, CircleAlert, Clock3, Copy, PencilLine } from 'lucide-react'
 import { useStickToBottom } from 'use-stick-to-bottom'
 import { Orb } from '@/ui/orb'
 import { Button } from '@/ui/button'
@@ -198,6 +198,8 @@ type Props = Handlers &
     lead?: ReactNode
     /** Hermes has older messages than these: reads them in, as you near the top. */
     onOlder?: () => Promise<void>
+    /** The connection is down: a message Hermes hasn't taken yet shows it's waiting. */
+    waiting?: boolean
     /** Pinned under the messages, e.g. the composer. Messages scroll beneath it. */
     footer?: ReactNode
     className?: string
@@ -265,6 +267,7 @@ export function Thread({
   emptyState,
   lead,
   onOlder,
+  waiting,
   footer,
   className,
   media = NO_MEDIA,
@@ -501,6 +504,7 @@ export function Thread({
                               isNew={isNew(key)}
                               onEdit={row.id === editableId ? onEdit : undefined}
                               editing={i === editingAt}
+                              waiting={waiting && row.item.pending}
                             />
                           )
                         else if (row.kind === 'notice')
@@ -616,6 +620,20 @@ export function Thread({
 
 const BUBBLE = 'rounded-[20px] rounded-br-md bg-user-bubble px-4 py-2.5 text-body break-words whitespace-pre-wrap'
 
+/** Beside a message the connection is holding: it goes once Hermes is back. */
+function Waiting() {
+  return (
+    <span
+      role="img"
+      aria-label="Waiting to send"
+      title="Waiting to send"
+      className="absolute right-full bottom-0 flex size-8 animate-fade items-center justify-center pr-1 text-ink-3"
+    >
+      <Clock3 size={15} strokeWidth={1.75} />
+    </span>
+  )
+}
+
 const quiet =
   'pressable relative inline-flex size-8 items-center justify-center rounded-full text-ink-3 hover:bg-fill-1 hover:text-ink-2 after:absolute after:-inset-1.5'
 
@@ -624,6 +642,7 @@ const UserMessage = memo(function UserMessage({
   isNew,
   onEdit,
   editing,
+  waiting,
   className,
 }: {
   item: Of<'user'>
@@ -632,6 +651,8 @@ const UserMessage = memo(function UserMessage({
   onEdit?: (item: Of<'user'>) => void
   /** Being rewritten in the composer right now. */
   editing?: boolean
+  /** Not with Hermes yet, and the connection is down: it goes once it's back. */
+  waiting?: boolean
   className?: string
 }) {
   const { copied, copy } = useCopy()
@@ -651,7 +672,14 @@ const UserMessage = memo(function UserMessage({
         className,
       )}
     >
-      {!!item.attachments?.length && <UserAttachments items={item.attachments} />}
+      {!!item.attachments?.length && (
+        <UserAttachments
+          items={item.attachments}
+          className={cn('relative [&>*]:transition-opacity [&>*]:duration-300', waiting && '[&>:not([role=img])]:opacity-50')}
+        >
+          {!item.text && waiting && <Waiting />}
+        </UserAttachments>
+      )}
       {!!item.images?.length && !item.attachments?.length && (
         <div className="flex max-w-[80%] flex-wrap justify-end gap-1.5">
           {item.images.map((src, i) => (
@@ -675,6 +703,7 @@ const UserMessage = memo(function UserMessage({
                 BUBBLE,
                 'ring-offset-bg transition-[opacity,box-shadow] duration-300 ease-(--ease-out) [-webkit-touch-callout:none] [@media(pointer:coarse)]:select-none',
                 editing && 'ring-2 ring-accent ring-offset-2',
+                waiting && 'opacity-50',
                 held && 'opacity-0',
               )}
             >
@@ -683,8 +712,14 @@ const UserMessage = memo(function UserMessage({
                 <MentionText text={item.text} />
               </span>
             </div>
+            {waiting && <Waiting />}
             {/* On hover-capable screens, quiet actions appear beside it. */}
-            <div className="absolute right-full bottom-0 hidden items-center gap-0.5 pr-1 opacity-0 transition-opacity duration-150 group-hover/user:opacity-100 focus-within:opacity-100 [@media(hover:hover)]:flex">
+            <div
+              className={cn(
+                'absolute right-full bottom-0 hidden items-center gap-0.5 pr-1 opacity-0 transition-opacity duration-150 group-hover/user:opacity-100 focus-within:opacity-100 [@media(hover:hover)]:flex',
+                waiting && '[@media(hover:hover)]:hidden',
+              )}
+            >
               {onEdit && (
                 <button type="button" className={quiet} onClick={() => onEdit(item)} aria-label="Edit" title="Edit">
                   <PencilLine size={16} strokeWidth={1.75} />
