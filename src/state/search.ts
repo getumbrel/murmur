@@ -8,6 +8,7 @@ import { useEffect, useState } from 'react'
 import { api } from '@/hermes/rest'
 import { rpc } from '@/hermes/gateway'
 import { readable, useAgents, type Agent } from '@/state/agents'
+import { plainLine } from '@shared/message.ts'
 
 type Hit = {
   session_id: string
@@ -49,19 +50,14 @@ export const MIN_QUERY = 2
 
 /** ">>>pine<<<apple" → [{pine, match}, {apple}], tidied for one or two lines. */
 export function parseSnippet(raw: string): SnippetPart[] {
-  const flat = raw
-    .replace(REFS, (_, path: string) => fileName(path))
-    // Escaped newlines from tool output read as "\n\n" otherwise.
-    .replace(/\\[nrt]/g, ' ')
-    .replace(/\s+/g, ' ')
+  const flat = plainLine(
+    raw
+      .replace(REFS, (_, path: string) => fileName(path))
+      // Escaped newlines from tool output read as "\n\n" otherwise.
+      .replace(/\\[nrt]/g, ' '),
+  )
     .replace(/^\.\.\.\s*/, '…')
     .replace(/\s*\.\.\.$/, '…')
-    // Markdown that reads as noise in a one-line preview.
-    .replace(/\*\*|__|`+/g, '')
-    .replace(/(^|\s)#{1,6}\s/g, '$1')
-    // A table's rules and cells: "| | Email | Inbox triage |" → "Email · Inbox triage".
-    .replace(/:?-{3,}:?/g, '')
-    .replace(/\s*(?:\|\s*)+/g, ' · ')
     .replace(/^(…?)\s*·\s*|\s*·\s*(…?)$/g, '$1$2')
     .trim()
   const parts: SnippetPart[] = []

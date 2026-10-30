@@ -94,6 +94,17 @@ describe('results among the chats', () => {
     expect(resultLine('## Two new emails\n\n- **Sam**: the venue moved to [Hall B](https://x.y)')).toBe('Two new emails - Sam: the venue moved to Hall B')
     expect(resultLine('```\nraw\n```\nDone.')).toBe('Done.')
   })
+
+  it('under the routine’s name, without saying the name again', () => {
+    const brief = '## Morning brief\n\n**Weather:** sunny, 24°\n\n- Standup at 10'
+    expect(resultLine(brief, 'Morning brief')).toBe('Weather: sunny, 24° - Standup at 10')
+    expect(resultLine('**morning BRIEF**\nAll quiet', 'Morning brief')).toBe('All quiet')
+    expect(resultLine('## Morning brief for Sam\nAll quiet', 'Morning brief')).toBe('Morning brief for Sam All quiet')
+    // Hermes's preview runs the lines together.
+    expect(resultLine('## Morning brief **Weather:** sunny - Standup', 'Morning brief')).toBe('Weather: sunny - Standup')
+    expect(resultLine('Morning brief is ready', 'Morning brief')).toBe('Morning brief is ready')
+    expect(resultLine('## Prices (EU)\nUp 2%', 'Prices (EU)')).toBe('Up 2%')
+  })
 })
 
 const run = (id: string, startedAt: number, finished = true): RunRow => ({ id: `cron_abc123_${id}`, startedAt, finished, title: '' })

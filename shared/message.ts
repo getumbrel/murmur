@@ -197,3 +197,28 @@ export function proseOf(text: string) {
 export function mediaPathsOf(text: string) {
   return splitMessage(text).flatMap((s) => (s.kind === 'media' ? [s.path] : s.kind === 'preview' ? [s.file] : []))
 }
+
+/**
+ * Markdown as one plain line, for a preview: its marks go, its words stay.
+ * Words keep their own underscores and hashes (`__init__.py`, `snake_case`,
+ * `#3`), and a table reads cell by cell ("Email · Done").
+ */
+export function plainLine(markdown: string) {
+  return (
+    markdown
+      .replace(/```[\s\S]*?```/g, ' ')
+      // Links and pictures: their words.
+      .replace(/!?\[([^\]\n]*)\]\([^)\s]+\)/g, '$1')
+      // Headings and quotes, where a line starts.
+      .replace(/^[^\S\n]*(?:#{1,6}|>)[^\S\n]+/gm, '')
+      // Bold, italic, struck and code: what they wrap.
+      .replace(/\*\*|~~|`+/g, '')
+      .replace(/(^|[^\w])(__?|\*)(?=\S)(.+?)(?<=\S)\2(?!\w|\.\w)/g, '$1$3')
+      // A table's rules and cells.
+      .replace(/:?-{3,}:?/g, '')
+      .replace(/\s*(?:\|\s*)+/g, ' · ')
+      .replace(/\s+/g, ' ')
+      .replace(/^\s*·\s*|\s*·\s*$/g, '')
+      .trim()
+  )
+}

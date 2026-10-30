@@ -130,7 +130,7 @@ export function useAgentChatList(of: Agent | string | undefined, { results = tru
     const line = (run: RoutineRun, found?: string): AgentChat => ({
       id: run.id,
       title: run.routineName,
-      preview: found ? resultLine(found) : '',
+      preview: found ? resultLine(found, run.routineName) : '',
       startedAt: run.at,
       at: run.lastAt,
       messageCount: run.messageCount,

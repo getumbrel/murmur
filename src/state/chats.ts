@@ -52,6 +52,8 @@ export type Chat = {
   stalled?: boolean
   /** Hermes has older history than what's been read: loadOlder brings it in. */
   older?: boolean
+  /** Its own row has been read, so `title` is what Hermes has (none, if it's unset). */
+  named?: boolean
   /** Speaker for one-to-one chats; group chats tag items individually. */
   speaker?: Speaker
   /** Counts finished replies, so widgets know to re-read files the agent may have rewritten. */
@@ -442,6 +444,7 @@ export function openChat(id: string, profile: string, speaker?: Speaker): Promis
   if (chat.ready && chat.runtimeId) return Promise.resolve()
   const existing = opening.get(id)
   if (existing) return existing
+  if (!chat.named) void readTitle(id, profile)
   const task = (async () => {
     try {
       if (!chat.ready && !(await readHistory(id, profile, speaker))) return
@@ -488,6 +491,18 @@ async function readHistory(id: string, profile: string, speaker?: Speaker) {
     }))
     return true
   }
+}
+
+/**
+ * A chat's name, from its own row: the lists hold only an agent's newest
+ * chats, so an older one isn't in them. One said live since is newer.
+ */
+async function readTitle(id: string, profile: string) {
+  type Res = { title?: string | null }
+  const row = await api
+    .get<Res>(`/api/sessions/${encodeURIComponent(id)}?profile=${encodeURIComponent(profile)}`)
+    .catch(() => null)
+  patch(id, (c) => ({ named: true, ...(c.title === undefined && row?.title ? { title: row.title } : {}) }))
 }
 
 /** Chats waiting to try their history again, and how to stop the wait. */
@@ -718,6 +733,9 @@ export async function createChat(
         items: [],
         status: 'idle',
         ready: true,
+        // Brand new: any name it gets arrives live.
+        named: true,
+        ...(opts.title ? { title: opts.title } : {}),
         speaker: opts.speaker,
         model: res.info?.model,
         provider: res.info?.provider,

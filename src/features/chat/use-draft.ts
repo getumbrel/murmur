@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useState, type RefObject } from 'react'
+import { useCallback, useLayoutEffect, useState, type RefObject } from 'react'
 import { scoped } from '@/hermes/instance'
 
 // What every message box shares: unsent text that survives a reload, and a
@@ -32,16 +32,17 @@ export function useDraft(key?: string) {
     setShown(key)
     setText(readDraft(key))
   }
-  useEffect(() => {
-    if (!key) return
-    const t = window.setTimeout(() => writeDraft(key, text), 250)
-    return () => window.clearTimeout(t)
-  }, [key, text])
-  const clear = useCallback(() => {
-    setText('')
-    if (key) writeDraft(key, '')
-  }, [key])
-  return [text, setText, clear] as const
+  // Saved with every change (a write takes microseconds), so leaving the
+  // moment you stop typing loses nothing.
+  const change = useCallback(
+    (next: string) => {
+      setText(next)
+      if (key) writeDraft(key, next)
+    },
+    [key],
+  )
+  const clear = useCallback(() => change(''), [change])
+  return [text, change, clear] as const
 }
 
 const MAX_LINES = 8

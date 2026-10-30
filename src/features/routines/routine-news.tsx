@@ -81,7 +81,7 @@ function NewsRow({ item, onOpen }: { item: RoutineNews; onOpen: (routineId: stri
             </span>
           </span>
           {latest ? (
-            <span className="block truncate text-footnote text-ink-2">{resultLine(latest.text)}</span>
+            <span className="block truncate text-footnote text-ink-2">{resultLine(latest.text, routine.name)}</span>
           ) : (
             <span className="block truncate text-footnote text-ink-3">Checked {checks}, nothing new</span>
           )}

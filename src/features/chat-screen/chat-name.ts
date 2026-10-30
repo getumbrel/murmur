@@ -53,5 +53,6 @@ export function useChatName(agentId: string, id: string | undefined, chat: Chat 
   if (fresh && !waited && (!live || isOpening(live, opening))) return 'New chat'
   // Until it's known not to be a run, a run's dated title could show.
   if (run === undefined) return ''
-  return live || listed?.title || archived?.title || opening
+  // Your opening words only once its own row says it has no name (it may be older than the lists).
+  return live || listed?.title || archived?.title || (chat?.named ? opening : '')
 }

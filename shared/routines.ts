@@ -3,6 +3,8 @@
 // and Hermes delivers nothing. Murmur follows the same rule, so what's quiet
 // here is what never reached Telegram.
 
+import { plainLine } from './message.ts'
+
 /**
  * A run's chat id up to Hermes 0.22.2 (`cron_<routine>_<yyyymmdd>_<hhmmss>`),
  * which names the routine it belongs to. From 0.22.3 a run is named for its
@@ -95,14 +97,23 @@ export function standingResults<R extends { routineId?: string; at: number }>(la
   return latest.filter((run) => !continued.some((c) => c.routineId === run.routineId && c.at > run.at))
 }
 
-/** What a run found, as one line of words. */
-export function resultLine(markdown: string) {
-  return markdown
-    .replace(/```[\s\S]*?```/g, ' ')
-    .replace(/!?\[([^\]]*)\]\([^)]+\)/g, '$1')
-    .replace(/[#>*_`~|]+/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
+/**
+ * What a run found, as one line of words. Shown under the routine's `name`,
+ * a lead that only says the name again ("## Morning brief") goes.
+ */
+export function resultLine(markdown: string, name?: string) {
+  return plainLine(name?.trim() ? markdown.replace(saysName(name), '') : markdown)
+}
+
+/**
+ * The name alone on the first line, or, in a preview Hermes ran onto one
+ * line, marked as a heading or bold with more markup straight after it.
+ */
+function saysName(name: string) {
+  const n = name.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+')
+  const alone = `(?:#{1,6}[^\\S\\n]+)?(?:\\*\\*|__)?${n}(?:\\*\\*|__)?[^\\S\\n]*(?:\\n|$)`
+  const marked = `(?:#{1,6}[^\\S\\n]+${n}|\\*\\*${n}\\*\\*|__${n}__)(?=\\s+(?:[#*_>|\`-]|\\d+\\.))`
+  return new RegExp(`^\\s*(?:${alone}|${marked})`, 'i')
 }
 
 // ── Landing ─────────────────────────────────────────────────────────────────

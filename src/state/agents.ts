@@ -21,7 +21,7 @@ import { parseUserMessage } from '@/features/media/parse'
 import type { Speaker } from '@/features/chat/types'
 import { scoped } from '@/hermes/instance'
 import { listProfileNames, listProfiles } from '@/hermes/compat'
-import { isQuietExcerpt, isRunBrief, runTitle } from '@shared/routines.ts'
+import { isQuietExcerpt, isRunBrief, resultLine, runTitle } from '@shared/routines.ts'
 import { agentName, botTitle } from '@shared/agents.ts'
 import { fetchRunResult, knowRun, runOf } from '@/state/routines'
 import { refreshActivity } from '@/state/status'
@@ -216,8 +216,8 @@ function newestChat(p: Profile): Agent['lastChat'] {
   if (!last) return undefined
   if (last.run) {
     // What the routine found, under its name.
-    const said = readable(last.preview)
-    return { id: last.id, title: [runTitle(last.title ?? '') || 'Routine', said].filter(Boolean).join(' · '), at: activeAt(last), routine: true }
+    const name = runTitle(last.title ?? '') || 'Routine'
+    return { id: last.id, title: [name, resultLine(last.preview ?? '', name)].filter(Boolean).join(' · '), at: activeAt(last), routine: true }
   }
   return { id: last.id, title: readable(last.title, { files: false }) || readable(last.preview) || 'New chat', at: activeAt(last) }
 }
