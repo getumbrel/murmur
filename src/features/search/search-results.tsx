@@ -7,6 +7,7 @@ import { Skeleton } from '@/ui/skeleton'
 import { cn } from '@/lib/cn'
 import { shortTime } from '@/features/home/time'
 import { MIN_QUERY, type ChatSearch, type SearchResult } from '@/state/search'
+import { seek } from '@/state/seek'
 
 // What a search found: one row per chat, newest first. The orb says whose chat
 // it is, the words you searched for glow in that agent's colour.
@@ -117,7 +118,10 @@ function ResultRow({
       <Link
         ref={ref}
         href={resultHref(r)}
-        onClick={() => onOpen?.(r)}
+        onClick={() => {
+          seek(r)
+          onOpen?.(r)
+        }}
         data-active={active || undefined}
         aria-current={selected ? 'page' : undefined}
         className={cn(
@@ -239,7 +243,9 @@ export function useResultKeys(results: SearchResult[], open: (r: SearchResult) =
       setActive((a) => Math.max(0, a - 1))
     } else if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
       e.preventDefault()
-      open(results[Math.max(0, active)])
+      const r = results[Math.max(0, active)]
+      seek(r)
+      open(r)
     }
   }
   return { active, onKeyDown }

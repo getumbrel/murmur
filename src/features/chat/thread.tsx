@@ -74,6 +74,8 @@ const SPRING = { damping: 0.75, stiffness: 0.08, mass: 1 }
 const SETTLE_MS = 1200
 /** Rows a long chat paints at first, and how many more join each time you scroll up to the oldest shown. */
 const WINDOW = 60
+/** Rows kept above a message the thread was opened at, for what led up to it. */
+const LEADUP = 8
 
 /**
  * Folds the flat item list into user messages and assistant turns. Settled
@@ -157,6 +159,82 @@ function toRows(items: ChatItem[], busy: boolean, live: Set<string>): Row[] {
   return rows
 }
 
+/** The row a message is in: its own, or the reply it's part of. */
+const holds = (row: Row, itemId: string) =>
+  row.id === itemId || (row.kind === 'turn' && row.sections.some((s) => s.blocks.some((b) => b.id === itemId)))
+
+/** How long a word found by search stays marked: the length of its animation in styles.css. */
+const FIND_MS = 2800
+
+/**
+ * Marks the words a message was found by, as Find does on a Mac: a yellow
+ * lozenge over each, a copy of the word drawn over the message rather than
+ * into it, so what React rendered is left alone. False when none shows.
+ */
+function markWords(message: HTMLElement, words: string[]) {
+  if (!words.length) return false
+  const either = words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
+  const find = new RegExp(`(?<![\\p{L}\\p{N}])(?:${either})(?![\\p{L}\\p{N}])`, 'giu')
+  const ranges: Range[] = []
+  const walk = document.createTreeWalker(message, NodeFilter.SHOW_TEXT)
+  for (let node = walk.nextNode(); node && ranges.length < 24; node = walk.nextNode()) {
+    for (const m of (node.nodeValue ?? '').matchAll(find)) {
+      const range = document.createRange()
+      range.setStart(node, m.index)
+      range.setEnd(node, m.index + m[0].length)
+      if (range.getClientRects().length) ranges.push(range)
+    }
+  }
+  if (!ranges.length) return false
+  // Where it falls is where it's measured from: it moves nothing.
+  const layer = document.createElement('span')
+  layer.setAttribute('aria-hidden', 'true')
+  layer.style.position = 'absolute'
+  const marks = ranges.map((range) => {
+    const mark = document.createElement('span')
+    mark.className = 'find'
+    mark.textContent = range.toString()
+    const type = getComputedStyle(range.startContainer.parentElement ?? message)
+    for (const p of TYPE) mark.style[p] = type[p]
+    layer.append(mark)
+    return mark
+  })
+  message.append(layer)
+  const lay = () => {
+    const at = layer.getBoundingClientRect()
+    ranges.forEach((range, i) => {
+      const word = range.getClientRects()[0]
+      if (!word) return
+      Object.assign(marks[i].style, {
+        left: `${word.left - at.left - 3}px`,
+        top: `${word.top - at.top - 1}px`,
+        lineHeight: `${word.height}px`,
+      })
+    })
+  }
+  lay()
+  const ro = new ResizeObserver(lay)
+  ro.observe(message)
+  setTimeout(() => {
+    ro.disconnect()
+    layer.remove()
+  }, FIND_MS)
+  return true
+}
+
+/** What a word's copy takes from the word, so it lies exactly over it. */
+const TYPE = [
+  'fontFamily',
+  'fontSize',
+  'fontWeight',
+  'fontStyle',
+  'fontStretch',
+  'letterSpacing',
+  'fontFeatureSettings',
+  'fontVariationSettings',
+  'textTransform',
+] as const
+
 /** One of the helpers a wake brings back: named by it, or (when it names no one) of its errand. */
 const cameBack = (h: Of<'helper'>, wake: Of<'wake'>) =>
   wake.subagentIds
@@ -200,6 +278,8 @@ type Props = Handlers &
     onOlder?: () => Promise<void>
     /** The connection is down: a message Hermes hasn't taken yet shows it's waiting. */
     waiting?: boolean
+    /** A message to open at (a search result's), the words to mark in it, and when that was asked: asked again, it opens there again. */
+    focus?: { id: string; at: number; words?: string[] }
     /** Pinned under the messages, e.g. the composer. Messages scroll beneath it. */
     footer?: ReactNode
     className?: string
@@ -268,6 +348,7 @@ export function Thread({
   lead,
   onOlder,
   waiting,
+  focus,
   footer,
   className,
   media = NO_MEDIA,
@@ -283,7 +364,7 @@ export function Thread({
   const reduced = useReducedMotion()
   const settleUntil = useRef(0)
   const still = () => reduced || performance.now() < settleUntil.current
-  const { scrollRef, contentRef, isAtBottom, scrollToBottom, state: stick } = useStickToBottom({
+  const { scrollRef, contentRef, isAtBottom, scrollToBottom, stopScroll, state: stick } = useStickToBottom({
     initial: 'instant',
     // (Read when the content resizes, so the window above is current.)
     get resize() {
@@ -313,10 +394,29 @@ export function Thread({
   // to them: rendering every saved message up front made opening one slow.
   // Held by the oldest row shown, so another conversation starts afresh.
   const [oldest, setOldest] = useState<string>()
-  const at = oldest ? rows.findIndex((r) => r.id === oldest) : -1
-  const from = Math.min(at < 0 ? rows.length : at, Math.max(0, rows.length - WINDOW))
-  if (rows.length && rows[from].id !== oldest) setOldest(rows[from].id)
-  const shown = from ? rows.slice(from) : rows
+  // Opened at a message further back, it's held by the newest row shown too,
+  // and newer ones join as you scroll down to them.
+  const [newest, setNewest] = useState<string>()
+  const [opened, setOpened] = useState<number>()
+  let first = oldest
+  let last = newest
+  const target = focus && focus.at !== opened ? rows.findIndex((r) => holds(r, focus.id)) : -1
+  if (focus && target >= 0) {
+    first = rows[Math.max(0, target - LEADUP)].id
+    last = target + WINDOW < rows.length - 1 ? rows[target + WINDOW].id : undefined
+    setOpened(focus.at)
+    setOldest(first)
+    setNewest(last)
+  }
+  const end = last ? rows.findIndex((r) => r.id === last) : -1
+  if (newest && end < 0) setNewest(undefined)
+  const to = end < 0 ? rows.length : end + 1
+  const at = first ? rows.findIndex((r) => r.id === first) : -1
+  const from = Math.min(at < 0 ? to : at, Math.max(0, to - WINDOW))
+  if (rows.length && rows[from].id !== first) setOldest(rows[from].id)
+  const shown = from || to < rows.length ? rows.slice(from, to) : rows
+  // Somewhere back in the chat, with newer rows below what's shown.
+  const back = to < rows.length
 
   // History appears without animation: whatever is there on first paint, and
   // any batch of several items landing at once (a transcript loading late).
@@ -342,11 +442,32 @@ export function Thread({
   const lastUser = items.findLast((i) => i.kind === 'user')?.id
   const lastUserIsNew = !!lastUser && isNew(lastUser)
   const prevUser = useRef(lastUser)
+  // Back to the end from further back: its rows are shown, then it's scrolled to.
+  // (A message it was opened at no longer holds it in place.)
+  const toEnd = useRef(false)
+  const settling = useRef<() => void>(undefined)
+  const toLatest = () => {
+    settling.current?.()
+    if (!back) return void scrollToBottom(reduced ? 'instant' : 'smooth')
+    toEnd.current = true
+    setNewest(undefined)
+    setOldest(undefined)
+  }
+  useLayoutEffect(() => {
+    const el = scrollRef.current
+    if (!toEnd.current || !el || back) return
+    toEnd.current = false
+    el.scrollTop = el.scrollHeight
+    void scrollToBottom('instant')
+  })
   useEffect(() => {
     if (prevUser.current === lastUser) return
     prevUser.current = lastUser
-    if (lastUserIsNew) void scrollToBottom(still() ? 'instant' : 'smooth')
-  }, [lastUser, lastUserIsNew, scrollToBottom])
+    if (!lastUserIsNew) return
+    settling.current?.()
+    if (back) toLatest()
+    else void scrollToBottom(still() ? 'instant' : 'smooth')
+  })
 
   const lastTurn = rows.findLast((r) => r.kind === 'turn')?.id
   // Who reads replies aloud: the agent in a one-to-one chat.
@@ -468,6 +589,69 @@ export function Thread({
     el.style.overflowAnchor = ''
   }, [from, scrollRef])
 
+  // Further back, newer rows join a screen before you reach the last one
+  // shown. They're not the end of the chat, so the thread doesn't follow
+  // them down; the last of them is, and from there it's the live chat again.
+  const newerRef = useRef<HTMLDivElement>(null)
+  const below = back ? (to + WINDOW < rows.length ? rows[to - 1 + WINDOW].id : '') : undefined
+  useEffect(() => {
+    const el = scrollRef.current
+    const sentinel = newerRef.current
+    if (!el || !sentinel || below === undefined) return
+    const io = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry.isIntersecting) return
+        stopScroll()
+        setNewest(below || undefined)
+      },
+      { root: el, rootMargin: '0px 0px 100% 0px' },
+    )
+    io.observe(sentinel)
+    return () => io.disconnect()
+  }, [below, scrollRef, stopScroll])
+
+  // Opened at a message: it sits a little way down the screen with the words
+  // it was found by marked, and stays put while what's above it lays out.
+  const placed = useRef<number>(undefined)
+  useLayoutEffect(() => {
+    const el = scrollRef.current
+    const content = contentRef.current
+    if (!el || !content || !focus || opened !== focus.at || placed.current === focus.at) return
+    const message = el.querySelector<HTMLElement>(`[data-message="${CSS.escape(focus.id)}"]`)
+    if (!message) return
+    placed.current = focus.at
+    settling.current?.()
+    stopScroll()
+    const place = () => {
+      if (!message.isConnected) return done()
+      const top = parseFloat(getComputedStyle(el).paddingTop) || 0
+      const room = el.clientHeight - top - under
+      const offset = top + Math.max(16, (room - message.offsetHeight) * 0.4)
+      el.scrollTop += message.getBoundingClientRect().top - el.getBoundingClientRect().top - offset
+    }
+    place()
+    if (!markWords(message, focus.words ?? [])) {
+      message.classList.remove('found')
+      void message.offsetWidth
+      message.classList.add('found')
+    }
+    // Until you scroll, or it's settled.
+    const ro = new ResizeObserver(() => place())
+    ro.observe(content)
+    const events = ['wheel', 'touchstart', 'keydown', 'pointerdown']
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const done = () => {
+      clearTimeout(timer)
+      ro.disconnect()
+      for (const e of events) el.removeEventListener(e, done)
+      if (settling.current === done) settling.current = undefined
+    }
+    for (const e of events) el.addEventListener(e, done, { passive: true })
+    timer = setTimeout(done, SETTLE_MS)
+    settling.current = done
+  })
+  useEffect(() => () => settling.current?.(), [])
+
   return (
     <MotionConfig reducedMotion="user">
       <MediaProvider value={media}>
@@ -561,6 +745,7 @@ export function Thread({
                       })}
                     </AnimatePresence>
                   )}
+                  {back && <div ref={newerRef} aria-hidden />}
                 </div>
 
                 <div ref={spacerRef} aria-hidden className="flex-none" />
@@ -590,12 +775,12 @@ export function Thread({
                         />
                       </motion.div>
                     )}
-                    {!isAtBottom && (
+                    {(!isAtBottom || back) && (
                       <motion.button
                         key="latest"
                         type="button"
                         layout="position"
-                        onClick={() => void scrollToBottom(reduced ? 'instant' : 'smooth')}
+                        onClick={toLatest}
                         initial={{ opacity: 0, y: 8, scale: 0.94 }}
                         animate={{ opacity: 1, y: 0, scale: 1 }}
                         exit={{ opacity: 0, y: 8, scale: 0.94 }}
@@ -666,6 +851,7 @@ const UserMessage = memo(function UserMessage({
 
   return (
     <div
+      data-message={item.id}
       className={cn(
         'group/user flex flex-col items-end gap-1.5',
         isNew && 'animate-pop origin-bottom-right',
@@ -876,11 +1062,18 @@ const Turn = memo(function Turn({
                   if (!block.item.text) return null
                   return block.item === reactTo ? (
                     // Touch: hold the reply to react, as you would a message in Messages.
-                    <div key={block.id} {...hold} className="[@media(pointer:coarse)]:[-webkit-touch-callout:none]">
+                    <div
+                      key={block.id}
+                      data-message={block.id}
+                      {...hold}
+                      className="[@media(pointer:coarse)]:[-webkit-touch-callout:none]"
+                    >
                       <RichText text={block.item.text} streaming={block.item.streaming} />
                     </div>
                   ) : (
-                    <RichText key={block.id} text={block.item.text} streaming={block.item.streaming} />
+                    <div key={block.id} data-message={block.id}>
+                      <RichText text={block.item.text} streaming={block.item.streaming} />
+                    </div>
                   )
                 case 'plan':
                   return <Plan key={block.id} item={block.item} live={live} />

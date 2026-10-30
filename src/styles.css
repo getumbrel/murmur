@@ -44,6 +44,10 @@
   --danger: oklch(0.56 0.21 25);
   --success: oklch(0.6 0.16 150);
   --warning: oklch(0.62 0.16 62);
+  /* Search's marks: Find's yellow, the same in both themes, and a softer wash. */
+  --find: oklch(0.91 0.18 101);
+  --find-ink: #1d1a00;
+  --found: oklch(0.93 0.16 98 / 0.55);
 
   color-scheme: light;
 }
@@ -75,6 +79,7 @@
     --danger: oklch(0.68 0.19 25);
     --success: oklch(0.74 0.15 150);
     --warning: oklch(0.8 0.15 75);
+    --found: oklch(0.78 0.15 72 / 0.2);
 
     color-scheme: dark;
   }
@@ -103,6 +108,7 @@
   --danger: oklch(0.68 0.19 25);
   --success: oklch(0.74 0.15 150);
   --warning: oklch(0.8 0.15 75);
+  --found: oklch(0.78 0.15 72 / 0.2);
 
   color-scheme: dark;
 }
@@ -414,6 +420,65 @@
   animation: skeleton-sweep 1.6s var(--ease-sheet) infinite;
 }
 
+/* The words a search result was found by, marked the way Find marks them on
+   a Mac: a yellow lozenge over each that pops up, holds, then fades. It's
+   drawn over the message, not into it (see markWords in thread.tsx). */
+.find {
+  position: absolute;
+  padding: 1px 3px;
+  border-radius: 5px;
+  background: var(--find);
+  color: var(--find-ink);
+  box-shadow:
+    0 0 0 0.5px rgb(0 0 0 / 0.12),
+    0 1px 3px rgb(0 0 0 / 0.28);
+  white-space: pre;
+  pointer-events: none;
+  animation: find 2.8s var(--ease-out) forwards;
+}
+@keyframes find {
+  0% {
+    transform: scale(1);
+  }
+  8% {
+    transform: scale(1.28);
+  }
+  20%,
+  78% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  to {
+    transform: scale(1);
+    opacity: 0;
+  }
+}
+
+/* When the words can't be pointed to (they were in a file's name, say), the
+   message itself is washed in that yellow for a moment instead. */
+.found {
+  position: relative;
+  isolation: isolate;
+}
+.found::before {
+  content: '';
+  position: absolute;
+  inset: -8px -12px;
+  z-index: -1;
+  border-radius: 16px;
+  background: var(--found);
+  pointer-events: none;
+  animation: found 2.6s var(--ease-out) forwards;
+}
+@keyframes found {
+  40% {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
 /* Reduced motion is designed, not deleted: movement becomes a short fade,
    loops stop on a legible frame, and progress spinners keep turning (they
    carry meaning and don't travel). */
@@ -434,6 +499,13 @@
   .animate-spin {
     animation-duration: 1s !important;
     animation-iteration-count: infinite !important;
+  }
+  /* (Nothing moves: they only fade.) */
+  .found::before {
+    animation-duration: 2.6s !important;
+  }
+  .find {
+    animation: found 2.8s ease-out forwards !important;
   }
   .text-shimmer {
     animation: none;

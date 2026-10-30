@@ -9,6 +9,7 @@ import { api } from '@/hermes/rest'
 import { rpc } from '@/hermes/gateway'
 import { readable, useAgents, type Agent } from '@/state/agents'
 import { plainLine } from '@shared/message.ts'
+import type { Found } from '@/state/seek'
 
 type Hit = {
   session_id: string
@@ -36,6 +37,8 @@ export type SearchResult = {
   from: 'you' | 'agent' | 'other' | 'title'
   /** ms */
   at: number
+  /** Where in the chat its words were found, so it opens there. */
+  found?: Found
 }
 
 const HIDDEN_SOURCES = ['cron', 'bot_room']
@@ -116,14 +119,19 @@ async function searchAgent(agent: Agent, q: string, signal?: AbortSignal): Promi
     const base = { agent, chatId, title, at: (h.last_active || h.session_started || h.started_at || 0) * 1000 }
     if (!behindTheScenes(h)) {
       const from = h.role === 'user' ? 'you' : h.role === 'assistant' ? 'agent' : 'other'
-      return [{ ...base, from, snippet: parseSnippet(h.snippet ?? '') }]
+      const found: Found | undefined =
+        (h.role === 'user' || h.role === 'assistant') && h.snippet ? { snippet: h.snippet, role: h.role } : undefined
+      return [{ ...base, from, snippet: parseSnippet(h.snippet ?? ''), found }]
     }
     // Hermes gives one hit per chat, its best; when that's tool noise, the chat
     // still counts if its opening words hold what was typed (a name that does
     // is found by searchTitles).
     const preview = readable(h.preview)
     const inPreview = preview && preview !== title ? markedIn(preview, q) : undefined
-    return inPreview ? [{ ...base, from: 'you', snippet: inPreview }] : []
+    if (!inPreview) return []
+    // (Its opening words: the first message.)
+    const quote = inPreview.map((p) => (p.match ? `>>>${p.text}<<<` : p.text)).join('')
+    return [{ ...base, from: 'you', snippet: inPreview, found: { snippet: quote, role: 'user' } }]
   })
 }
 

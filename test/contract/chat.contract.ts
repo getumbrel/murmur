@@ -359,6 +359,8 @@ describe('coming back to a chat', () => {
     const hit = results.find((r: { session_id?: string; id?: string }) => (r.session_id ?? r.id) === stored)
     expect(hit).toBeDefined()
     expect(hit.snippet ?? hit.preview).toContain('periwinkle')
+    // Not which message, but its words around the match, marked, and who said them: the chat opens at the one that holds them.
+    expect(hit).toMatchObject({ snippet: expect.stringContaining('>>>periwinkle<<<'), role: 'user' })
   })
 
   it('clears the unread mark Hermes Desktop keeps', async () => {

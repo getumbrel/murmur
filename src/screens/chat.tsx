@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react'
 import { useLocation } from 'wouter'
 import { MotionConfig } from 'motion/react'
 import { Gauge } from 'lucide-react'
@@ -82,6 +82,9 @@ import {
   useAgents,
   type Agent,
 } from '@/state/agents'
+import { doneSeeking, findOlder, findRead, matchOf, useSeek } from '@/state/seek'
+
+const NONE: ChatItem[] = []
 
 // One agent, one conversation. /chat/:agent opens the latest chat (or a new
 // one), /chat/:agent/new is a blank chat that Hermes only creates on the first
@@ -202,6 +205,28 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
       description: names && `Attach ${names} again to send ${files.length > 1 ? 'them' : 'it'} too.`,
     })
   }, [id, ready])
+
+  // A search result opens at the message it was found in, once the chat is
+  // read, with the words it was found by marked. One further back waits
+  // behind the skeleton while it's read to.
+  const wanted = useSeek(id)
+  const [focus, setFocus] = useState<{ chat: string; id: string; at: number; words: string[] }>()
+  if (focus && focus.chat !== id) setFocus(undefined)
+  const [seeking, setSeeking] = useState<string>()
+  useLayoutEffect(() => {
+    if (!id || !ready || !wanted) return
+    doneSeeking(id)
+    const words = matchOf(wanted)
+    const read = findRead(id, wanted)
+    if (read.id) setFocus({ chat: id, id: read.id, at: Date.now(), words })
+    if (!read.more) return
+    setSeeking(id)
+    void findOlder(id, wanted).then((found) => {
+      if (found) setFocus({ chat: id, id: found, at: Date.now(), words })
+      setSeeking((s) => (s === id ? undefined : s))
+    })
+  }, [id, ready, wanted])
+  const reading = !!id && seeking === id
 
   const fill = (text: string) => {
     composer.current?.setText(text)
@@ -522,8 +547,9 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
         <Thread
           // A fresh thread per chat, except the one just started here: it carries on in place.
           key={id && id !== born.current ? id : 'new'}
-          items={items}
-          busy={busy}
+          items={reading ? NONE : items}
+          busy={busy && !reading}
+          focus={focus?.chat === id ? focus : undefined}
           agent={speaker}
           onOlder={id && chat?.older ? () => loadOlder(id) : undefined}
           waiting={!connected}
@@ -546,7 +572,9 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
               : 'flex-1 [&_[role=log]]:pt-[calc(3.5rem+env(safe-area-inset-top))]'
           }
           emptyState={
-            openError ? (
+            reading ? (
+              <ThreadSkeleton />
+            ) : openError ? (
               <NotFound
                 hue={agent?.hue}
                 title="This chat isn’t here anymore"
