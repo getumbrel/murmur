@@ -9,7 +9,7 @@ import { startGateway } from '@/hermes/gateway'
 import { wireChats } from '@/state/chats'
 import { wireSessionLists } from '@/state/sync'
 import { wireChatConnects } from '@/state/hosted-apps-chat'
-import { markWelcomed, useReadiness } from '@/state/readiness'
+import { markWelcomed, useReadiness, useWelcomed } from '@/state/readiness'
 import { useAgents, useFreshAgents } from '@/state/agents'
 import { usePicturesSync } from '@/state/pictures'
 import { useUmbrelContextSync } from '@/state/umbrel-context'
@@ -167,7 +167,11 @@ function Gate({ children }: { children: ReactNode }) {
     return () => clearTimeout(t)
   }, [agents.isPending])
   const roster = agents.isPending || (groups.isPending && !groupsLate)
-  const waiting = ((readiness === 'loading' || (roster && readiness !== 'unknown')) && !onboarding) || away
+  // Someone this browser has welcomed goes in without waiting on the model
+  // check, which still runs: a model that's gone since still sends them to set up.
+  const welcomed = useWelcomed()
+  const checking = readiness === 'loading' && !welcomed
+  const waiting = ((checking || (roster && readiness !== 'unknown')) && !onboarding) || away
   // The splash lingers until the app is drawn, so its mark can settle into the header's.
   const [splash, setSplash] = useState(waiting)
   useLayoutEffect(() => {

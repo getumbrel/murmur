@@ -377,6 +377,8 @@ export async function fetchRunResult(agentId: string, runId: string): Promise<Ru
 
 /** How many of a routine's newest runs are read for its latest result. */
 const LOOK_BACK = 12
+/** How many of them are read at once, before what they said decides whether to read on. */
+const READ_AHEAD = 3
 
 export type RoutineNews = {
   routine: Routine
@@ -392,12 +394,13 @@ export type RoutineNews = {
 
 /**
  * Each routine that has run, with what it last had to say, newest first;
- * the ones with nothing to report so far go last. Reads only each routine's
- * newest few runs, and each run once. While a new or moving run is read, what
- * was known stays, so nothing blinks out and back.
+ * the ones with nothing to report so far go last. Reads each routine's newest
+ * runs only as far as its latest result, and each run once. While a new or
+ * moving run is read, what was known stays, so nothing blinks out and back.
  */
 export function useRoutineNews(agentId: string | undefined) {
   const held = useRef<{ agentId?: string; data?: RoutineNews[] }>({})
+  const qc = useQueryClient()
   const routines = useRoutines(agentId)
   const runs = useRoutineRuns(agentId)
   const byRoutine = new Map<string, RoutineRun[]>()
@@ -406,7 +409,21 @@ export function useRoutineNews(agentId: string | undefined) {
     const list = byRoutine.get(run.routineId) ?? []
     if (list.length < LOOK_BACK) byRoutine.set(run.routineId, [...list, run])
   }
-  const read = [...byRoutine.values()].flat()
+  // Newest first, a few at a time per routine, up to the first that said
+  // something: that’s its line, and the older ones can’t change it.
+  const read: RoutineRun[] = []
+  for (const list of byRoutine.values()) {
+    let unread = false
+    for (const [i, run] of list.entries()) {
+      read.push(run)
+      const known = qc.getQueryState<RunResult>(runResultKey(agentId ?? '', run))
+      const r = known?.data
+      if (r && !r.replied && !r.quiet && r.text) break
+      // (One that couldn't be read is passed over, as before.)
+      if (!r && known?.status !== 'error') unread = true
+      if (unread && i % READ_AHEAD === READ_AHEAD - 1) break
+    }
+  }
   const results = useQueries({
     queries: read.map((run) => ({
       queryKey: runResultKey(agentId ?? '', run),

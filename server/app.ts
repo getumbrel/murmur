@@ -9,7 +9,7 @@ import { extname, join, normalize, resolve, sep } from 'node:path'
 import { cookieValue, handleAccess, isSignedIn, onSignOut } from './access.ts'
 import { memo, setting, useEnv, type Env } from './config.ts'
 import { handleConnection, hermesFor, onDrop, syncHermesCookie } from './connection.ts'
-import { hostAllowed, originAllowed, requestUrl, sendJson } from './http.ts'
+import { accepted, hostAllowed, originAllowed, requestUrl, sendJson } from './http.ts'
 import { handleNotifications, startNotifications, stopNotifications, type NativeNote } from './notifications.ts'
 import { isOAuthReturn } from './oauth-return.ts'
 import { createProxy, refuse } from './proxy.ts'
@@ -93,19 +93,6 @@ const ENCODINGS = [
   ['br', '.br'],
   ['gzip', '.gz'],
 ] as const
-
-/** The encodings an Accept-Encoding header allows (a q of 0 refuses one; `*` allows any not named). */
-function accepted(header: string | string[] | undefined) {
-  const allowed = new Set<string>()
-  const refused = new Set<string>()
-  for (const part of String(header ?? '').toLowerCase().split(',')) {
-    const [name, ...params] = part.trim().split(';')
-    const q = params.map((p) => p.trim()).find((p) => p.startsWith('q='))
-    if (q && Number(q.slice(2)) === 0) refused.add(name.trim())
-    else allowed.add(name.trim())
-  }
-  return (encoding: string) => !refused.has(encoding) && (allowed.has(encoding) || allowed.has('*'))
-}
 
 function serveStatic(staticDir: string, req: http.IncomingMessage, res: http.ServerResponse, url: URL) {
   const pathname = decodeURIComponent(url.pathname) // checked by requestUrl

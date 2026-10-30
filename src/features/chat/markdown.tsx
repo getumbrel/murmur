@@ -184,11 +184,16 @@ export const Markdown = memo(function Markdown({ text, streaming }: { text: stri
     () => (members.length ? [...rehypeDefaults, [rehypeMentions, { members }] satisfies Pluggable] : undefined),
     [members],
   )
+  // Saved replies are whole markdown, parsed in one go: streaming's renderer
+  // re-reads each block as if it might still be open, which made long chats
+  // slow to open. One that's streaming keeps that renderer while it's shown,
+  // since switching as it finished would draw it all again.
+  const [mode] = useState<'streaming' | 'static'>(streaming ? 'streaming' : 'static')
   return (
     <Streamdown
       key={key}
       className={streaming ? 'md md-streaming' : 'md'}
-      mode="streaming"
+      mode={mode}
       isAnimating={streaming}
       animated={animation}
       components={components}

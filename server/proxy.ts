@@ -6,8 +6,10 @@ import http from 'node:http'
 import https from 'node:https'
 import net from 'node:net'
 import tls from 'node:tls'
+import zlib from 'node:zlib'
 import type { Hermes } from './hermes.ts'
 import { HERMES_PARAM } from './connection.ts'
+import { accepted } from './http.ts'
 import { sendReturnPage } from './oauth-return.ts'
 
 const HOP_BY_HOP = new Set(['connection', 'keep-alive', 'proxy-connection', 'transfer-encoding', 'upgrade', 'te', 'trailer'])
@@ -20,6 +22,11 @@ const stripped = (key: string) => HOP_BY_HOP.has(key) || STRIP.has(key) || key.s
 // Hermes pages carry its session token; only files the person asked for may be markup.
 const MARKUP = /^\s*(text\/html|application\/xhtml|image\/svg|text\/xml|application\/xml)/i
 const DOWNLOAD = '/hermes/api/fs/download'
+// Hermes sends JSON as it is. A long chat's transcript is the most Murmur
+// fetches, and it shrinks several times over. Brotli stays at a quality that
+// costs less time than it saves on a phone's connection.
+const JSON_TYPE = /^\s*application\/(?:[\w.+-]+\+)?json\b/i
+const BROTLI = { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 4 } }
 
 /** Hermes's path for a request. Murmur's own `?hermes=` (which Hermes) stays here. */
 function upstreamPath(hermes: Hermes, url: URL) {
@@ -92,9 +99,18 @@ export function createProxy(pick: Pick) {
           headers['x-content-type-options'] = 'nosniff'
           // A downloaded page or SVG opened in a tab runs in an opaque origin, away from Murmur.
           if (MARKUP.test(type)) headers['content-security-policy'] = 'sandbox'
+          const encoding = up.statusCode === 200 && JSON_TYPE.test(type) ? encodingFor(req, up) : undefined
+          if (encoding) {
+            headers['content-encoding'] = encoding
+            headers.vary = [headers.vary, 'Accept-Encoding'].filter(Boolean).join(', ')
+            delete headers['content-length']
+          }
           res.writeHead(up.statusCode ?? 502, headers)
           up.on('error', () => res.destroy())
-          up.pipe(res)
+          if (!encoding) return void up.pipe(res)
+          const zip = encoding === 'br' ? zlib.createBrotliCompress(BROTLI) : zlib.createGzip()
+          zip.on('error', () => res.destroy())
+          up.pipe(zip).pipe(res)
         },
       )
       // A <video> seeking, or a closed tab: stop reading from Hermes.
@@ -199,6 +215,13 @@ export function createProxy(pick: Pick) {
   }
 
   return { proxyHttp, proxyUpgrade, proxyOAuthReturn, closeWhere }
+}
+
+/** The best encoding the browser takes for this response, unless Hermes encoded it or it's too small to gain. */
+function encodingFor(req: http.IncomingMessage, up: http.IncomingMessage) {
+  if (up.headers['content-encoding'] || Number(up.headers['content-length'] ?? Infinity) < 1024) return undefined
+  const takes = accepted(req.headers['accept-encoding'])
+  return takes('br') ? 'br' : takes('gzip') ? 'gzip' : undefined
 }
 
 export function refuse(socket: net.Socket, status: number, text: string) {

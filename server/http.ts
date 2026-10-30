@@ -24,6 +24,19 @@ export async function readJson(req: http.IncomingMessage, limit = 64 * 1024): Pr
   return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')
 }
 
+/** The encodings an Accept-Encoding header allows (a q of 0 refuses one; `*` allows any not named). */
+export function accepted(header: string | string[] | undefined) {
+  const allowed = new Set<string>()
+  const refused = new Set<string>()
+  for (const part of String(header ?? '').toLowerCase().split(',')) {
+    const [name, ...params] = part.trim().split(';')
+    const q = params.map((p) => p.trim()).find((p) => p.startsWith('q='))
+    if (q && Number(q.slice(2)) === 0) refused.add(name.trim())
+    else allowed.add(name.trim())
+  }
+  return (encoding: string) => !refused.has(encoding) && (allowed.has(encoding) || allowed.has('*'))
+}
+
 /** One cookie from the request, or null. */
 export function readCookie(req: http.IncomingMessage, name: string) {
   for (const part of (req.headers.cookie ?? '').split(';')) {

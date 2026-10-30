@@ -5,7 +5,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { clearUnread, titleTaken, updateChat } from '@/state/chats'
 import { errandsOf, isYours, sentItems, wakeItems, type SavedRow } from '@/features/chat/wake'
-import { api, connect, modelRequests, newChat, q, sleep, turn, whenIdle, type Socket } from './client'
+import { api, connect, modelRequests, MURMUR, newChat, q, sleep, turn, whenIdle, type Socket } from './client'
 import { toolsTag } from './fake-model'
 
 let socket: Socket
@@ -300,6 +300,23 @@ describe('coming back to a chat', () => {
 
     const next = await turn(socket, resumed.session_id, 'Again [[say: Hi again]]')
     expect(next.payload?.text).toBe('Hi again')
+  })
+
+  it('reads a chat back compressed through Murmur, the same rows either way', async () => {
+    const { runtime, stored } = await newChat(socket)
+    await turn(socket, runtime, `Say it at length [[say: ${'All the words of a long answer. '.repeat(80)}]]`)
+    const path = `${MURMUR}/hermes/api/sessions/${stored}/messages?${q('default')}&order=latest&limit=500`
+    const br = await fetch(path, { headers: { 'accept-encoding': 'br, gzip' } })
+    const gzip = await fetch(path, { headers: { 'accept-encoding': 'gzip' } })
+    const plain = await fetch(path, { headers: { 'accept-encoding': 'identity' } })
+    expect(br.headers.get('content-encoding')).toBe('br')
+    expect(gzip.headers.get('content-encoding')).toBe('gzip')
+    expect(plain.headers.get('content-encoding')).toBeNull()
+    expect(br.headers.get('vary')).toMatch(/accept-encoding/i)
+    const rows = await plain.json()
+    expect(await br.json()).toEqual(rows)
+    expect(await gzip.json()).toEqual(rows)
+    expect(rows.messages.at(-1).content).toContain('All the words')
   })
 
   it('refuses an unknown runtime id with code 4001, which the app re-attaches on', async () => {

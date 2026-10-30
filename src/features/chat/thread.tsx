@@ -70,6 +70,8 @@ const PILL_ROOM = 36 + 12
 const SPRING = { damping: 0.75, stiffness: 0.08, mass: 1 }
 /** How long a chat that just opened keeps jumping to its end, while late layout (markdown, code, images) settles. */
 const SETTLE_MS = 1200
+/** Rows a long chat paints at first, and how many more join each time you scroll up to the oldest shown. */
+const WINDOW = 60
 
 /**
  * Folds the flat item list into user messages and assistant turns. Settled
@@ -248,6 +250,14 @@ export function Thread({
   const watched = useRef(new Set<string>())
   for (const i of items) if (i.kind === 'approval' && i.status === 'pending') watched.current.add(i.id)
   const rows = useMemo(() => toRows(items, busy, watched.current), [items, busy])
+  // A long chat paints its newest rows, and older ones join as you scroll up
+  // to them: rendering every saved message up front made opening one slow.
+  // Held by the oldest row shown, so another conversation starts afresh.
+  const [oldest, setOldest] = useState<string>()
+  const at = oldest ? rows.findIndex((r) => r.id === oldest) : -1
+  const from = Math.min(at < 0 ? rows.length : at, Math.max(0, rows.length - WINDOW))
+  if (rows.length && rows[from].id !== oldest) setOldest(rows[from].id)
+  const shown = from ? rows.slice(from) : rows
 
   // History appears without animation: whatever is there on first paint, and
   // any batch of several items landing at once (a transcript loading late).
@@ -282,7 +292,7 @@ export function Thread({
   const lastTurn = rows.findLast((r) => r.kind === 'turn')?.id
   // Who reads replies aloud: the agent in a one-to-one chat.
   const voice = media.profile ?? agent?.id
-  const editingAt = editingId ? rows.findIndex((r) => r.id === editingId) : -1
+  const editingAt = editingId ? shown.findIndex((r) => r.id === editingId) : -1
 
   // The composer floats over the end of the thread, outside the message log;
   // the log keeps room for it underneath.
@@ -362,6 +372,43 @@ export function Thread({
     el.scrollTop = el.scrollHeight
   })
 
+  // Older rows join a screen before you reach them, and you stay on the lines
+  // you were reading. Watched afresh after each, so one that still leaves you
+  // near the top brings the next.
+  const olderRef = useRef<HTMLDivElement>(null)
+  // The row that was oldest, and where it sat: it moves down by just what joined above it.
+  const kept = useRef<{ row: HTMLElement; top: number } | null>(null)
+  const above = from ? rows[Math.max(0, from - WINDOW)].id : undefined
+  useEffect(() => {
+    const el = scrollRef.current
+    const sentinel = olderRef.current
+    if (!el || !sentinel || !above) return
+    const io = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry.isIntersecting) return
+        const row = sentinel.nextElementSibling
+        if (row instanceof HTMLElement) {
+          kept.current = { row, top: row.offsetTop }
+          // Just this once the move is ours alone: the browser's own scroll anchoring, where it has one, would add it again.
+          el.style.overflowAnchor = 'none'
+        }
+        setOldest(above)
+      },
+      { root: el, rootMargin: '100% 0px 0px 0px' },
+    )
+    io.observe(sentinel)
+    return () => io.disconnect()
+  }, [above, scrollRef])
+  useLayoutEffect(() => {
+    const el = scrollRef.current
+    const was = kept.current
+    if (!el || !was) return
+    kept.current = null
+    // Added to wherever you've scrolled since, so a flick in between isn't undone.
+    el.scrollTop += was.row.offsetTop - was.top
+    el.style.overflowAnchor = ''
+  }, [from, scrollRef])
+
   return (
     <MotionConfig reducedMotion="user">
       <MediaProvider value={media}>
@@ -371,16 +418,17 @@ export function Thread({
               <div ref={contentRef} className="flex min-h-full flex-col">
                 {/* One reading column (~688px of text), shared with the composer below. */}
                 <div className="relative mx-auto flex w-full max-w-[736px] flex-1 flex-col px-4 pt-6 pb-12 sm:px-6">
-                  {lead}
+                  {/* The chat's opening (a routine run's header) waits above its first message. */}
+                  {from ? <div ref={olderRef} aria-hidden /> : lead}
                   {rows.length === 0 && emptyState ? (
                     <div className="flex flex-1 flex-col items-center justify-center">{emptyState}</div>
                   ) : (
                     // Rows that leave (an edited message's old reply, an undo) fold away
                     // in place while the rest carries on.
                     <AnimatePresence initial={false} mode="popLayout">
-                      {rows.map((row, i) => {
+                      {shown.map((row, i) => {
                         // 24px between exchanges; a reply sits closer (16px) to what it answers.
-                        const gap = i === 0 ? '' : row.kind === 'turn' && rows[i - 1].kind === 'user' ? 'mt-4' : 'mt-6'
+                        const gap = i === 0 ? '' : row.kind === 'turn' && shown[i - 1].kind === 'user' ? 'mt-4' : 'mt-6'
                         // An edited message keeps its place (and its bubble).
                         const key = row.kind === 'user' ? (row.item.was ?? row.id) : row.id
                         let content: ReactNode
