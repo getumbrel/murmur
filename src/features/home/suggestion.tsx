@@ -4,6 +4,7 @@ import { X } from 'lucide-react'
 import { Orb } from '@/ui/orb'
 import { useAgents } from '@/state/agents'
 import { useGroupSummaries } from '@/state/groups'
+import { useSections } from '@/state/sections'
 import { cn } from '@/lib/cn'
 import { TEMPLATES } from '@/features/templates/templates'
 import { useCanMakeGroups, useGroupRows } from './groups'
@@ -11,9 +12,13 @@ import type { Density } from './roster'
 
 // One gentle next step under the roster, so a short list still feels like a
 // beginning: a second agent when there's only one, a group once there are
-// two. A tap does it, the ✕ puts it away for good.
+// two, sections once there are too many to take in at a glance. A tap does
+// it, the ✕ puts it away for good.
 
-type Kind = 'agent' | 'group'
+type Kind = 'agent' | 'group' | 'section'
+
+/** About where a list stops fitting on a phone's screen. */
+const CROWDED = 7
 
 const KEY = (kind: Kind) => `murmur:tip-dismissed:${kind}`
 const wasDismissed = (kind: Kind) => {
@@ -26,24 +31,32 @@ const wasDismissed = (kind: Kind) => {
 
 const spring = { type: 'spring', duration: 0.5, bounce: 0.15 } as const
 
-type Props = { density: Density; onNewAgent: () => void; onNewGroup?: () => void }
+type Props = { density: Density; onNewAgent: () => void; onNewGroup?: () => void; onNewSection?: () => void }
 
-export function Suggestion({ density, onNewAgent, onNewGroup }: Props) {
+export function Suggestion({ density, onNewAgent, onNewGroup, onNewSection }: Props) {
   const { data: agents } = useAgents()
   const groups = useGroupRows()
   // Until groups have loaded, "Start a group" would claim there are none.
   const groupsLoaded = !useGroupSummaries().isPending
   const canGroup = useCanMakeGroups()
-  const [dismissed, setDismissed] = useState(() => ({ agent: wasDismissed('agent'), group: wasDismissed('group') }))
+  const sections = useSections()
+  const [dismissed, setDismissed] = useState(() => ({
+    agent: wasDismissed('agent'),
+    group: wasDismissed('group'),
+    section: wasDismissed('section'),
+  }))
 
   const kind: Kind | null =
     !agents || !groupsLoaded
       ? null
       : agents.length === 1
         ? 'agent'
-        : canGroup && onNewGroup && groups.length === 0
+        : canGroup && onNewGroup && groups.length === 0 && !dismissed.group
           ? 'group'
-          : null
+          : onNewSection && agents.length >= CROWDED && sections.length === 0
+            ? 'section'
+            : null
+  // A group card put away makes room for the next one.
   const shown = kind && !dismissed[kind] ? kind : null
 
   const dismiss = (k: Kind) => {
@@ -56,8 +69,8 @@ export function Suggestion({ density, onNewAgent, onNewGroup }: Props) {
   // The roster settles first; then the card arrives.
   const roomy = density === 'roomy'
   const faces =
-    shown === 'group'
-      ? agents!.slice(0, 3).map((a) => ({ id: a.id, hue: a.hue }))
+    shown === 'group' || shown === 'section'
+      ? agents!.slice(shown === 'section' ? 1 : 0, shown === 'section' ? 4 : 3).map((a) => ({ id: a.id, hue: a.hue }))
       : [TEMPLATES[0], TEMPLATES[1], TEMPLATES[3]].map((t) => ({ id: t.id, hue: t.hue }))
   const names = agents?.slice(0, 2).map((a) => a.name) ?? []
 
@@ -74,19 +87,21 @@ export function Suggestion({ density, onNewAgent, onNewGroup }: Props) {
           <div className="group/tip relative overflow-hidden rounded-2xl bg-fill-1 ring-[0.5px] ring-line ring-inset">
             <button
               type="button"
-              onClick={shown === 'group' ? onNewGroup : onNewAgent}
+              onClick={shown === 'group' ? onNewGroup : shown === 'section' ? onNewSection : onNewAgent}
               className={cn(
                 'pressable relative block w-full text-left transition-colors hover:bg-fill-1',
                 roomy ? 'py-4 pr-30 pl-4' : 'py-3 pr-21 pl-3',
               )}
             >
               <span className={cn('block font-semibold tracking-[-0.015em]', roomy ? 'text-body' : 'text-footnote')}>
-                {shown === 'group' ? 'Start a group' : 'Make another agent'}
+                {shown === 'group' ? 'Start a group' : shown === 'section' ? 'Sort your agents' : 'Make another agent'}
               </span>
               <span className={cn('mt-0.5 block text-balance text-ink-2', roomy ? 'text-footnote' : 'text-caption')}>
                 {shown === 'group'
                   ? `Bring ${names.join(' and ')} into one chat.`
-                  : 'A researcher, a writer, a coach. Each great at its own thing.'}
+                  : shown === 'section'
+                    ? 'File them under names like Clients or Home, and fold away what can wait.'
+                    : 'A researcher, a writer, a coach. Each great at its own thing.'}
               </span>
               <Peek faces={faces} small={!roomy} />
             </button>

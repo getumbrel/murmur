@@ -218,13 +218,21 @@ function PhoneHome() {
                     onDelete={actions.remove}
                     onRenameGroup={actions.renameGroup}
                     onDeleteGroup={actions.removeGroup}
+                    sections={actions.sections}
                   />
                 </>
               )}
             </motion.div>
           </AnimatePresence>
           {/* One nudge at a time. */}
-          {!installTip && <Suggestion density="roomy" onNewAgent={actions.newAgent} onNewGroup={actions.newGroup} />}
+          {!installTip && (
+            <Suggestion
+              density="roomy"
+              onNewAgent={actions.newAgent}
+              onNewGroup={actions.newGroup}
+              onNewSection={() => actions.sections.create()}
+            />
+          )}
           <footer className="flex justify-center px-5 pt-12 pb-2">
             <ByUmbrel />
           </footer>
@@ -368,10 +376,16 @@ export function Sidebar() {
                 onDelete={actions.remove}
                 onRenameGroup={actions.renameGroup}
                 onDeleteGroup={actions.removeGroup}
+                sections={actions.sections}
               />
               {/* The empty main pane already offers this; beside a conversation it's the only nudge. */}
               {(chat || group) && (
-                <Suggestion density="compact" onNewAgent={actions.newAgent} onNewGroup={actions.newGroup} />
+                <Suggestion
+                  density="compact"
+                  onNewAgent={actions.newAgent}
+                  onNewGroup={actions.newGroup}
+                  onNewSection={() => actions.sections.create()}
+                />
               )}
             </div>
           )}

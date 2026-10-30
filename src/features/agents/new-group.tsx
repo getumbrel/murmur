@@ -1,8 +1,8 @@
 import { AnimatePresence, motion } from 'motion/react'
 import { useState } from 'react'
-import { Check } from 'lucide-react'
 import { Button } from '@/ui/button'
 import { Label, TextField } from '@/ui/field'
+import { CheckRow } from '@/ui/list'
 import { Orb, OrbStack } from '@/ui/orb'
 import { Sheet } from '@/ui/sheet'
 import { cn } from '@/lib/cn'
@@ -95,29 +95,14 @@ export function NewGroupSheet({ open, onOpenChange, agents, onCreate, submitting
           const on = picked.includes(agent.id)
           const disabled = full && !on
           return (
-            <button
+            <CheckRow
               key={agent.id}
-              type="button"
-              role="checkbox"
-              aria-checked={on}
+              on={on}
               disabled={disabled}
-              onClick={() => toggle(agent.id)}
-              data-has-icon=""
-              className="flex min-h-13 w-full items-center gap-3 px-4 py-2.5 text-left transition-colors select-none focus-visible:-outline-offset-2 enabled:hover:bg-fill-1 enabled:active:bg-fill-2 disabled:cursor-default"
-            >
-              <span className="flex size-7 flex-none items-center justify-center">
-                <Orb hue={agent.hue} size={28} seed={agent.id} className={cn('transition-opacity', disabled && 'opacity-40')} />
-              </span>
-              <span className={cn('min-w-0 flex-1 truncate text-body', disabled && 'text-ink-3')}>{agent.name}</span>
-              <span
-                className={cn(
-                  'grid size-6 flex-none place-items-center rounded-full transition-[background-color,box-shadow] duration-200',
-                  on ? 'bg-accent text-accent-ink' : 'ring-[1.5px] ring-line-strong ring-inset',
-                )}
-              >
-                {on && <Check size={14} strokeWidth={3} className="animate-pop" />}
-              </span>
-            </button>
+              onToggle={() => toggle(agent.id)}
+              icon={<Orb hue={agent.hue} size={28} seed={agent.id} className={cn('transition-opacity', disabled && 'opacity-40')} />}
+              title={agent.name}
+            />
           )
         })}
       </div>

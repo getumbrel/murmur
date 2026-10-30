@@ -24,7 +24,9 @@ import {
 } from '@/state/agents'
 import { deleteGroup, renameGroup } from '@/state/groups'
 import { HUES } from '@/lib/hues'
-import { createGroup, useCanMakeGroups, type GroupRow } from './groups'
+import { useSectionWrites, useSections, sectionOf, type Section } from '@/state/sections'
+import { createGroup, useCanMakeGroups, useGroupRows, type GroupRow } from './groups'
+import { SectionSheet, type SectionDraft } from './section-sheet'
 
 // Everything you can do to an agent from the roster, as one hook: call the
 // returned actions, render `sheets` once.
@@ -50,6 +52,12 @@ export function useAgentActions() {
   // Just made: the preview orb gets its moment before the sheet lets go.
   const [born, setBorn] = useState(false)
   const canGroup = useCanMakeGroups()
+  const groups = useGroupRows()
+  const sections = useSections()
+  const writes = useSectionWrites()
+  // The section sheet: a new one (ticked with whatever its menu came from) or one to edit.
+  const [shelving, setShelving] = useState<{ section?: Section; agents: string[]; groups: string[] } | null>(null)
+  const [shelfOpen, setShelfOpen] = useState(false)
   // An agent from a file: once it's in, its page.
   const importer = useImportAgent((id) => navigate(`/agent/${id}`))
 
@@ -197,8 +205,78 @@ export function useAgentActions() {
     }
   }
 
+  // ── Sections ──────────────────────────────────────────────────────────────
+
+  const sectionMembers = (section: Section) => ({
+    agents: agents.filter((a) => sectionOf(a) === section.id).map((a) => a.id),
+    groups: section.groups ?? [],
+  })
+
+  const saveSection = async (draft: SectionDraft, into?: Section) => {
+    setBusy(true)
+    try {
+      const items = { agents: draft.agents, groups: draft.groups }
+      if (shelving?.section) await writes.edit(shelving.section.id, draft.name, items)
+      else if (into) await writes.file(items, into)
+      else await writes.create(draft.name, items)
+      setShelfOpen(false)
+    } catch {
+      toast.error('Couldn’t save the section. Try again.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // A row's name for a toast: the agent's or the group's.
+  const nameOf = (item: { agent?: string; group?: string }) =>
+    (item.agent ? agents.find((a) => a.id === item.agent)?.name : groups.find((g) => g.id === item.group)?.name) ?? 'it'
+
+  const sectionActions = {
+    sections,
+    /** File an agent or a group on a section, or (null) back to the top of the list. */
+    file: (item: { agent?: string; group?: string }, section: Section | null) =>
+      writes
+        .file({ agents: item.agent ? [item.agent] : [], groups: item.group ? [item.group] : [] }, section)
+        .catch(() => toast.error(`Couldn’t move ${nameOf(item)}. Try again.`)),
+    create: (item: { agent?: string; group?: string } = {}) => {
+      setShelving({ agents: item.agent ? [item.agent] : [], groups: item.group ? [item.group] : [] })
+      setShelfOpen(true)
+    },
+    edit: (section: Section) => {
+      setShelving({ section, ...sectionMembers(section) })
+      setShelfOpen(true)
+    },
+    move: (section: Section, delta: -1 | 1) =>
+      writes.move(section.id, delta).catch(() => toast.error(`Couldn’t move ${section.name}. Try again.`)),
+    // Nothing is lost (its agents go back to the top of the list), so no asking: an undo instead.
+    remove: async (section: Section) => {
+      try {
+        const undo = await writes.remove(section.id)
+        toast(`Deleted ${section.name}`, {
+          action: {
+            label: 'Undo',
+            onClick: () => void undo().catch(() => toast.error(`Couldn’t bring back ${section.name}. Try again.`)),
+          },
+        })
+      } catch {
+        toast.error(`Couldn’t delete ${section.name}. Try again.`)
+      }
+    },
+  }
+
   const sheets = (
     <>
+      <SectionSheet
+        open={shelfOpen}
+        onOpenChange={setShelfOpen}
+        section={shelving?.section}
+        initial={shelving ?? { agents: [], groups: [] }}
+        agents={agents}
+        groups={groups}
+        sections={sections}
+        onSave={saveSection}
+        submitting={busy}
+      />
       <NewAgentSheet
         open={creating}
         onOpenChange={setCreating}
@@ -332,6 +410,8 @@ export function useAgentActions() {
     removeGroup: (row: GroupRow) => askGroup(row, 'delete'),
     edit: (agent: Agent) => void edit(agent),
     remove: askDelete,
+    sections: sectionActions,
     sheets,
   }
 }
+export type SectionActions = ReturnType<typeof useAgentActions>['sections']

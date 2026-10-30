@@ -73,7 +73,7 @@ export const menuItem =
 
 /** Arrow keys, Home and End move between a menu's items, as a role=menu promises. */
 export function menuKeys(e: KeyboardEvent<HTMLElement>) {
-  const items = [...e.currentTarget.querySelectorAll<HTMLElement>('[role=menuitem]')]
+  const items = [...e.currentTarget.querySelectorAll<HTMLElement>('[role^=menuitem]')]
   const at = items.indexOf(document.activeElement as HTMLElement)
   const next = { ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: items.length - 1 }[e.key]
   if (next === undefined || !items.length) return

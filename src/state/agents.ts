@@ -51,6 +51,12 @@ export type Profile = {
   role?: string | null
   /** profiles.list only. */
   ui_meta?: Record<string, unknown> | null
+  /**
+   * profiles.list only: how many times each ui_meta record has been written,
+   * so a write can refuse to land on one that changed since it was read. A
+   * Hermes too old to check leaves it out.
+   */
+  ui_meta_revisions?: Record<string, number> | null
   last_session?: LastSession | null
   /** profiles.list only: the agent's hidden "Bot Chat" (Hermes Desktop's main chat). */
   canonical_session?: LastSession | null
@@ -78,6 +84,10 @@ export type Agent = {
   template?: string
   /** Murmur's own record (ui_meta.murmur), kept so edits merge instead of clobbering. */
   murmurMeta?: Record<string, unknown>
+  /** The main agent's sections and their order (ui_meta['murmur-sections'], src/state/sections.ts). */
+  sectionsMeta?: unknown
+  /** Each ui_meta record's revision (Profile.ui_meta_revisions); none on an older Hermes. */
+  metaRevisions?: Record<string, number>
 }
 
 // ── Hues ────────────────────────────────────────────────────────────────────
@@ -188,6 +198,8 @@ export function toAgent(p: Profile, hues = storedHues(), pending = pendingLooks(
     botMeta: bots,
     template: text(murmur?.template) || undefined,
     murmurMeta: murmur,
+    sectionsMeta: meta['murmur-sections'],
+    metaRevisions: record(p.ui_meta_revisions) as Record<string, number> | undefined,
   }
 }
 
@@ -400,7 +412,10 @@ async function finishLook(p: Profile, meta: Record<string, unknown>) {
   if (record(p.ui_meta?.murmur)) return setPendingLook(p.name)
   finishing.add(p.name)
   try {
-    await rpc('profiles.configure', { name: p.name, ui_meta: meta })
+    // Only the records Hermes lacks: one it has was written since, on top of this look
+    // (the agent filed on a section, say), and is newer than it.
+    const missing = Object.fromEntries(Object.entries(meta).filter(([key]) => !record(p.ui_meta?.[key])))
+    await rpc('profiles.configure', { name: p.name, ui_meta: missing })
     setPendingLook(p.name)
   } catch {
     // Try again on the next read.
@@ -454,12 +469,60 @@ export function revealAgent(id: string) {
 
 export async function updateAgent(agent: Agent, input: AgentInput) {
   rememberHue(agent.id, input.hue)
-  await rpc('profiles.configure', {
-    name: agent.id,
-    description: input.role,
-    ...(input.soul !== undefined ? { soul: input.soul } : {}),
-    ui_meta: look(input, agent.botMeta, agent.murmurMeta),
+  // The look goes on top of what the agent holds when it's saved, not when the editor opened:
+  // Hermes Desktop, or Murmur on another device, may have filed it on a section since.
+  await writeMeta(agent.id, agent, (now) => look(input, now.botMeta, now.murmurMeta), {
+    rest: { description: input.role, ...(input.soul !== undefined ? { soul: input.soul } : {}) },
   })
+}
+
+/** An agent as Hermes holds it now (without its chats, which take longer to read). */
+export async function readAgent(id: string) {
+  const p = (await listProfiles<Profile>({ include_sessions: false })).find((x) => x.name === id)
+  return p && toAgent(p)
+}
+
+type Configured = {
+  applied?: { ui_meta?: boolean; ui_meta_revisions?: Record<string, number>; ui_meta_conflicts?: Record<string, unknown> }
+}
+
+const TRIES = 3
+
+/**
+ * Write some of an agent's ui_meta records, as `make` builds them from the
+ * agent. Each is a change to what's there, not a copy of what was last seen:
+ * Hermes takes the write only if nobody else (Hermes Desktop, Murmur on another
+ * device) has written those records since `agent` was read, and when somebody
+ * has, the agent is read again (through `fresh`, which can fold it into what
+ * the caller keeps) and `make` runs on top of theirs. An older Hermes keeps no
+ * revisions and takes the write as it comes. `rest` (a description, a soul)
+ * goes with the first try. Returns the records' new revisions.
+ */
+export async function writeMeta(
+  id: string,
+  agent: Agent | undefined,
+  make: (agent: Agent) => Record<string, unknown>,
+  {
+    rest = {},
+    fresh = (a) => a,
+  }: { rest?: Record<string, unknown>; fresh?: (agent: Agent) => Agent | undefined } = {},
+): Promise<Record<string, number> | undefined> {
+  for (let tries = 1; agent; tries++) {
+    const records = make(agent)
+    const revisions = agent.metaRevisions
+    const res = await rpc<Configured>('profiles.configure', {
+      name: id,
+      ...(tries === 1 && rest),
+      ui_meta: records,
+      ...(revisions && {
+        ui_meta_expected_revisions: Object.fromEntries(Object.keys(records).map((key) => [key, revisions[key] ?? 0])),
+      }),
+    })
+    if (res.applied?.ui_meta !== false) return res.applied?.ui_meta_revisions
+    if (!res.applied.ui_meta_conflicts || tries === TRIES) throw new Error('Hermes didn’t save the change.')
+    const now = await readAgent(id)
+    agent = now && fresh(now)
+  }
 }
 
 /** Remove an agent with its chats and memory. The main agent can't be deleted. */

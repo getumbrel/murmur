@@ -1,13 +1,28 @@
 import * as Popover from '@radix-ui/react-popover'
 import { AnimatePresence, motion } from 'motion/react'
-import { useEffect, useId, useState, type CSSProperties, type ReactNode } from 'react'
+import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { Link } from 'wouter'
 import { useQueryClient } from '@tanstack/react-query'
-import { ChevronRight, MoreHorizontal, Pencil, PencilLine, Plus, Trash2 } from 'lucide-react'
+import {
+  ArrowDown,
+  ArrowUp,
+  Check,
+  ChevronRight,
+  FolderInput,
+  FolderOutput,
+  FolderPlus,
+  MoreHorizontal,
+  Pencil,
+  PencilLine,
+  Plus,
+  Trash2,
+} from 'lucide-react'
 import { Orb, OrbStack } from '@/ui/orb'
+import { Buddy, BuddyStack } from '@/ui/buddy'
 import { Button } from '@/ui/button'
 import { fetchAgentChats, useAgentChats, useAgents, type Agent } from '@/state/agents'
-import { settledAt, useAgentStatus, useBusyAgents, useChatUnread, useNeedsYou } from '@/state/status'
+import { settledAt, useAgentStatus, useBusyAgents, useChatUnread, useNeedsYou, useUnreadCount } from '@/state/status'
+import { sectionOf, setFolded, useFoldedMap, type Section } from '@/state/sections'
 import { prefetchGroup, useGroupSummaries } from '@/state/groups'
 import { useAccessRequests } from '@/state/access'
 import { RequestCard } from '@/features/access/request-card'
@@ -15,7 +30,8 @@ import { cn } from '@/lib/cn'
 import { useGroupRows, type GroupRow } from './groups'
 import { shortTime } from './time'
 import { Bone } from './bone'
-import { RowMenu, useLongPress } from './row-menu'
+import { RowMenu, useLongPress, type MenuItem } from './row-menu'
+import type { SectionActions } from './actions'
 import { setExpanded, useExpanded } from './expanded'
 import { NestedChats, useShowsChat } from './nested-chats'
 
@@ -37,15 +53,32 @@ type RosterProps = {
   onDelete: (agent: Agent) => void
   onRenameGroup: (group: GroupRow) => void
   onDeleteGroup: (group: GroupRow) => void
+  /** Sections, and what can be done with them; without it the list stays one list. */
+  sections?: SectionActions
 }
 
 type Entry = { key: string; at: number } & ({ kind: 'agent'; agent: Agent } | { kind: 'group'; group: GroupRow })
 
-export function Roster({ density, selectedId, openChatId, onEdit, onDelete, onRenameGroup, onDeleteGroup }: RosterProps) {
+export function Roster({
+  density,
+  selectedId,
+  openChatId,
+  onEdit,
+  onDelete,
+  onRenameGroup,
+  onDeleteGroup,
+  sections: shelves,
+}: RosterProps) {
   const { data: agents, isPending, isError, refetch, isRefetching } = useAgents()
   const groups = useGroupRows()
   const groupsLoaded = !useGroupSummaries().isPending
   const busy = useBusyAgents()
+  const folded = useFoldedMap()
+  // Dragging a row onto a section files it there (wide screens; phones hold a row for its menu).
+  const [dragging, setDragging] = useState<string | null>(null)
+  const [over, setOver] = useState<string | null>(null)
+  // Folded sections a drag sprang open on its way: they fold again unless it lands in one.
+  const sprung = useRef<string[]>([])
   useTick(30_000)
 
   if (isPending) return <RosterSkeleton density={density} />
@@ -96,52 +129,252 @@ export function Roster({ density, selectedId, openChatId, onEdit, onDelete, onRe
     })),
   ].sort((a, b) => b.at - a.at || Number(isMain(b)) - Number(isMain(a)))
 
+  // With sections: the agents on none first, as the list always was, then each
+  // section under its name, everyone in it still newest first.
+  const sections = shelves?.sections ?? []
+  const listed = new Set(sections.map((sec) => sec.id))
+  const placeOf = (e: Entry) => {
+    const id = e.kind === 'agent' ? sectionOf(e.agent) : sections.find((sec) => sec.groups?.includes(e.group.id))?.id
+    return id && listed.has(id) ? id : LOOSE
+  }
+  const items: Item[] = entries.filter((e) => placeOf(e) === LOOSE).map((e) => ({ ...e, place: LOOSE }))
+  // Everything filed: a row carried out of its section needs somewhere to land, so the top makes room.
+  const carried = dragging ? entries.find((e) => e.key === dragging) : undefined
+  const from = carried && sections.find((sec) => sec.id === placeOf(carried))
+  if (from && !items.length) items.push({ kind: 'out', key: 'out', from, place: LOOSE })
+  for (const section of sections) {
+    const members = entries.filter((e) => placeOf(e) === section.id)
+    items.push({ kind: 'section', key: `section:${section.id}`, section, members, place: section.id })
+    // Folded, it still shows the one that's open beside it, so you never lose your place.
+    const shown = members.filter((e) => !folded[section.id] || e.key === selectedId)
+    if (!members.length && !folded[section.id])
+      items.push({ kind: 'empty', key: `empty:${section.id}`, place: section.id })
+    items.push(...shown.map((e) => ({ ...e, place: section.id })))
+  }
+  const rows = items.filter((it): it is Entry & { place: string } => it.kind === 'agent' || it.kind === 'group')
+  const draggable = density === 'compact' && sections.length > 0 && !!shelves
+  const keyOf = (key: string) => (key.startsWith('group:') ? { group: key.slice('group:'.length) } : { agent: key })
+  const springOpen = (id: string) => {
+    sprung.current.push(id)
+    setFolded(id, false)
+  }
+  const refold = (keep?: string) => {
+    for (const id of sprung.current) if (id !== keep) setFolded(id, true)
+    sprung.current = []
+  }
+  const drop = (place: string) => {
+    const row = rows.find((r) => r.key === dragging)
+    setDragging(null)
+    setOver(null)
+    refold(place)
+    if (!row || !shelves || row.place === place) return
+    void shelves.file(keyOf(row.key), place === LOOSE ? null : sections.find((sec) => sec.id === place)!)
+  }
+  // An empty section says how to fill it, the way this screen moves things.
+  const things = groups.length ? 'an agent or group' : 'an agent'
+  const moveItem = (e: Entry & { place: string }): MenuItem => {
+    const item = keyOf(e.key)
+    if (!sections.length) {
+      return {
+        label: 'New section…',
+        icon: <FolderPlus size={18} strokeWidth={1.85} />,
+        onSelect: () => shelves!.create(item),
+      }
+    }
+    const here = sections.find((sec) => sec.id === e.place)
+    return {
+      label: 'Move to section',
+      icon: <FolderInput size={18} strokeWidth={1.85} />,
+      submenu: {
+        title: 'Move to',
+        items: [
+          ...sections.map((sec) => ({
+            key: sec.id,
+            label: sec.name,
+            current: sec.id === e.place,
+            icon:
+              sec.id === e.place ? (
+                <Check size={18} strokeWidth={2.25} />
+              ) : (
+                <Faces members={entries.filter((x) => placeOf(x) === sec.id)} size={18} max={3} />
+              ),
+            onSelect: () => void shelves!.file(item, sec),
+          })),
+          {
+            label: 'New section…',
+            icon: <Plus size={18} strokeWidth={1.85} />,
+            divider: true,
+            onSelect: () => shelves!.create(item),
+          },
+          ...(here
+            ? [
+                {
+                  label: `Take out of ${here.name}`,
+                  icon: <FolderOutput size={18} strokeWidth={1.85} />,
+                  onSelect: () => void shelves!.file(item, null),
+                },
+              ]
+            : []),
+        ],
+      },
+    }
+  }
+
   return (
-    <ul className={cn(density === 'compact' && 'space-y-px px-2')}>
+    <ul
+      className={cn(density === 'compact' && 'space-y-px px-2')}
+      onDragLeave={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOver(null)
+      }}
+    >
       <AnimatePresence initial={false} mode="popLayout">
-        {entries.map((entry, i) => (
-          <motion.li
-            key={entry.key}
-            layout="position"
-            // Opaque and stacked by rank, so a row climbing the list slides over the ones it passes;
-            // a newcomer sits underneath, revealed as the rows part for it.
-            className="relative bg-bg"
-            style={{ zIndex: arriving(entry.key) ? 0 : entries.length - i }}
-            // Arrivals are births: a little lift. Reorders glide.
-            transition={{ type: 'spring', duration: 0.55, bounce: 0.22, layout: spring }}
-            initial={{ opacity: 0, scale: 0.95, y: -8 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.97, transition: { duration: 0.2 } }}
-          >
-            {entry.kind === 'agent' ? (
-              <AgentRow
-                agent={entry.agent}
-                density={density}
-                selected={entry.key === selectedId}
-                openChatId={entry.key === selectedId ? openChatId : undefined}
-                alone={entries.length === 1}
-                last={i === entries.length - 1}
-                fresh={freshArrival(entry.key)}
-                onEdit={() => onEdit(entry.agent)}
-                onDelete={entry.agent.isDefault ? undefined : () => onDelete(entry.agent)}
-              />
-            ) : (
-              <GroupRowView
-                group={entry.group}
-                density={density}
-                selected={entry.key === selectedId}
-                last={i === entries.length - 1}
-                fresh={freshArrival(entry.key)}
-                onRename={() => onRenameGroup(entry.group)}
-                onDelete={() => onDeleteGroup(entry.group)}
-              />
-            )}
-          </motion.li>
-        ))}
+        {items.map((entry, i) => {
+          const next = items[i + 1]
+          const last = !next || next.kind === 'section'
+          // The section a dragged row would land on lights up, its header and its rows.
+          const lit = !!dragging && over === entry.place && rows.find((r) => r.key === dragging)?.place !== entry.place
+          // Arrivals are births: a little lift. Rows a section unfolds (or a drag makes room for) just appear.
+          const born = entry.kind === 'section' || arriving(entry.key)
+          return (
+            <motion.li
+              key={entry.key}
+              layout="position"
+              // Opaque and stacked by rank, so a row climbing the list slides over the ones it passes;
+              // a newcomer sits underneath, revealed as the rows part for it.
+              className="relative bg-bg"
+              style={{
+                zIndex: arriving(entry.key) ? 0 : items.length - i,
+                // One lit shape: the header's pill runs on down through its rows, the hairlines between them filled in.
+                ...(lit &&
+                  entry.kind !== 'out' && {
+                    background:
+                      entry.kind === 'section'
+                        ? 'linear-gradient(to top, var(--accent-soft) 1px, transparent 1px), var(--bg)'
+                        : 'linear-gradient(var(--accent-soft), var(--accent-soft)), var(--bg)',
+                    ...(entry.kind !== 'section' && { borderRadius: last ? '0 0 8px 8px' : 0 }),
+                    ...(!last && { marginBottom: 0, paddingBottom: 1 }),
+                  }),
+              }}
+              // Reorders glide.
+              transition={
+                born
+                  ? { type: 'spring', duration: 0.55, bounce: 0.22, layout: spring }
+                  : { duration: 0.2, ease, layout: spring }
+              }
+              initial={born ? { opacity: 0, scale: 0.95, y: -8 } : { opacity: 0 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.97, transition: { duration: 0.2 } }}
+            >
+              <div
+                // The row being carried stays behind as a ghost of itself.
+                className={cn('transition-opacity duration-150', dragging === entry.key && 'opacity-35')}
+                {...(draggable && {
+                  onDragStart: (e: React.DragEvent) => {
+                    if (entry.kind !== 'agent' && entry.kind !== 'group') return
+                    // The row itself, not a chat listed under it (that's a link of its own to drag).
+                    const row = (e.currentTarget as HTMLElement).querySelector<HTMLElement>('[data-nav]')
+                    if (!row?.contains(e.target as Node)) return
+                    e.dataTransfer.setData(DRAG_TYPE, entry.key)
+                    e.dataTransfer.effectAllowed = 'move'
+                    e.dataTransfer.setDragImage(row, 32, row.offsetHeight / 2)
+                    setDragging(entry.key)
+                  },
+                  onDragOver: (e: React.DragEvent) => {
+                    if (!dragging) return
+                    e.preventDefault()
+                    e.dataTransfer.dropEffect = 'move'
+                    if (over !== entry.place) setOver(entry.place)
+                  },
+                  onDrop: (e: React.DragEvent) => {
+                    e.preventDefault()
+                    drop(entry.place)
+                  },
+                  onDragEnd: () => {
+                    setDragging(null)
+                    setOver(null)
+                    refold()
+                  },
+                })}
+              >
+                {entry.kind === 'section' ? (
+                  <SectionHead
+                    section={entry.section}
+                    members={entry.members}
+                    density={density}
+                    folded={!!folded[entry.section.id]}
+                    lit={lit}
+                    first={i === 0}
+                    shelves={shelves!}
+                    onSpring={() => springOpen(entry.section.id)}
+                  />
+                ) : entry.kind === 'empty' ? (
+                  <p
+                    className={cn(
+                      'text-ink-3',
+                      density === 'roomy' ? 'px-5 pb-2 text-footnote' : 'px-4 pt-0.5 pb-2 text-caption',
+                    )}
+                  >
+                    {/* Touch holds a row for its menu; a mouse drags it in the sidebar, or right-clicks it on a narrow window. */}
+                    <span className="[@media(pointer:coarse)]:hidden">
+                      {density === 'roomy' ? `Right-click ${things} to move it here.` : `Drag ${things} here.`}
+                    </span>
+                    <span className="hidden [@media(pointer:coarse)]:inline">Hold {things} to move it here.</span>
+                  </p>
+                ) : entry.kind === 'out' ? (
+                  <p
+                    className={cn(
+                      'my-0.5 flex h-10 items-center gap-2.5 rounded-lg border-[1.5px] border-dashed px-3 text-footnote',
+                      'transition-colors duration-150',
+                      lit ? 'border-transparent bg-accent-soft text-accent' : 'border-line-strong text-ink-3',
+                    )}
+                  >
+                    <FolderOutput size={16} strokeWidth={1.85} aria-hidden className="flex-none" />
+                    <span className="truncate">Take out of {entry.from.name}</span>
+                  </p>
+                ) : entry.kind === 'agent' ? (
+                  <AgentRow
+                    agent={entry.agent}
+                    density={density}
+                    selected={entry.key === selectedId}
+                    openChatId={entry.key === selectedId ? openChatId : undefined}
+                    alone={entries.length === 1}
+                    last={last}
+                    fresh={freshArrival(entry.key)}
+                    onEdit={() => onEdit(entry.agent)}
+                    onDelete={entry.agent.isDefault ? undefined : () => onDelete(entry.agent)}
+                    move={shelves && entries.length > 1 ? moveItem(entry) : undefined}
+                  />
+                ) : (
+                  <GroupRowView
+                    group={entry.group}
+                    density={density}
+                    selected={entry.key === selectedId}
+                    last={last}
+                    fresh={freshArrival(entry.key)}
+                    onRename={() => onRenameGroup(entry.group)}
+                    onDelete={() => onDeleteGroup(entry.group)}
+                    move={shelves ? moveItem(entry) : undefined}
+                  />
+                )}
+              </div>
+            </motion.li>
+          )
+        })}
       </AnimatePresence>
     </ul>
   )
 }
+
+const LOOSE = 'loose'
+/** Its own type, so a row dropped on the composer is not a valid payload there. */
+const DRAG_TYPE = 'application/x-murmur-roster-row'
+
+type Item =
+  | (Entry & { place: string })
+  | { kind: 'section'; key: string; section: Section; members: Entry[]; place: string }
+  | { kind: 'empty'; key: string; place: string }
+  /** While a row is carried and nothing is loose: drop it here for no section. */
+  | { kind: 'out'; key: string; from: Section; place: string }
 
 const isMain = (e: Entry) => e.kind === 'agent' && e.agent.isDefault
 
@@ -224,7 +457,15 @@ function AgentRow({
   fresh,
   onEdit,
   onDelete,
-}: Shared & { agent: Agent; openChatId?: string; alone?: boolean; onEdit: () => void; onDelete?: () => void }) {
+  move,
+}: Shared & {
+  agent: Agent
+  openChatId?: string
+  alone?: boolean
+  onEdit: () => void
+  onDelete?: () => void
+  move?: MenuItem
+}) {
   const status = useAgentStatus(agent.id)
   const [menu, setMenu] = useState(false)
   const press = useLongPress(() => setMenu(true))
@@ -313,6 +554,7 @@ function AgentRow({
         close={() => setMenu(false)}
         items={[
           { label: 'Edit', icon: <Pencil size={18} strokeWidth={1.85} />, onSelect: onEdit },
+          ...(move ? [move] : []),
           ...(onDelete
             ? [{ label: 'Delete', icon: <Trash2 size={18} strokeWidth={1.85} />, onSelect: onDelete, danger: true }]
             : []),
@@ -330,7 +572,8 @@ function GroupRowView({
   fresh,
   onRename,
   onDelete,
-}: Shared & { group: GroupRow; onRename: () => void; onDelete: () => void }) {
+  move,
+}: Shared & { group: GroupRow; onRename: () => void; onDelete: () => void; move?: MenuItem }) {
   const [menu, setMenu] = useState(false)
   const press = useLongPress(() => setMenu(true))
   const [halo] = useState(fresh)
@@ -388,11 +631,223 @@ function GroupRowView({
         close={() => setMenu(false)}
         items={[
           { label: 'Rename', icon: <PencilLine size={18} strokeWidth={1.85} />, onSelect: onRename },
+          ...(move ? [move] : []),
           { label: 'Delete', icon: <Trash2 size={18} strokeWidth={1.85} />, onSelect: onDelete, danger: true },
         ]}
       />
     </Popover.Root>
   )
+}
+
+// ── Sections ────────────────────────────────────────────────────────────────
+
+/**
+ * A section's name over its rows. Tap it to fold the section away; folded, the
+ * name keeps its members' faces beside it, still alive (one at work still hops),
+ * and a dot if any of them has something new.
+ */
+function SectionHead({
+  section,
+  members,
+  density,
+  folded,
+  lit,
+  first,
+  shelves,
+  onSpring,
+}: {
+  section: Section
+  members: Entry[]
+  density: Density
+  folded: boolean
+  /** A dragged row would land here. */
+  lit: boolean
+  first: boolean
+  shelves: SectionActions
+  /** Held over while folded: open up for the row. */
+  onSpring: () => void
+}) {
+  const roomy = density === 'roomy'
+  const [menu, setMenu] = useState(false)
+  const press = useLongPress(() => setMenu(true))
+  const agents = members.flatMap((e) => (e.kind === 'agent' ? [e.agent] : []))
+  const unread =
+    useUnreadCount(agents.flatMap((a) => (a.lastChat ? [{ id: a.lastChat.id, at: a.lastChat.at }] : []))) +
+    members.filter((e) => e.kind === 'group' && e.group.unread && !e.group.live).length
+  const at = shelves.sections.findIndex((s) => s.id === section.id)
+  const count = shelves.sections.length
+  const toggle = () => setFolded(section.id, !folded)
+
+  // Held over a folded section, a dragged row springs it open.
+  const open = useRef(onSpring)
+  open.current = onSpring
+  useEffect(() => {
+    if (!lit || !folded) return
+    const t = setTimeout(() => open.current(), 650)
+    return () => clearTimeout(t)
+  }, [lit, folded])
+
+  return (
+    <Popover.Root open={menu} onOpenChange={setMenu} modal>
+      <Popover.Anchor asChild>
+        <div className={cn('group/row relative', roomy ? (first ? 'pt-1' : 'pt-4') : first ? 'pt-0.5' : 'pt-3')}>
+          {/* A heading, so a screen reader can step from section to section. */}
+          <h3>
+            <button
+              type="button"
+              {...press}
+              onClick={(e) => {
+                press.onClick(e)
+                if (!e.defaultPrevented) toggle()
+              }}
+              aria-expanded={!folded}
+              data-open={menu || undefined}
+              data-nav="section"
+              className={cn(
+                'relative flex w-full items-center gap-2 text-left select-none [-webkit-touch-callout:none]',
+                'transition-colors duration-150',
+                roomy
+                  ? 'h-11 pr-5 pl-5 active:bg-fill-1 data-open:bg-fill-1'
+                  : 'h-8 rounded-lg pr-2 pl-4 focus-visible:-outline-offset-2 hover:bg-fill-1 active:bg-fill-2 data-open:bg-fill-2',
+                lit && 'bg-accent-soft text-accent hover:bg-accent-soft',
+                lit && !folded && 'rounded-b-none',
+              )}
+            >
+              <span
+                className={cn(
+                  'min-w-0 flex-1 truncate font-semibold',
+                  roomy ? 'text-footnote' : 'text-caption',
+                  lit ? 'text-accent' : 'text-ink-2',
+                )}
+              >
+                {section.name}
+              </span>
+              <AnimatePresence initial={false}>
+                {folded && (
+                  <motion.span
+                    key="faces"
+                    className={cn('flex flex-none items-center gap-1.5', !roomy && makesWay)}
+                    initial={{ opacity: 0, x: 8 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: 8, transition: { duration: 0.12 } }}
+                    transition={{ type: 'spring', duration: 0.4, bounce: 0.2 }}
+                  >
+                    <span aria-hidden className="flex">
+                      <Faces members={members} size={roomy ? 22 : 18} max={roomy ? 5 : 4} />
+                    </span>
+                    {unread > 0 && (
+                      <>
+                        <span
+                          aria-hidden
+                          className={cn('flex-none rounded-full bg-accent', roomy ? 'size-2.5' : 'size-2')}
+                        />
+                        <span className="sr-only">, {unread} new</span>
+                      </>
+                    )}
+                  </motion.span>
+                )}
+              </AnimatePresence>
+              {/* Open, the chevron waits for the pointer, as in a Mac's sidebar; folded, it stays to say so. */}
+              <span
+                className={cn(
+                  'grid flex-none place-items-center text-ink-3 transition-opacity duration-150',
+                  roomy ? '-mr-1 size-5' : 'size-7',
+                  !roomy &&
+                    !folded &&
+                    '[@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/row:opacity-100 [@media(hover:hover)]:group-has-[:focus-visible]/row:opacity-100',
+                )}
+              >
+                <ChevronRight
+                  size={roomy ? 16 : 14}
+                  strokeWidth={2.25}
+                  aria-hidden
+                  className={cn('transition-transform duration-250 ease-[var(--ease-out)]', !folded && 'rotate-90')}
+                />
+              </span>
+            </button>
+          </h3>
+          {!roomy && (
+            <button
+              type="button"
+              onClick={() => setMenu(true)}
+              aria-label={`More for ${section.name}`}
+              aria-haspopup="menu"
+              data-open={menu || undefined}
+              className={cn(quick(false, true), 'top-[calc(50%+6px)]', first && 'top-[calc(50%+1px)]')}
+            >
+              <MoreHorizontal size={16} strokeWidth={2} aria-hidden />
+            </button>
+          )}
+        </div>
+      </Popover.Anchor>
+      <RowMenu
+        open={menu}
+        name={section.name}
+        roomy={roomy}
+        close={() => setMenu(false)}
+        items={[
+          {
+            label: 'Edit section',
+            icon: <Pencil size={18} strokeWidth={1.85} />,
+            onSelect: () => shelves.edit(section),
+          },
+          ...(at > 0
+            ? [
+                {
+                  label: 'Move up',
+                  icon: <ArrowUp size={18} strokeWidth={1.85} />,
+                  onSelect: () => void shelves.move(section, -1),
+                },
+              ]
+            : []),
+          ...(at < count - 1
+            ? [
+                {
+                  label: 'Move down',
+                  icon: <ArrowDown size={18} strokeWidth={1.85} />,
+                  onSelect: () => void shelves.move(section, 1),
+                },
+              ]
+            : []),
+          {
+            label: 'Delete section',
+            icon: <Trash2 size={18} strokeWidth={1.85} />,
+            danger: true,
+            divider: true,
+            onSelect: () => void shelves.remove(section),
+          },
+        ]}
+      />
+    </Popover.Root>
+  )
+}
+
+/** Who's in a section, shoulder to shoulder, as their live selves: its agents, then its groups' huddles. */
+function Faces({ members, size, max }: { members: Entry[]; size: number; max: number }) {
+  const shown = [...members.filter((e) => e.kind === 'agent'), ...members.filter((e) => e.kind === 'group')].slice(
+    0,
+    max,
+  )
+  const more = members.length - shown.length
+  return (
+    <span className="flex flex-none items-center">
+      <span className="flex items-end [&_.buddy-group]:mx-px" style={{ gap: size > 20 ? 1 : 0 }}>
+        {shown.map((e) =>
+          e.kind === 'agent' ? (
+            <Face key={e.key} agent={e.agent} size={size} />
+          ) : (
+            <BuddyStack key={e.key} hues={e.group.memberHues} seeds={e.group.memberIds} size={size} />
+          ),
+        )}
+      </span>
+      {more > 0 && <span className="ml-1 text-caption font-medium text-ink-3 tabular-nums">+{more}</span>}
+    </span>
+  )
+}
+
+function Face({ agent, size }: { agent: Agent; size: number }) {
+  const status = useAgentStatus(agent.id)
+  return <Buddy hue={agent.hue} size={size} state={status.state} seed={agent.id} />
 }
 
 /**

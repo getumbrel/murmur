@@ -6,6 +6,7 @@ import { Skeleton } from '@/ui/skeleton'
 import { useIsWide } from '@/lib/use-media'
 import { useAgents, type Agent } from '@/state/agents'
 import { useBusyAgents } from '@/state/status'
+import { sectionOf, useSections } from '@/state/sections'
 import { useAgentActions } from '@/features/home/actions'
 import { agentAt } from '@/features/home/roster'
 import { AgentCard, NewAgentCard } from '@/features/agent-page/agent-card'
@@ -15,6 +16,9 @@ import { usePageScroll } from '@/features/agent-page/scroll'
 // All agents: everyone you can talk to, as a gallery of cards, with a card
 // for making another. The main agent leads; the rest follow by who you
 // talked to last (one at work stays put until it replies, as in the roster).
+// With sections, each is a shelf of its own under its name, in the roster's order.
+
+const grid = 'grid grid-cols-2 gap-3 min-[600px]:grid-cols-3 md:grid-cols-[repeat(auto-fill,minmax(184px,1fr))] md:gap-4'
 
 // Cards arrive once, a beat apart; never again on the way back.
 let greeted = false
@@ -31,8 +35,24 @@ export function AgentsScreen() {
     if (agents) greeted = true
   }, [agents])
 
+  const sections = useSections()
   const at = (a: Agent) => agentAt(a, busy)
   const sorted = agents && [...agents].sort((a, b) => Number(b.isDefault) - Number(a.isDefault) || at(b) - at(a))
+  const known = new Set(sections.map((s) => s.id))
+  const shelf = (id?: string) => sorted?.filter((a) => (id ? sectionOf(a) === id : !known.has(sectionOf(a) ?? ''))) ?? []
+  const shelves = sections.map((s) => ({ ...s, agents: shelf(s.id) })).filter((s) => s.agents.length)
+  let n = 0
+  const card = (key: string, agent?: Agent) => (
+    <motion.li
+      key={key}
+      className="grid"
+      initial={arrive ? { opacity: 0, y: 10, scale: 0.97 } : false}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      transition={{ type: 'spring', duration: 0.5, bounce: 0.18, delay: Math.min(n++, 8) * 0.04 }}
+    >
+      {agent ? <AgentCard agent={agent} /> : <NewAgentCard onClick={actions.newAgent} />}
+    </motion.li>
+  )
 
   return (
     <MotionConfig reducedMotion="user">
@@ -61,7 +81,7 @@ export function AgentsScreen() {
             </p>
           </div>
 
-          <ul className="grid grid-cols-2 gap-3 min-[600px]:grid-cols-3 md:grid-cols-[repeat(auto-fill,minmax(184px,1fr))] md:gap-4">
+          <ul className={grid}>
             {isPending || !sorted
               ? [0, 1, 2, 3].map((i) => (
                   <li key={i} className="flex flex-col items-center rounded-2xl bg-fill-1 px-3 pt-6 pb-4">
@@ -71,20 +91,14 @@ export function AgentsScreen() {
                     <Skeleton className="mt-4 h-2 w-14 rounded-full opacity-50" />
                   </li>
                 ))
-              : [...sorted.map((a) => ({ key: a.id, agent: a })), { key: 'new', agent: undefined }].map(
-                  ({ key, agent }, i) => (
-                    <motion.li
-                      key={key}
-                      className="grid"
-                      initial={arrive ? { opacity: 0, y: 10, scale: 0.97 } : false}
-                      animate={{ opacity: 1, y: 0, scale: 1 }}
-                      transition={{ type: 'spring', duration: 0.5, bounce: 0.18, delay: Math.min(i, 8) * 0.04 }}
-                    >
-                      {agent ? <AgentCard agent={agent} /> : <NewAgentCard onClick={actions.newAgent} />}
-                    </motion.li>
-                  ),
-                )}
+              : [...shelf().map((a) => card(a.id, a)), card('new')]}
           </ul>
+          {shelves.map((s) => (
+            <section key={s.id} className="mt-8 md:mt-10">
+              <h2 className="px-1 pb-3 text-footnote font-semibold text-ink-2">{s.name}</h2>
+              <ul className={grid}>{s.agents.map((a) => card(a.id, a))}</ul>
+            </section>
+          ))}
         </div>
         {actions.sheets}
       </div>

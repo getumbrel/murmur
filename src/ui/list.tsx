@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { ChevronRight } from 'lucide-react'
+import { Check, ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/cn'
 
 // Grouped inset lists, the way Settings does it. Separators are inset to
@@ -64,5 +64,46 @@ export function ListRow({ icon, title, subtitle, detail, onClick, chevron, destr
       {/* The glyph sits inside its box; nudge it so its stroke, not its box, meets the edge. */}
       {chevron && <ChevronRight size={18} className="-mr-1.5 flex-none text-ink-3" />}
     </Comp>
+  )
+}
+
+/** A row you tick: a face, a name, where it is now if that matters, and a round check. */
+export function CheckRow({
+  on,
+  onToggle,
+  icon,
+  title,
+  detail,
+  disabled,
+}: {
+  on: boolean
+  onToggle: () => void
+  icon: ReactNode
+  title: string
+  detail?: ReactNode
+  disabled?: boolean
+}) {
+  return (
+    <button
+      type="button"
+      role="checkbox"
+      aria-checked={on}
+      disabled={disabled}
+      onClick={onToggle}
+      data-has-icon=""
+      className="flex min-h-13 w-full items-center gap-3 px-4 py-2.5 text-left transition-colors select-none focus-visible:-outline-offset-2 enabled:hover:bg-fill-1 enabled:active:bg-fill-2 disabled:cursor-default"
+    >
+      <span className="flex size-7 flex-none items-center justify-center">{icon}</span>
+      <span className={cn('min-w-0 flex-1 truncate text-body', disabled && 'text-ink-3')}>{title}</span>
+      {detail && <span className="flex-none truncate text-footnote text-ink-3">{detail}</span>}
+      <span
+        className={cn(
+          'grid size-6 flex-none place-items-center rounded-full transition-[background-color,box-shadow] duration-200',
+          on ? 'bg-accent text-accent-ink' : 'ring-[1.5px] ring-line-strong ring-inset',
+        )}
+      >
+        {on && <Check size={14} strokeWidth={3} className="animate-pop" />}
+      </span>
+    </button>
   )
 }
