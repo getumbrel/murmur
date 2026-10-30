@@ -2,6 +2,7 @@ import type { CSSProperties, ReactNode } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import type { Agent } from '@/state/agents'
 import { useRoutines } from '@/state/routines'
+import { useHermesGateway } from '@/state/hermes-gateway'
 import { useMemories } from '@/state/memory'
 import { usePairing, useTelegram } from '@/state/telegram'
 import { useLinks, useWhatsApp } from '@/state/whatsapp'
@@ -31,6 +32,7 @@ type Props = {
 
 export function QuickActions({ agent, onRoutines, onMemory, onApps, onPasswords, onTelegram, onWhatsApp }: Props) {
   const routines = useRoutines(agent.id).data
+  const gateway = useHermesGateway(agent.id)
   const memories = useMemories(agent.id)
   const telegram = useTelegram(agent.id)
   const pairing = usePairing(agent.id)?.phase
@@ -45,7 +47,8 @@ export function QuickActions({ agent, onRoutines, onMemory, onApps, onPasswords,
   }
 
   const on = routines?.filter((r) => r.enabled).length ?? 0
-  const routineNote = !routines ? undefined : on ? `${on} on` : routines.length ? 'Paused' : 'None yet'
+  // Switched on is no use if nothing's there to run them.
+  const routineNote = !routines ? undefined : on ? (gateway.off ? 'Not running' : `${on} on`) : routines.length ? 'Paused' : 'None yet'
   const memoryNote = memories.isPending
     ? undefined
     : memories.isError

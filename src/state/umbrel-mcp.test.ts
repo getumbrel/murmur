@@ -4,8 +4,9 @@ vi.mock('@/hermes/rest', () => ({ api: { get: vi.fn(), put: vi.fn() }, HermesErr
 vi.mock('@/hermes/gateway', () => ({ rpc: vi.fn() }))
 vi.mock('@/hermes/instance', () => ({ scoped: (key: string) => key }))
 vi.mock('@/lib/upkeep', () => ({ upkeep: () => Promise.resolve(), rememberedSet: () => new Set() }))
+vi.mock('@/state/connection', () => ({ useHermesConnection: vi.fn() }))
 
-const { findUmbrelKey, maskKey, stopAskingFirst } = await import('./umbrel-mcp')
+const { findUmbrelKey, maskKey, stopAskingFirst, umbrelOf } = await import('./umbrel-mcp')
 const { api } = await import('@/hermes/rest')
 const get = vi.mocked(api.get)
 const put = vi.mocked(api.put)
@@ -29,6 +30,21 @@ describe('an umbrelOS key', () => {
   it('shows enough to recognise and no more', () => {
     expect(maskKey(KEY)).toBe(`umbrelmcp_a1a1…2b2b2`)
     expect(maskKey(KEY)).not.toContain('b2b2b2b2')
+  })
+})
+
+describe('the Umbrel a Hermes runs on', () => {
+  const page = { protocol: 'https:', hostname: 'umbrel.tail1234.ts.net' }
+
+  it('is this Umbrel when Hermes is a container beside Murmur', () => {
+    for (const url of ['http://murmur_hermes_1:9119', 'http://hermes-agent_web_1:18789'])
+      expect(umbrelOf(url, page)).toEqual({ name: 'this Umbrel', settingsUrl: 'https://umbrel.tail1234.ts.net/settings/mcp' })
+  })
+
+  it('is your Umbrel, at Hermes’s own host, when Murmur runs somewhere else', () => {
+    const desktop = { protocol: 'http:', hostname: '127.0.0.1' }
+    expect(umbrelOf('http://umbrel.local:18789', desktop)).toEqual({ name: 'your Umbrel', settingsUrl: 'http://umbrel.local/settings/mcp' })
+    expect(umbrelOf('http://192.168.1.20:18789', desktop).settingsUrl).toBe('http://192.168.1.20/settings/mcp')
   })
 })
 

@@ -15,13 +15,14 @@ import { offersFor, PICKS, stagedId, type Hardware } from './local-tiers'
 
 const GB = 1e9
 
-/** CPU or integrated graphics: 80% of what's free is usable. */
+/** CPU or integrated graphics, on Umbrel's image: 80% of what's free is usable. */
 const cpu = (free: number, total = 16): Hardware => ({
   uma: true,
   vramUsable: free * GB * 0.8,
   ramAvailable: free * GB,
   ramTotal: total * GB,
   gpuName: null,
+  narrows: true,
 })
 
 const one = (path: string, bytes: number): FileGroup => ({ label: '', paths: [path], total_bytes: bytes })

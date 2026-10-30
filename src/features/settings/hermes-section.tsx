@@ -255,7 +255,9 @@ function FoundRow({ hermes: f, busy, onAdd }: { hermes: FoundHermes; busy: boole
       body:
         f.where === 'umbrel'
           ? 'Open the App Store on your Umbrel, find Hermes Agent and tap Update. Then add it here.'
-          : 'On the computer running Hermes, run “hermes update”, then restart it. Then add it here.',
+          : f.fromImage
+            ? 'On the computer running Hermes, pull the newer Hermes image, then restart it. Then add it here.'
+            : 'On the computer running Hermes, run “hermes update”, then restart it. Then add it here.',
       action: 'OK',
       notice: true,
     })

@@ -257,18 +257,45 @@ export async function connectApiKey(service: ApiKeyService, key: string, confirm
 
 // ── Model servers ───────────────────────────────────────────────────────────
 
-/** Ollama or LocalAI on this Umbrel, found by the Murmur server. */
+/**
+ * Where Ollama and LM Studio answer on the computer Hermes runs on: Hermes
+ * itself, or, from inside Docker, the computer around it.
+ */
+const NEARBY = ['localhost', 'host.docker.internal'].flatMap((host) =>
+  ['11434', '1234'].map((port) => `http://${host}:${port}/v1`),
+)
+
+/**
+ * Model servers Hermes can use without being told where: Ollama or LocalAI
+ * beside it on an Umbrel (which Murmur's server finds, with their models'
+ * sizes), and Ollama or LM Studio on the computer it runs on. Every one is
+ * asked of Hermes, since it's Hermes that will use them: Ollama on an Umbrel
+ * is no use to a Hermes on a laptop.
+ */
 export function useLocalServers(enabled = true) {
-  return useQuery({
-    queryKey: ['local-servers'],
-    enabled,
-    queryFn: async () => {
-      const res = await fetch('/murmur/local')
-      if (!res.ok) return []
-      return ((await res.json()) as { servers: ModelServer[] }).servers
-    },
-    staleTime: 15_000,
+  return useQuery({ queryKey: ['local-servers'], enabled, queryFn: findLocalServers, staleTime: 15_000 })
+}
+
+export async function findLocalServers(): Promise<ModelServer[]> {
+  const beside = await fetch('/murmur/local')
+    .then(async (res) => (res.ok ? ((await res.json()) as { servers: ModelServer[] }).servers : []))
+    .catch(() => [] as ModelServer[])
+  const urls = [...beside.map((s) => s.baseUrl), ...NEARBY]
+  const asked = await Promise.all(
+    urls.map((url) => api.post<Validation>('/api/providers/validate', { key: 'OPENAI_BASE_URL', value: url }).catch(() => null)),
+  )
+  const servers: ModelServer[] = []
+  asked.forEach((res, i) => {
+    if (!res?.ok) return
+    const server: ModelServer = beside[i] ?? {
+      name: serverName(urls[i]),
+      baseUrl: res.resolved_base_url ?? urls[i],
+      models: (res.models ?? []).map((id) => ({ id, size: null, parameters: null })),
+    }
+    // The same server by two ways in (localhost, and the computer around a container): once.
+    if (!servers.some((s) => s.name === server.name)) servers.push(server)
   })
+  return servers
 }
 
 /** Asks Hermes, from its side of the network, what answers at an address: each likely scheme in turn. */

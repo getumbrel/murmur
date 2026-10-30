@@ -74,6 +74,8 @@ With a password, Murmur signs in once and keeps the short-lived access token in 
 
 **Murmur in Docker, Hermes on the same machine.** Inside a container, `localhost` means the container itself. Use `http://host.docker.internal:9119` on macOS and Windows. On Linux, run Murmur with `--network host`. A dashboard bound to 127.0.0.1 only accepts connections from its own machine, so that is the only way to reach it without a password.
 
+**Hermes's gateway.** Routines, Telegram and WhatsApp run in Hermes's gateway, which `hermes dashboard` doesn't start, and a Hermes whose gateway has never run has nowhere to keep chats yet. When Murmur finds it off, it asks Hermes to start it. Where Hermes can't (Hermes 0.22.5's Docker images can't yet), Murmur shows the command to run on the computer running Hermes, or in its container: `hermes gateway start`. Hermes's Docker image runs both when started with `gateway run` and `HERMES_DASHBOARD=1`.
+
 ## More than one Hermes
 
 Murmur can be connected to several Hermes, say one on your Umbrel and one on a VPS, and switch between them like Slack workspaces. Add them in **Settings → Server → Add another server**. Each one is checked first, then saved with its own address, sign-in and name (rename it from its ⓘ details).

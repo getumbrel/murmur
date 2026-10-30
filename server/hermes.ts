@@ -28,6 +28,8 @@ export type ConnectionInfo = {
   outdated?: boolean
   /** The version it needs to reach, when outdated. */
   minVersion?: string
+  /** It runs from an image (Docker), so it's updated by pulling a newer one, not with `hermes update`. */
+  fromImage?: boolean
   /** The saved username, so a form can show who Murmur signs in as. */
   username?: string
   error?: string
@@ -67,7 +69,16 @@ const COPY = {
   unsupported: 'This Hermes signs in a way Murmur doesn’t support yet. Turn on its username and password sign-in.',
   badToken: 'Hermes didn’t accept Murmur’s access key.',
   noToken: 'Hermes didn’t let Murmur in. If it runs on another computer, give it a username and password and sign in here.',
+  noGateway: 'Hermes is running without its gateway, which Murmur needs. Start it on that computer with “hermes gateway start”, then try again.',
+  noGatewayImage: 'Hermes is running without its gateway, which Murmur needs. Start it in Hermes’s container with “hermes gateway start”, then try again.',
 }
+
+/** How long a gateway Murmur started may take to open the session store. */
+const GATEWAY_START_MS = 20_000
+/** Asked to start at most this often, so a Hermes that can't (one in a Docker dashboard container) isn't asked on every check. */
+const GATEWAY_RETRY_MS = 5 * 60_000
+/** When each Hermes was last asked, by address: a connection test makes a Hermes of its own each time. */
+const gatewayAsked = new Map<string, number>()
 
 const REFRESH_MARGIN_MS = 60_000
 const FRESH_MS = 10_000
@@ -83,6 +94,7 @@ export function createHermes(target: Target) {
 
   let mode: Mode = 'unknown'
   let version: string | undefined
+  let fromImage = false
   let token: string | null = target.token ?? null
   let session: Session | null = null
   let provider = 'basic'
@@ -115,11 +127,13 @@ export function createHermes(target: Target) {
   function detect(): Promise<Mode> {
     return once('detect', async () => {
       const res = await call('/api/status', {}, 5000)
-      const body = (await res.json().catch(() => null)) as { version?: unknown; auth_required?: unknown } | null
+      const body = (await res.json().catch(() => null)) as { version?: unknown; auth_required?: unknown; can_update_hermes?: unknown } | null
       if (!res.ok || !body || typeof body.version !== 'string' || !('auth_required' in body)) {
         throw new ConnectError('unreachable', COPY.notHermes)
       }
       version = body.version
+      // Hermes says so when it's in a container, where `hermes update` can't apply.
+      fromImage = body.can_update_hermes === false
       mode = target.token ? 'token' : body.auth_required ? 'password' : 'token'
       return mode
     })
@@ -254,6 +268,36 @@ export function createHermes(target: Target) {
 
   let checked: { info: ConnectionInfo; at: number } | null = null
 
+  /**
+   * A Hermes started with just `hermes dashboard` has no session store until
+   * its gateway (which also runs routines and messaging) first runs, and says
+   * so with a 503. Umbrel's image always runs the gateway; elsewhere Murmur
+   * starts it the way Hermes's own dashboard does, then waits for the store.
+   * Hermes 0.22.5's Docker images can't start it that way (every action their
+   * dashboard spawns stops at `hermes pm repair`), so there it says where to.
+   */
+  async function startGateway(headers: Record<string, string>) {
+    if (Date.now() - (gatewayAsked.get(target.url) ?? -Infinity) < GATEWAY_RETRY_MS) return false
+    gatewayAsked.set(target.url, Date.now())
+    const res = await postJson('/api/gateway/start', {}, headers).catch(() => null)
+    if (!res?.ok) return false
+    const deadline = Date.now() + GATEWAY_START_MS
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 1000))
+      const probe = await call('/api/sessions?limit=1', { headers }).catch(() => null)
+      if (probe?.ok) return true
+      // Hermes's `hermes gateway start` gave up: no use waiting for it.
+      const action = await call('/api/actions/gateway-start/status', { headers })
+        .then((r) => (r.ok ? (r.json() as Promise<{ running?: boolean; exit_code?: number | null }>) : null))
+        .catch(() => null)
+      if (action?.running === false && action.exit_code) return false
+    }
+    return false
+  }
+
+  const gatewayOff = async (res: Response) =>
+    res.status === 503 && /session store is not initialized/i.test(await res.text().catch(() => ''))
+
   async function check(): Promise<ConnectionInfo> {
     const info: ConnectionInfo = {
       url: target.url,
@@ -267,11 +311,16 @@ export function createHermes(target: Target) {
       await detect()
       info.mode = mode
       info.hermesVersion = version
+      if (fromImage) info.fromImage = true
       if (version && olderThan(version, MIN_HERMES_VERSION)) Object.assign(info, { outdated: true, minVersion: MIN_HERMES_VERSION })
       for (let attempt = 0; ; attempt++) {
         const { headers, credential } = await restAuth()
         const res = await call('/api/sessions?limit=1', { headers })
         if (res.ok) break
+        if (await gatewayOff(res)) {
+          if (await startGateway(headers)) break
+          throw new ConnectError('unreachable', fromImage ? COPY.noGatewayImage : COPY.noGateway)
+        }
         if (attempt || (res.status !== 401 && res.status !== 403)) {
           if (res.status === 401 || res.status === 403) {
             throw new ConnectError('bad-login', mode === 'password' ? COPY.badLogin : target.token ? COPY.badToken : COPY.noToken)

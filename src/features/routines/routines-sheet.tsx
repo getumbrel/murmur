@@ -16,6 +16,7 @@ import { RoutineDetailSheet } from './routine-detail'
 import { tiles } from './templates'
 import { Glyph } from './glyph'
 import { useIsWide } from '@/lib/use-media'
+import { GatewayOff } from '@/features/hermes-gateway/gateway-off'
 
 export type RoutinesSheetView =
   { page: 'list' } | { page: 'new'; start?: NewRoutineView } | { page: 'detail'; id: string }
@@ -86,6 +87,11 @@ export function RoutinesSheet({ agent, open, onOpenChange, onOpenRun, initialVie
         description={`Things ${agent.name} does on its own, on a schedule.`}
       >
         <Grow className="hue-scope" style={{ '--hue': agent.hue } as CSSProperties}>
+          <GatewayOff
+            agentId={agent.id}
+            title="Routines won’t run"
+            className="mb-4"
+          />
           {routines.isPending ? (
             <div className="flex justify-center py-12 text-ink-3">
               <Spinner size={20} />

@@ -8,6 +8,7 @@ import { promisify } from 'node:util'
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest'
 import { isQuiet, isRunBrief, runTitle } from '@shared/routines.ts'
 import { parseSchedule, toSchedule, WEEKDAYS, type When } from '@/features/routines/schedule'
+import { startGateway } from '@/state/hermes-gateway'
 import { fetchRoutineRuns, runOf } from '@/state/routines'
 import { placeLastChats, toAgent, type Profile } from '@/state/agents'
 import { agentName, api, connect, newChat, q, sleep, turn, type Socket } from './client'
@@ -253,5 +254,13 @@ describe('an agent’s runs', () => {
     expect(listed.filter((r) => r.routineId === tides.id).map((r) => r.id)).toEqual(theirs)
     // The quiet run's routine was deleted; its run still says whose it was.
     expect(listed.find((r) => r.title === 'Inbox watch')?.routineId).toEqual(expect.any(String))
+  })
+})
+
+describe('the gateway that runs them', () => {
+  it('says it’s running for each agent, and asking to start it again is harmless', async () => {
+    expect(await api.get(`/api/status?${p}`)).toMatchObject({ gateway_running: true })
+    expect(await startGateway(agent)).toMatchObject({ gateway_running: true })
+    expect(await api.get(`/api/status?${p}`)).toMatchObject({ gateway_running: true })
   })
 })

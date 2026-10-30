@@ -32,6 +32,8 @@ export type HermesConnection = {
   outdated?: boolean
   /** …which is this. */
   minVersion?: string
+  /** It runs from an image (Docker): updated by pulling a newer one, not with `hermes update`. */
+  fromImage?: boolean
   /** Who Murmur signs in as, when this Hermes has a password. */
   username?: string
   /** Friendly, ready to show. */

@@ -360,14 +360,14 @@ export const nextStep = (app: string): string | undefined => NEXT[app]
 /** How to connect an app that's on this Umbrel, when it can be. */
 export const onUmbrel = (app: string) => ON_UMBREL[app]
 
-/** What a token test's failure means, in a sentence for the person. */
-export function tokenError(name: string, raw: string) {
+/** What a token test's failure means, in a sentence for the person. `place` is the Umbrel, as umbrelOf says it. */
+export function tokenError(name: string, raw: string, place = 'this Umbrel') {
   if (/\b401\b|unauthori[sz]ed|forbidden|\b403\b/i.test(raw))
     return `${name} didn’t accept that token. Copy a new one from ${name} and try again.`
   if (/^not found$|\b404\b/i.test(raw.trim()))
     return `Turn on Instance-level MCP in ${name}’s settings, then try again.`
   if (/name or service|no address|resolve|connection attempts failed|refused|unreachable/i.test(raw))
-    return `Couldn’t find ${name} on this Umbrel. Check it’s installed and running.`
+    return `Couldn’t find ${name} on ${place}. Check it’s installed and running.`
   return `Couldn’t connect ${name}. Try again in a moment.`
 }
 
@@ -382,7 +382,14 @@ export const cleanToken = (text: string) =>
  * Connects an app on this Umbrel with its token: adds it at its container's
  * address, checks it answers, and takes it away again if it doesn't.
  */
-export async function connectOnUmbrel(qc: QueryClient, profile: string, app: CatalogApp, name: string, token: string) {
+export async function connectOnUmbrel(
+  qc: QueryClient,
+  profile: string,
+  app: CatalogApp,
+  name: string,
+  token: string,
+  place = 'this Umbrel',
+) {
   const key = keyOf(profile, app.name)
   const where = ON_UMBREL[app.name]
   patch(key, { phase: 'adding', token: true })
@@ -405,7 +412,7 @@ export async function connectOnUmbrel(qc: QueryClient, profile: string, app: Cat
     patch(key, { phase: 'done', token: true, added })
   } catch (e) {
     if (added) await removeServer(profile, app.name).catch(() => {})
-    patch(key, { phase: 'failed', token: true, message: tokenError(name, (e as Error).message ?? '') })
+    patch(key, { phase: 'failed', token: true, message: tokenError(name, (e as Error).message ?? '', place) })
     void refresh(qc, profile)
   }
 }

@@ -19,20 +19,21 @@ import {
   clearHandoffKey,
   handoffKey,
   UmbrelKeyError,
-  umbrelSettingsUrl,
+  useUmbrel,
   useUmbrelMcp,
 } from '@/state/umbrel-mcp'
 import { ask } from './ask'
 
-// Settings → Umbrel: lets every agent use this Umbrel through umbrelOS's MCP
-// server. umbrelOS makes the key (Settings → AI agents (MCP)); you paste
-// whatever it shows here and Murmur adds it to each agent itself (umbrel-mcp.ts),
-// so no chat or model provider ever sees it.
-
-const openUmbrelOS = () => window.open(umbrelSettingsUrl(), '_blank', 'noopener')
+// Settings → Umbrel: lets every agent use the Umbrel Hermes runs on through
+// umbrelOS's MCP server. umbrelOS makes the key (Settings → AI agents (MCP));
+// you paste whatever it shows here and Murmur adds it to each agent itself
+// (umbrel-mcp.ts), so no chat or model provider ever sees it. It's "this
+// Umbrel" when Murmur runs there too, and "your Umbrel" from anywhere else.
 
 export function UmbrelSection() {
   const qc = useQueryClient()
+  const umbrel = useUmbrel()
+  const openUmbrelOS = () => window.open(umbrel.settingsUrl, '_blank', 'noopener')
   const agents = useAgents().data ?? []
   const ids = agents.map((a) => a.id)
   const status = useUmbrelMcp(ids)
@@ -54,7 +55,7 @@ export function UmbrelSection() {
       await connectUmbrel(key, ids, (id) => setProgress((done) => [...(done ?? []), id]))
       await refresh()
       setReplacing(false)
-      toast.success(agents.length > 1 ? 'Your agents can use this Umbrel now' : 'Connected to this Umbrel')
+      toast.success(agents.length > 1 ? `Your agents can use ${umbrel.name} now` : `Connected to ${umbrel.name}`)
       return null
     } catch (e) {
       void refresh()
@@ -68,7 +69,7 @@ export function UmbrelSection() {
 
   const disconnect = async () => {
     const yes = await ask({
-      title: 'Disconnect this Umbrel?',
+      title: `Disconnect ${umbrel.name}?`,
       body: 'Your agents won’t be able to use it until you connect it again. To retire the key too, remove it in umbrelOS.',
       action: 'Disconnect',
       destructive: true,
@@ -86,7 +87,7 @@ export function UmbrelSection() {
 
   return (
     <div className="space-y-8">
-      <Hero agents={agents} on={on} />
+      <Hero agents={agents} on={on} place={umbrel.name} />
 
       {status.isPending ? (
         <div className="grid place-items-center py-6">
@@ -116,6 +117,7 @@ export function UmbrelSection() {
             busy={!!progress}
             onConnect={connect}
             onCancel={replacing && connected.length ? () => setReplacing(false) : undefined}
+            onOpenUmbrelOS={openUmbrelOS}
           />
           {progress && <AgentList agents={agents} has={(id) => progress.includes(id)} working />}
         </>
@@ -125,7 +127,7 @@ export function UmbrelSection() {
 }
 
 /** The Umbrel and the agents, joined once they're connected. */
-function Hero({ agents, on }: { agents: Agent[]; on: boolean }) {
+function Hero({ agents, on, place }: { agents: Agent[]; on: boolean; place: string }) {
   return (
     <div className="flex flex-col items-center pt-2 text-center">
       <div className="flex items-center">
@@ -147,7 +149,7 @@ function Hero({ agents, on }: { agents: Agent[]; on: boolean }) {
         />
       </div>
       <h2 className="mt-5 text-title font-semibold tracking-[-0.02em]">
-        {on ? 'Connected to this Umbrel' : 'Let your agents use this Umbrel'}
+        {on ? `Connected to ${place}` : `Let your agents use ${place}`}
       </h2>
       <p className="mt-1 max-w-80 text-subhead text-balance text-ink-2">
         Apps, files and more, only as far as you allow in umbrelOS.
@@ -162,6 +164,7 @@ function ConnectForm({
   busy,
   onConnect,
   onCancel,
+  onOpenUmbrelOS,
 }: {
   initial: string
   count: number
@@ -169,6 +172,7 @@ function ConnectForm({
   /** Resolves to a problem with the key, or null. */
   onConnect: (key: string) => Promise<string | null>
   onCancel?: () => void
+  onOpenUmbrelOS: () => void
 }) {
   const [text, setText] = useState(initial)
   const [problem, setProblem] = useState<string | null>(null)
@@ -185,7 +189,7 @@ function ConnectForm({
         <ListRow
           icon={<UmbrelIcon size={29} />}
           title="Open AI agents in umbrelOS"
-          onClick={openUmbrelOS}
+          onClick={onOpenUmbrelOS}
           trailing={<ArrowUpRight size={18} className="-mr-1 flex-none text-ink-3" />}
         />
       </ListGroup>

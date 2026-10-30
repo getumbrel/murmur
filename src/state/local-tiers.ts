@@ -178,6 +178,8 @@ export type Hardware = {
   ramAvailable: number
   ramTotal: number
   gpuName?: string | null
+  /** Hermes narrows a model's window to the memory free now, as Umbrel's image does; upstream plans it from all there is. */
+  narrows?: boolean
 }
 
 /** What grows with the window: the q8 KV cache over the attending layers, and the recurrent layers' state. */
@@ -200,9 +202,9 @@ export const usable = (hw: Hardware) => (hw.uma ? hw.vramUsable : hw.vramUsable 
 //   the model's own 256K) as far as its estimate fits 80% of the RAM the
 //   machine has (hardware.probe_budget(planning=True)). Upstream stops there,
 //   so a 16 GB machine starts the 4B at 256K however little is free.
-//   Umbrel's image (hermes-agent-umbrel v0.22.5, which Murmur ships) also
-//   narrows unified memory to 80% of what's free, never below 64K, and grows
-//   the window again when memory frees up.
+//   Umbrel's image (hermes-agent-umbrel, which Murmur ships and umbrelOS
+//   runs) also narrows unified memory to 80% of what's free, never below 64K,
+//   and grows the window again when memory frees up (`narrows`).
 // - What that window really costs. llama.cpp zeroes the whole KV cache when it
 //   loads, so all of it is held from the first token. Hermes's estimate adds
 //   1.5 GiB for graphics-card contexts and a 2 GB logits buffer that a CPU
@@ -210,10 +212,10 @@ export const usable = (hw: Hardware) => (hw.uma ? hw.vramUsable : hw.vramUsable 
 //   more (measured: Qwen3.5 0.8B and 2B, llama.cpp b11370's CPU build, with
 //   Hermes's flags, at 64K and 256K).
 //
-// Murmur prices a pick at that window as it's really held, against what's
-// free now, so a pick that fits starts and stays up. A Hermes without that
-// narrowing (the Hermes Agent app before it moves to the same image) starts
-// bigger than this assumes, so a tight pick there may not start.
+// Murmur prices a pick at the window this Hermes will start it at, as it's
+// really held, against what's free now, so a pick that fits starts and stays
+// up: on Hermes's own releases that's the window planned from all the RAM,
+// which leaves a busy machine with fewer picks, or none.
 
 /** The ladder Hermes climbs (context_policy.ladder): 64K, then half as much again, up to the model's own. */
 const NATIVE = 256 * 1024
@@ -228,8 +230,9 @@ export function startWindow(pick: Shape, hw: Hardware) {
   const estimate = (window: number) => pick.weights + windowBytes(pick, window) + OVERHEAD + LOGITS
   const within = (budget: number) => LADDER.filter((w) => estimate(w) <= budget).at(-1) ?? FLOOR
   if (!hw.uma) return within(hw.vramUsable)
-  // Planned from the RAM it has, then narrowed to what's free (never below 64K).
-  return Math.min(within(hw.ramTotal * 0.8), within(hw.ramAvailable * 0.8))
+  // Planned from the RAM it has, then, on Umbrel's image, narrowed to what's free (never below 64K).
+  const planned = within(hw.ramTotal * 0.8)
+  return hw.narrows ? Math.min(planned, within(hw.ramAvailable * 0.8)) : planned
 }
 
 /** The memory a pick really holds once started on a CPU or integrated graphics. */

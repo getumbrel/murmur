@@ -21,6 +21,10 @@ describe('a model server with no models', () => {
     expect(emptyLine({ name: 'LM Studio', baseUrl: 'http://127.0.0.1:1234/v1' })).toBe(
       'LM Studio on this computer has no models yet.',
     )
+    // Reached from a Hermes in Docker.
+    expect(emptyLine({ name: 'LM Studio', baseUrl: 'http://host.docker.internal:1234/v1' })).toBe(
+      'LM Studio on this computer has no models yet.',
+    )
   })
 })
 
@@ -28,6 +32,7 @@ describe('the privacy line under the servers', () => {
   it('names where they run, when every one is at home', () => {
     expect(privacyLine([{ baseUrl: 'http://ollama_ollama_1:11434/v1' }], true)).toBe('Runs privately on your Umbrel. Nothing leaves your home.')
     expect(privacyLine([{ baseUrl: 'http://127.0.0.1:1234/v1' }])).toBe('Runs privately on your own computer. Nothing leaves your home.')
+    expect(privacyLine([{ baseUrl: 'http://host.docker.internal:11434/v1' }])).toBe('Runs privately on your own computer. Nothing leaves your home.')
     expect(privacyLine([{ baseUrl: 'http://ollama_ollama_1:11434/v1' }, { baseUrl: 'http://192.168.1.20:11434/v1' }], true)).toBe(
       'Runs privately on your own network. Nothing leaves your home.',
     )

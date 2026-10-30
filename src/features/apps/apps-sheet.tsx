@@ -16,6 +16,7 @@ import {
   type CatalogApp,
 } from '@/state/apps'
 import { MAIL_PROVIDERS, useMailHealth, useMailStatus, type MailProviderId } from '@/state/mail'
+import { useUmbrel } from '@/state/umbrel-mcp'
 import {
   clearHostedConnection,
   hostedAppFrom,
@@ -126,6 +127,7 @@ export function AppsSheet({ agent, open, onOpenChange, onAddLogin, onAsk }: Prop
   }, [open, agent.id])
 
   const byName = useMemo(() => new Map((catalog.data ?? []).map((a) => [a.name, a])), [catalog.data])
+  const umbrel = useUmbrel()
 
   const connect = (app: CatalogApp, env?: Record<string, string>) => {
     const name = appName(app.name)
@@ -138,7 +140,7 @@ export function AppsSheet({ agent, open, onOpenChange, onAddLogin, onAsk }: Prop
 
   const connectHere = (app: CatalogApp, token: string) => {
     go({ to: 'app', name: app.name })
-    void connectOnUmbrel(qc, agent.id, app, appName(app.name), token)
+    void connectOnUmbrel(qc, agent.id, app, appName(app.name), token, umbrel.name)
   }
 
   const hostedApp = (slug: string): HostedApp =>

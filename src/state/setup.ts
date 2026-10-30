@@ -96,6 +96,8 @@ export type FoundHermes = {
   /** Older than Murmur needs: show it, with how to update; it can't be chosen. */
   outdated?: boolean
   minVersion?: string
+  /** It runs from an image (Docker): updated by pulling a newer one, not with `hermes update`. */
+  fromImage?: boolean
   /** Password-protected: Murmur sent it nothing; choosing it takes a username and password. */
   needsSignIn?: boolean
   /**

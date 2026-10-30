@@ -14,7 +14,7 @@ import { ListGroup, ListRow } from '@/ui/list'
 import { cn } from '@/lib/cn'
 import { haptic } from '@/lib/haptics'
 import { useAgents, type Agent } from '@/state/agents'
-import { useHermesOnUmbrel } from '@/state/umbrel-mcp'
+import { useHermesOnUmbrel, useUmbrel } from '@/state/umbrel-mcp'
 import {
   cancelConnect,
   clearConnection,
@@ -360,6 +360,7 @@ function Form({
   const label = appName(app.name)
   const local = onUmbrelHere(app.name)
   const hermesOnUmbrel = useHermesOnUmbrel().data === true
+  const umbrel = useUmbrel()
   const here = !!local && hermesOnUmbrel && draft.here
   const { values, token } = draft
   const ready = here ? !!token.trim() : app.required_env.every((e) => !e.required || values[e.name]?.trim())
@@ -382,7 +383,7 @@ function Form({
           label={`Where ${label} runs`}
           value={draft.here ? 'here' : 'elsewhere'}
           options={[
-            { value: 'here', label: 'On this Umbrel' },
+            { value: 'here', label: `On ${umbrel.name}` },
             { value: 'elsewhere', label: 'Elsewhere' },
           ]}
           onChange={(v) => onDraft({ ...draft, here: v === 'here' })}

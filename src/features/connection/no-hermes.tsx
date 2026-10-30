@@ -12,8 +12,7 @@ const WAYS = [
     icon: <Server size={16} strokeWidth={2} />,
     title: 'On an Umbrel',
     detail: 'Install Murmur from the App Store. Hermes comes with it.',
-    // The App Store listing (apps.umbrel.com/app/murmur) once it's live.
-    href: 'https://umbrel.com',
+    href: 'https://apps.umbrel.com/app/murmur',
   },
   {
     icon: <Container size={16} strokeWidth={2} />,

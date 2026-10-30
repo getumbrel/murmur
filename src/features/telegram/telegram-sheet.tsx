@@ -27,6 +27,7 @@ import {
   type TelegramStatus,
 } from '@/state/telegram'
 import { People } from '@/features/access/people'
+import { GatewayOff } from '@/features/hermes-gateway/gateway-off'
 import { QrCode } from './qr-code'
 import { TelegramGlyph } from './telegram-glyph'
 import { BotIcon, ChatIcon, LockIcon } from '@/ui/icons'
@@ -550,6 +551,12 @@ function Connected({ agent, status }: { agent: Agent; status: TelegramStatus }) 
         <span className={cn('size-2 flex-none rounded-full', pill.dot)} />
         <span className="truncate">{pill.text}</span>
       </motion.div>
+
+      <GatewayOff
+        agentId={agent.id}
+        title={`${agent.name} can’t answer on Telegram`}
+        className="mt-6 w-full"
+      />
 
       <div className="mt-8 w-full">
         {status.username && <OpenBot username={status.username} />}

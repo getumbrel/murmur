@@ -7,7 +7,7 @@ import { Orb } from '@/ui/orb'
 import { UmbrelIcon } from '@/ui/brand'
 import { cn } from '@/lib/cn'
 import type { Agent } from '@/state/agents'
-import { connectUmbrel, findUmbrelKey, UmbrelKeyError, umbrelSettingsUrl, useHermesOnUmbrel } from '@/state/umbrel-mcp'
+import { connectUmbrel, findUmbrelKey, UmbrelKeyError, useHermesOnUmbrel, useUmbrel } from '@/state/umbrel-mcp'
 
 // The moment someone pastes umbrelOS's "connect your agent" message into a
 // chat. Sent as is, it would hand the key to the model provider and ask the
@@ -120,6 +120,7 @@ function UmbrelKeyCard({
   onConnect: () => void
   onDismiss: () => void
 }) {
+  const umbrel = useUmbrel()
   const progress = phase === 'done' ? 1 : phase === 'connecting' ? Math.max(0.08, joined / Math.max(count, 1)) : 0
   const title =
     phase === 'connecting'
@@ -222,7 +223,7 @@ function UmbrelKeyCard({
                   <Button
                     size="sm"
                     variant="secondary"
-                    onClick={() => window.open(umbrelSettingsUrl(), '_blank', 'noopener')}
+                    onClick={() => window.open(umbrel.settingsUrl, '_blank', 'noopener')}
                   >
                     Open umbrelOS
                     <ArrowUpRight size={14} strokeWidth={2.25} aria-hidden />

@@ -500,6 +500,8 @@ function FoundCard({
                 <span className="font-medium text-ink">Hermes Agent</span> and tap{' '}
                 <span className="font-medium text-ink">Update</span>.
               </>
+            ) : f.fromImage ? (
+              'On the computer running Hermes, pull the newer Hermes image, then restart it.'
             ) : (
               <>
                 On the computer running Hermes, run{' '}

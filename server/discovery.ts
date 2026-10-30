@@ -94,18 +94,20 @@ const LOOK_MS = 2500
 /** How long one found Hermes may take, all told. One that's slow to say what's in it is offered without. */
 const FOUND_MS = 4000
 
-export type PublicStatus = { version: string; authRequired: boolean; installId?: string }
+export type PublicStatus = { version: string; authRequired: boolean; installId?: string; fromImage?: boolean }
 
 /** Hermes's public status (no credentials sent), or null when it isn't a Hermes that answers. */
 export async function publicStatus(url: string, timeout = PUBLIC_MS): Promise<PublicStatus | null> {
   try {
     const res = await fetch(`${url}/api/status`, { redirect: 'manual', signal: AbortSignal.timeout(timeout) })
-    const body = (await res.json()) as { version?: unknown; auth_required?: unknown; install_id?: unknown } | null
+    const body = (await res.json()) as { version?: unknown; auth_required?: unknown; install_id?: unknown; can_update_hermes?: unknown } | null
     if (!res.ok || typeof body?.version !== 'string' || !('auth_required' in body)) return null
     return {
       version: body.version,
       authRequired: Boolean(body.auth_required),
       installId: typeof body.install_id === 'string' ? body.install_id : undefined,
+      // In a container, where `hermes update` can't apply.
+      ...(body.can_update_hermes === false && { fromImage: true }),
     }
   } catch {
     return null
@@ -209,6 +211,8 @@ export type Found = Contents & {
   version?: string
   outdated?: boolean
   minVersion?: string
+  /** It runs from an image, updated by pulling a newer one. */
+  fromImage?: boolean
   needsSignIn?: boolean
   /** It answered a while ago and doesn't now: what it showed then (see remembered()). */
   away?: boolean
@@ -231,7 +235,7 @@ async function look(c: Candidate): Promise<Found | null> {
     installId: status.installId,
   }
   if (olderThan(status.version, MIN_HERMES_VERSION))
-    Object.assign(found, { outdated: true, minVersion: MIN_HERMES_VERSION })
+    Object.assign(found, { outdated: true, minVersion: MIN_HERMES_VERSION, ...(status.fromImage && { fromImage: true }) })
   // Password-protected: nothing more is sent its way until someone signs in.
   if (status.authRequired) return { ...found, needsSignIn: true }
   const hermes = createHermes({ id: c.id, name: c.name, url: c.url, source: 'saved' })

@@ -4,6 +4,7 @@
 
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest'
 import { startGateway, stopGateway } from '@/hermes/gateway'
+import { narrowsWindows } from '@/state/local-runtime'
 import { connectServer, findServer, setMainModel, updateServer, type Service } from '@/state/models'
 import { MODEL_KEY, MODELS } from './fake-model'
 import { api, connect, modelRequests, newChat, turn, type Socket } from './client'
@@ -157,5 +158,9 @@ describe('models on this machine', () => {
     // Murmur hides the option when Hermes answers 404 or 405.
     if (res.status === 404 || res.status === 405) return
     expect(res.body).toMatchObject({ runtime_installed: expect.any(Boolean), models: expect.any(Array), loaded_models: expect.any(Object) })
+  })
+
+  it('says whether it starts them at the memory free now, as only Umbrel’s image does', async () => {
+    expect(await narrowsWindows()).toBe(/hermes-agent-umbrel/.test(inject('hermes').image))
   })
 })

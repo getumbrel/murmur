@@ -28,6 +28,8 @@ describe('finding Hermes', () => {
     expect(status.gateway_running).toBe(true)
     expect(typeof status.gateway_busy).toBe('boolean')
     expect(status.install_id).toEqual(expect.any(String))
+    // In a container, where `hermes update` can't apply: Murmur says to pull a newer image instead.
+    expect(status.can_update_hermes).toBe(false)
   })
 
   it('answers /api/health with its version', async () => {

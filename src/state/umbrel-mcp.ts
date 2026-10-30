@@ -16,6 +16,7 @@ import { api, HermesError } from '@/hermes/rest'
 import { rpc } from '@/hermes/gateway'
 import { scoped } from '@/hermes/instance'
 import { rememberedSet, upkeep } from '@/lib/upkeep'
+import { useHermesConnection } from '@/state/connection'
 import { umbrelContextOf } from './umbrel-context'
 
 const MAIN = 'default'
@@ -59,8 +60,34 @@ export function clearHandoffKey() {
 /** "umbrelmcp_9831…cd96a": enough to recognise, not enough to use. */
 export const maskKey = (key: string) => `${key.slice(0, 14)}…${key.slice(-5)}`
 
-/** umbrelOS's own page for this, on the same Umbrel. */
-export const umbrelSettingsUrl = () => `${location.protocol}//${location.hostname}/settings/mcp`
+export type UmbrelPlace = {
+  /** "this Umbrel" when Murmur runs on it too, else "your Umbrel". */
+  name: 'this Umbrel' | 'your Umbrel'
+  /** umbrelOS's own page for this, on that Umbrel. */
+  settingsUrl: string
+}
+
+/**
+ * The Umbrel a Hermes runs on, from Murmur's address for it. A container's
+ * name (an underscore, which no real host name has) is Hermes beside Murmur,
+ * on the Umbrel this page came from. Any other address means Murmur runs
+ * somewhere else (the desktop app, or Murmur on its own) and reaches that
+ * Umbrel over the network, where umbrelOS answers on the same host.
+ */
+export function umbrelOf(hermesUrl: string | undefined, page: Pick<Location, 'protocol' | 'hostname'> = location): UmbrelPlace {
+  let url: URL | null = null
+  try {
+    url = hermesUrl ? new URL(hermesUrl) : null
+  } catch {
+    // Unreadable: taken as beside Murmur.
+  }
+  const beside = !url || url.hostname.includes('_')
+  const { protocol, hostname } = beside ? page : url!
+  return { name: beside ? 'this Umbrel' : 'your Umbrel', settingsUrl: `${protocol}//${hostname}/settings/mcp` }
+}
+
+/** The Umbrel this browser's Hermes runs on. */
+export const useUmbrel = () => umbrelOf(useHermesConnection().connection?.url)
 
 const q = (profile: string) => `profile=${encodeURIComponent(profile)}`
 

@@ -82,22 +82,23 @@ export type DeviceModels = {
 
 export const UNSUPPORTED: DeviceModels = { supported: false, models: [], tight: null }
 
-/** Hermes's hardware answer, as local-tiers.ts reads it. */
-export const hardwareOf = (hw: HardwareRow): Hardware => ({
+/** Hermes's hardware answer, as local-tiers.ts reads it; `narrows` when it's Umbrel's image. */
+export const hardwareOf = (hw: HardwareRow, narrows = false): Hardware => ({
   uma: hw.uma,
   vramUsable: hw.vram_usable_bytes,
   ramAvailable: hw.ram_available_bytes,
   ramTotal: hw.ram_total_bytes,
   gpuName: hw.gpu_name,
+  narrows,
 })
 
 /** Hermes's answers → the offers, with the catalog's own verdicts and sizes where it has them. */
-export function deviceModels(status: Status, hw: HardwareRow, catalog: CatalogRow[]): DeviceModels {
+export function deviceModels(status: Status, hw: HardwareRow, catalog: CatalogRow[], narrows = false): DeviceModels {
   const rows = new Map(catalog.map((r) => [r.id, r]))
   const vetoed = new Set(
     PICKS.filter((p) => 'catalog' in p.source && rows.get(p.source.catalog)?.fits === false).map((p) => p.id),
   )
-  const { offers, tight }: Offers = offersFor(hardwareOf(hw), vetoed)
+  const { offers, tight }: Offers = offersFor(hardwareOf(hw, narrows), vetoed)
   const staged = new Set(status.models.map((m) => m.id))
   return {
     supported: true,

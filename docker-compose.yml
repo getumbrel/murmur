@@ -48,6 +48,9 @@ services:
       # The image is Umbrel's; off an Umbrel, its agents shouldn't think they're on one.
       HERMES_UMBREL_CONTEXT: "0"
     command: ["gateway", "run"]
+    # So it can use a model server on this computer (Ollama, LM Studio), as Docker Desktop allows already.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
 volumes:
   murmur-data:

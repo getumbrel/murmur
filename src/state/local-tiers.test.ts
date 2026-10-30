@@ -3,14 +3,17 @@ import { formatSize, held, need, offersFor, PICKS, stagedId, startWindow, type H
 
 const GB = 1e9
 
-/** CPU or integrated graphics, as Hermes reports it: 80% of what's free is usable. */
-const cpu = (free: number, total = 16): Hardware => ({
+/** CPU or integrated graphics, as Hermes reports it: 80% of what's free is usable. Umbrel's image unless said. */
+const cpu = (free: number, total = 16, narrows = true): Hardware => ({
   uma: true,
   vramUsable: Math.min(free, total) * GB * 0.8,
   ramAvailable: free * GB,
   ramTotal: total * GB,
   gpuName: null,
+  narrows,
 })
+/** The same on Hermes's own releases, which plan the window from all the RAM there is. */
+const stock = (free: number, total = 16) => cpu(free, total, false)
 
 const ids = (hw: Hardware, vetoed?: Set<string>) => offersFor(hw, vetoed).offers.map((o) => o.pick.id)
 
@@ -37,6 +40,12 @@ describe('the window Hermes starts at, in RAM', () => {
     expect(startWindow(pick('qwen3.5-4b'), cpu(3))).toBe(64 * 1024)
     expect(startWindow(pick('qwen3.5-4b'), cpu(8))).toBe(64 * 1024)
     expect(startWindow(pick('qwen3.5-9b'), cpu(3))).toBe(64 * 1024)
+  })
+
+  it('on Hermes’s own releases, is planned from all the RAM, however little is free', () => {
+    expect(startWindow(pick('qwen3.5-4b'), stock(3))).toBe(256 * 1024)
+    expect(startWindow(pick('qwen3.5-9b'), stock(3))).toBe(144 * 1024)
+    expect(startWindow(pick('qwen3.5-4b'), stock(3, 8))).toBe(64 * 1024)
   })
 
   it('climbs to the model’s own 256K when there’s room', () => {
@@ -86,6 +95,14 @@ describe('what to offer', () => {
       ['qwen3.5-9b-q6', 'Steady'],
       ['qwen3.8-27b', 'Slow'],
     ])
+  })
+
+  it('a 16 GB machine on Hermes’s own release: room for the window it plans from all 16, or nothing', () => {
+    // The 4B starts at 256K there and holds about 8.2 GB, where Umbrel’s image starts it at 64K.
+    expect(offersFor(stock(8))).toEqual({ offers: [], tight: null })
+    expect(ids(cpu(8))).toEqual(['qwen3.5-4b'])
+    expect(offersFor(stock(10))).toMatchObject({ offers: [{ pick: { id: 'qwen3.5-4b' }, fits: false }], tight: { free: 10 * GB } })
+    expect(ids(stock(12))).toEqual(['qwen3.5-9b-q6', 'qwen3.5-4b'])
   })
 
   it('a big machine without a graphics card: the 35B mixture of experts, quick for its size', () => {

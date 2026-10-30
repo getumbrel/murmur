@@ -27,12 +27,24 @@ import {
 import { PICKS, stagedId, type ModelPick } from './local-tiers'
 import { hfModel, lookupError, parseModelRef, pickFile, type FileGroup, type HFModel } from './local-hf'
 import { moveOff } from './models'
+import { UMBREL_PLUGIN } from './umbrel-context'
 
 export type { DeviceModel, DeviceModels, DeviceSetup, SetupStage } from './local-jobs'
 
 export const localRuntimeKey = ['local-runtime'] as const
 
 const M = '/api/local-models'
+
+/**
+ * Whether this Hermes is Umbrel's image, which starts a model at the window
+ * the memory free now allows (local-tiers.ts): every build of it carries
+ * Umbrel's plugin among Hermes's own, switched on or not.
+ */
+export const narrowsWindows = () =>
+  api
+    .get<{ plugins?: { name?: string; source?: string }[] }>('/api/dashboard/plugins/hub')
+    .then((hub) => Boolean(hub.plugins?.some((p) => p.name === UMBREL_PLUGIN && p.source === 'bundled')))
+    .catch(() => false)
 
 /** What this Hermes can run, priced for its machine. Unsupported (older Hermes) answers 404. */
 export function useDeviceModels(enabled = true) {
@@ -51,11 +63,12 @@ export function useDeviceModels(enabled = true) {
       }
       // Something answered, but not Hermes's local runtime.
       if (typeof status?.runtime_installed !== 'boolean' || !Array.isArray(status.models)) return UNSUPPORTED
-      const [hw, catalog] = await Promise.all([
+      const [hw, catalog, narrows] = await Promise.all([
         api.get<HardwareRow>(`${M}/hardware`),
         api.get<{ models: CatalogRow[] }>(`${M}/catalog`).catch(() => ({ models: [] as CatalogRow[] })),
+        narrowsWindows(),
       ])
-      return deviceModels(status, hw, catalog.models)
+      return deviceModels(status, hw, catalog.models, narrows)
     },
   })
 }
@@ -317,12 +330,13 @@ export function useFindModel() {
     const ref = parseModelRef(query)
     if (!ref) return settle({ error: lookupError('unreadable') })
     try {
-      const [{ files }, hw, status] = await Promise.all([
+      const [{ files }, hw, status, narrows] = await Promise.all([
         api.get<{ files: FileGroup[] }>(`${M}/search/files?repo=${encodeURIComponent(ref.repo)}`),
         api.get<HardwareRow>(`${M}/hardware`),
         api.get<Status>(`${M}/status`),
+        narrowsWindows(),
       ])
-      const hardware = hardwareOf(hw)
+      const hardware = hardwareOf(hw, narrows)
       const choice = pickFile(files ?? [], ref, hardware)
       if ('error' in choice) return settle({ error: lookupError(choice.error, ref) })
       settle({ model: hfModel(ref.repo, choice, hardware, new Set(status.models.map((m) => m.id))) })

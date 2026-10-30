@@ -53,6 +53,9 @@ export function UpdateHermes({ connection: c, onCheck }: { connection: HermesCon
               <span className="font-medium text-ink">Hermes Agent</span> and tap{' '}
               <span className="font-medium text-ink">Update</span>.
             </>
+          ) : c.fromImage ? (
+            // In a container, where `hermes update` can't apply.
+            'On the computer running Hermes, pull the newer Hermes image, then restart it.'
           ) : (
             <>
               On the computer running Hermes, run <code className="rounded-sm bg-fill-2 px-1 py-0.5 font-mono text-footnote text-ink">hermes update</code>, then restart it.
