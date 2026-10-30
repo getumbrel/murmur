@@ -20,8 +20,10 @@ function Lines({ widths }: { widths: string[] }) {
  * A stored chat whose messages are still on their way, laid out on the
  * thread's own spacing (a reply 16px under its message, 24px between
  * exchanges) so nothing shifts when they land. Quick loads never see it.
+ * `stalled`: they couldn't be read for a while, so it says so, and offers to
+ * try now (they're still being tried either way).
  */
-export function ThreadSkeleton() {
+export function ThreadSkeleton({ stalled, onRetry }: { stalled?: boolean; onRetry?: () => void }) {
   const [shown, setShown] = useState(false)
   useEffect(() => {
     const t = window.setTimeout(() => setShown(true), 400)
@@ -39,6 +41,14 @@ export function ThreadSkeleton() {
       <div className="mt-4">
         <Lines widths={['80%', '48%']} />
       </div>
+      {stalled && (
+        <p className="mt-8 animate-fade text-center text-footnote text-balance text-ink-3">
+          Can’t load these messages right now.{' '}
+          <button type="button" onClick={onRetry} className="pressable font-medium text-accent">
+            Try again
+          </button>
+        </p>
+      )}
     </div>
   )
 }

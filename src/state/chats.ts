@@ -48,6 +48,8 @@ export type Chat = {
   reasoning?: string
   /** History has been loaded (or the chat is brand new). */
   ready: boolean
+  /** History couldn't be read for a while: it's still being tried, and you can ask for it now. */
+  stalled?: boolean
   /** Speaker for one-to-one chats; group chats tag items individually. */
   speaker?: Speaker
   /** Counts finished replies, so widgets know to re-read files the agent may have rewritten. */
@@ -403,11 +405,7 @@ export function openChat(id: string, profile: string, speaker?: Speaker): Promis
   if (existing) return existing
   const task = (async () => {
     try {
-      if (!chat.ready) {
-        const items = await loadHistory(id, profile, speaker).catch(() => [] as ChatItem[])
-        // Anything sent while it loaded comes after the history.
-        patch(id, (c) => ({ items: [...items, ...c.items], ready: true }))
-      }
+      if (!chat.ready && !(await readHistory(id, profile, speaker))) return
       await attach(id, true)
     } finally {
       opening.delete(id)
@@ -417,9 +415,64 @@ export function openChat(id: string, profile: string, speaker?: Speaker): Promis
   return task
 }
 
+/**
+ * Read a chat's history until it's read: a read that fails is tried again,
+ * soon and then less often, and at once when the app or Hermes comes back or
+ * you ask. Only a chat Hermes doesn't have yet opens empty; one that can't be
+ * read never does. False if the chat was left first.
+ */
+async function readHistory(id: string, profile: string, speaker?: Speaker) {
+  for (let tries = 0; ; tries++) {
+    let items: ChatItem[]
+    try {
+      items = await loadHistory(id, profile, speaker)
+    } catch (e) {
+      if (!(e instanceof HermesError && e.status === 404)) {
+        // A few seconds of trying, then it says so.
+        if (tries === 2) patch(id, () => ({ stalled: true }))
+        await nextTry(id, Math.min(30_000, 1000 * 2 ** tries))
+        if (!viewing.has(id)) return false
+        continue
+      }
+      items = []
+    }
+    // Anything sent while it loaded comes after the history, once: a message
+    // Hermes saved meanwhile is in the history already.
+    const saved = new Set(items.map(rowOf))
+    patch(id, (c) => ({
+      items: [...items, ...c.items.filter((i) => rowOf(i) == null || !saved.has(rowOf(i)))],
+      ready: true,
+      stalled: undefined,
+    }))
+    return true
+  }
+}
+
+/** Chats waiting to try their history again, and how to stop the wait. */
+const unread = new Map<string, () => void>()
+
+function nextTry(id: string, ms: number) {
+  return new Promise<void>((resolve) => {
+    const timer = window.setTimeout(go, ms)
+    function go() {
+      window.clearTimeout(timer)
+      unread.delete(id)
+      resolve()
+    }
+    unread.set(id, go)
+  })
+}
+
+/** Read any history that couldn't be read, now. */
+export function readUnread() {
+  for (const go of [...unread.values()]) go()
+}
+
 /** The chat is off screen. Hermes lets it go once nothing holds it (see the reconnect below). */
 export function leaveChat(id: string) {
   viewing.delete(id)
+  // Its history stops being tried; coming back tries at once.
+  unread.get(id)?.()
 }
 
 const resuming = new Map<string, Promise<void>>()
@@ -1897,8 +1950,12 @@ export function wireChats() {
   // After a reconnect, re-attach the chat on screen and any that are busy, so
   // their events flow again (Hermes's client replays anything we missed). The
   // rest are let go: Hermes reaps them, and they re-attach when next used.
+  // Back in the foreground, online again, or Hermes back: history that couldn't be read is read now.
+  document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && readUnread())
+  window.addEventListener('online', readUnread)
   gateway.onState((state) => {
     if (state !== 'open') return
+    readUnread()
     for (const chat of Object.values(useChats.getState().chats)) {
       if (!chat.runtimeId) continue
       if (viewing.has(chat.id) || isBusy(chat)) {

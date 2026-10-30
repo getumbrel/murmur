@@ -57,6 +57,7 @@ import {
   editableMessage,
   leaveChat,
   openChat,
+  readUnread,
   react,
   regenerate,
   renameChat,
@@ -531,7 +532,7 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
             ) : agent && (isDraft || (chat?.ready && !busy)) ? (
               <EmptyState agent={agent} orb={typing ? 'listening' : 'idle'} onStart={(prompt) => post(prompt)} />
             ) : id && !chat?.ready ? (
-              <ThreadSkeleton />
+              <ThreadSkeleton stalled={chat?.stalled} onRetry={readUnread} />
             ) : null
           }
           onApprove={(requestId, choice) => id && answerApproval(id, requestId, choice)}
