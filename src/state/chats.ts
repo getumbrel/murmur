@@ -438,6 +438,9 @@ async function resume(id: string, first: boolean) {
   const chat = getChat(id)
   if (!chat) return
   const since = Date.now()
+  // Mid-turn when the connection dropped: if the turn is over now, this page never saw it end.
+  const wasBusy = isBusy(chat)
+  const turns = chat.turns ?? 0
   attaching++
   let res: ResumeResult
   try {
@@ -486,13 +489,14 @@ async function resume(id: string, first: boolean) {
     }
   })
   // Finished while we were away: give any replay a moment, then catch up on
-  // turns it couldn't bring back, or settle what's still live.
+  // turns it couldn't bring back. The turn this page was in counts as ended
+  // only once its end arrives, which bumps `turns`.
   if (!busy && !fresher && !first) {
     window.setTimeout(() => {
       const c = getChat(id)
       if (!c || isBusy(c) || (asked.get(id) ?? 0) >= since) return
       void catchUp(id, false).then((caught) => {
-        if (!caught) return settleStale(id, since)
+        if (!caught && wasBusy && (getChat(id)?.turns ?? 0) === turns) return takeSavedTurn(id, since)
       })
     }, 1500)
   }
@@ -501,25 +505,30 @@ async function resume(id: string, first: boolean) {
 }
 
 /**
- * A reply that ended while the connection was down, with nothing replayed to
- * say so (Hermes restarted, or the gap was dropped): stop its caret and
- * spinners, and fetch its final words.
+ * The turn this page was in when the connection dropped has ended, and
+ * nothing replayed its end: a long turn outruns Hermes's replay window (512
+ * events), or Hermes restarted. Settle what was still live, then show the
+ * turn as Hermes saved it, everything after the message that started it.
  */
-async function settleStale(id: string, since: number) {
+async function takeSavedTurn(id: string, since: number) {
   const chat = getChat(id)
   if (!chat || (asked.get(id) ?? 0) >= since || chat.status === 'waiting') return
-  const tail = flowTail(chat.items).item
-  const cut = tail?.kind === 'assistant' && tail.streaming ? tail.id : undefined
-  const stuck = cut || chat.items.some((i) => i.kind === 'tool' && i.status === 'running')
-  if (!stuck) return
   patch(id, (c) => ({ items: settle(c.items), status: 'idle' }))
-  if (!cut) return
-  const history = await loadHistory(id, chat.profile, chat.speaker).catch(() => [] as ChatItem[])
-  const final = history.findLast((i) => i.kind === 'assistant')
-  if (final?.kind !== 'assistant') return
-  patch(id, (c) => ({
-    items: c.items.map((i) => (i.id === cut && i.kind === 'assistant' ? { ...i, text: final.text } : i)),
-  }))
+  const start = chat.items.findLast(startsTurn)
+  const row = start && rowOf(start)
+  if (!start || row == null) return
+  const rows = await readRows(id, chat.profile).catch(() => [] as Row[])
+  const at = rows.findIndex((r) => r.id === row)
+  const saved = at < 0 ? [] : rowsToItems(rows.slice(at + 1), chat.speaker, errandsOf(rows))
+  if (!saved.length) return
+  patch(id, (c) => {
+    const from = c.items.findIndex((i) => i.id === start.id)
+    if (from < 0 || (asked.get(id) ?? 0) >= since) return
+    // Side questions and commands live only on this page.
+    const items = [...c.items.slice(0, from + 1), ...saved, ...c.items.slice(from + 1).filter(isSide)]
+    // Helpers this page watched keep what it saw of them.
+    return { items: withSeenHelpers(items, c.items) }
+  })
 }
 
 // ── Per-chat model choices ──────────────────────────────────────────────────
