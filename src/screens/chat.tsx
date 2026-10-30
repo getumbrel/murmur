@@ -56,6 +56,7 @@ import {
   getChat,
   editableMessage,
   leaveChat,
+  loadOlder,
   openChat,
   readUnread,
   react,
@@ -502,6 +503,7 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
           items={items}
           busy={busy}
           agent={speaker}
+          onOlder={id && chat?.older ? () => loadOlder(id) : undefined}
           lead={
             id && agent && runOfChat ? (
               <RunHeader

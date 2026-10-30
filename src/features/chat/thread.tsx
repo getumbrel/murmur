@@ -9,12 +9,14 @@ import {
   useState,
   type CSSProperties,
   type ReactNode,
+  type RefObject,
 } from 'react'
 import { AnimatePresence, MotionConfig, motion, useReducedMotion } from 'motion/react'
 import { ArrowDown, Check, CircleAlert, Copy, PencilLine } from 'lucide-react'
 import { useStickToBottom } from 'use-stick-to-bottom'
 import { Orb } from '@/ui/orb'
 import { Button } from '@/ui/button'
+import { Spinner } from '@/ui/spinner'
 import { cn } from '@/lib/cn'
 import type { ApprovalChoice, ChatItem, Speaker } from './types'
 import { Work, type WorkItem } from './work'
@@ -194,6 +196,8 @@ type Props = Handlers &
     emptyState?: ReactNode
     /** Above the first message, scrolling with them: what a routine's run was for. */
     lead?: ReactNode
+    /** Hermes has older messages than these: reads them in, as you near the top. */
+    onOlder?: () => Promise<void>
     /** Pinned under the messages, e.g. the composer. Messages scroll beneath it. */
     footer?: ReactNode
     className?: string
@@ -203,12 +207,64 @@ type Props = Handlers &
 
 const NO_MEDIA: MediaContext = {}
 
+/**
+ * The top of what's been read, when Hermes has older messages: the page
+ * before is read a screen ahead of you reaching it, and its rows join above
+ * without moving what you're reading. A spinner if you get there first;
+ * Try again if the read failed.
+ */
+function Earlier({ load, root }: { load: () => Promise<void>; root: RefObject<HTMLElement | null> }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const latest = useRef(load)
+  latest.current = load
+  const [failed, setFailed] = useState(false)
+  // Bumped after each read, so a top still in reach reads the next page.
+  const [reads, setReads] = useState(0)
+  useEffect(() => {
+    const el = ref.current
+    if (!el || failed) return
+    let live = true
+    const io = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry.isIntersecting) return
+        io.disconnect()
+        latest.current().then(
+          () => live && setReads((n) => n + 1),
+          () => live && setFailed(true),
+        )
+      },
+      { root: root.current, rootMargin: '100% 0px 0px 0px' },
+    )
+    io.observe(el)
+    return () => {
+      live = false
+      io.disconnect()
+    }
+  }, [failed, reads, root])
+  if (failed)
+    return (
+      <p className="mb-6 text-center text-footnote text-balance text-ink-3">
+        Can’t load earlier messages right now.{' '}
+        <button type="button" onClick={() => setFailed(false)} className="pressable font-medium text-accent">
+          Try again
+        </button>
+      </p>
+    )
+  // Out of the flow, so nothing shifts when it goes.
+  return (
+    <div ref={ref} className="relative h-0">
+      <Spinner className="absolute bottom-2 left-1/2 -translate-x-1/2 text-ink-3" />
+    </div>
+  )
+}
+
 export function Thread({
   items,
   busy,
   agent,
   emptyState,
   lead,
+  onOlder,
   footer,
   className,
   media = NO_MEDIA,
@@ -419,7 +475,13 @@ export function Thread({
                 {/* One reading column (~688px of text), shared with the composer below. */}
                 <div className="relative mx-auto flex w-full max-w-[736px] flex-1 flex-col px-4 pt-6 pb-12 sm:px-6">
                   {/* The chat's opening (a routine run's header) waits above its first message. */}
-                  {from ? <div ref={olderRef} aria-hidden /> : lead}
+                  {from ? (
+                    <div ref={olderRef} aria-hidden />
+                  ) : onOlder && rows.length ? (
+                    <Earlier load={onOlder} root={scrollRef} />
+                  ) : (
+                    lead
+                  )}
                   {rows.length === 0 && emptyState ? (
                     <div className="flex flex-1 flex-col items-center justify-center">{emptyState}</div>
                   ) : (

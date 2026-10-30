@@ -319,6 +319,23 @@ describe('coming back to a chat', () => {
     expect(rows.messages.at(-1).content).toContain('All the words')
   })
 
+  it('reads a long chat back a page at a time, each page counted back from the end', async () => {
+    const { runtime, stored } = await newChat(socket)
+    for (const n of [1, 2, 3]) await turn(socket, runtime, `Turn ${n} [[say: Reply ${n}]]`)
+    const page = (offset: number) =>
+      api.get<{ messages: Row[]; pagination: { returned: number } }>(`/api/sessions/${stored}/messages?${q('default')}&order=latest&limit=4&offset=${offset}`)
+    const newest = await page(0)
+    const older = await page(4)
+    // A full page may have older rows behind it; a short one is the start of the chat.
+    expect(newest.pagination.returned).toBe(4)
+    expect(older.pagination.returned).toBe(2)
+    const ids = (p: { messages: Row[] }) => p.messages.map((r) => r.id).sort((a, b) => a - b)
+    expect(ids(older).at(-1)).toBeLessThan(ids(newest)[0])
+    expect([...older.messages, ...newest.messages].map((r) => r.content).sort()).toEqual(
+      ['Reply 1', 'Reply 2', 'Reply 3', 'Turn 1 [[say: Reply 1]]', 'Turn 2 [[say: Reply 2]]', 'Turn 3 [[say: Reply 3]]'],
+    )
+  })
+
   it('refuses an unknown runtime id with code 4001, which the app re-attaches on', async () => {
     const error = await socket.failure('prompt.submit', { session_id: 'deadbeef', text: 'hi' })
     expect(error.code).toBe(4001)

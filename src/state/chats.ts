@@ -50,6 +50,8 @@ export type Chat = {
   ready: boolean
   /** History couldn't be read for a while: it's still being tried, and you can ask for it now. */
   stalled?: boolean
+  /** Hermes has older history than what's been read: loadOlder brings it in. */
+  older?: boolean
   /** Speaker for one-to-one chats; group chats tag items individually. */
   speaker?: Speaker
   /** Counts finished replies, so widgets know to re-read files the agent may have rewritten. */
@@ -297,11 +299,14 @@ function rowsToItems(rows: Row[], speaker?: Speaker, errands: Map<string, Errand
   return items
 }
 
-/** A chat's saved rows, oldest first. */
-async function readRows(id: string, profile: string) {
+/** The most rows Hermes sends at once. A page that full may have older rows behind it. */
+const PAGE = 500
+
+/** A chat's saved rows, oldest first: its newest page, or the one `offset` rows back from its end. */
+async function readRows(id: string, profile: string, offset = 0) {
   type Res = { messages?: Row[]; data?: Row[] }
   const res = await api.get<Res>(
-    `/api/sessions/${encodeURIComponent(id)}/messages?profile=${encodeURIComponent(profile)}&order=latest&limit=500`,
+    `/api/sessions/${encodeURIComponent(id)}/messages?profile=${encodeURIComponent(profile)}&order=latest&limit=${PAGE}${offset ? `&offset=${offset}` : ''}`,
   )
   const rows = res.messages ?? res.data ?? []
   // "latest" pages from the end; put them back in reading order.
@@ -309,8 +314,37 @@ async function readRows(id: string, profile: string) {
   return rows
 }
 
-async function loadHistory(id: string, profile: string, speaker?: Speaker) {
-  return rowsToItems(await readRows(id, profile), speaker)
+/** How far back each chat's history has been read: the oldest rows read, and how many rows from the end they reach. */
+const reach = new Map<string, { rows: Row[]; offset: number }>()
+
+const reading = new Map<string, Promise<void>>()
+
+/** Bring in the page of a chat's history before the oldest one read. */
+export function loadOlder(id: string) {
+  let task = reading.get(id)
+  if (!task) {
+    task = readOlder(id).finally(() => reading.delete(id))
+    reading.set(id, task)
+  }
+  return task
+}
+
+async function readOlder(id: string) {
+  const chat = getChat(id)
+  const read = reach.get(id)
+  if (!chat?.older || !read) return
+  const page = await readRows(id, chat.profile, read.offset)
+  // Rows saved since push every page back a little: what's already read is left out.
+  const first = read.rows[0]?.id ?? Infinity
+  const rows = page.filter((r) => (r.id ?? 0) < first)
+  reach.set(id, { rows: rows.length ? rows : read.rows, offset: read.offset + page.length })
+  // Read with the rows after them, so a step whose result is on the newer page shows as done.
+  const items = rowsToItems([...rows, ...read.rows], chat.speaker)
+  patch(id, (c) => {
+    const shown = new Set(c.items.map((i) => i.id))
+    const at = items.findIndex((i) => shown.has(i.id))
+    return { items: [...items.slice(0, at < 0 ? items.length : at), ...c.items], older: page.length >= PAGE }
+  })
 }
 
 const rowOf = (i: ChatItem) => (i.kind === 'user' || i.kind === 'assistant' || i.kind === 'wake' ? i.rowId : undefined)
@@ -344,7 +378,12 @@ async function catchUp(id: string, live: boolean, before = new Set(getChat(id)?.
   )
   const prompt = live ? rowsToItems([rows[at]], chat.speaker, errands) : []
   patch(id, (c) => {
+    // Pages read from further back stay ahead of the newest one.
+    const ids = new Set(earlier.map((i) => i.id))
+    const from = c.items.findIndex((i) => ids.has(i.id))
+    const back = c.items.slice(0, Math.max(0, from))
     const items = [
+      ...(back.some((i) => (rowOf(i) ?? Infinity) < (rows[0].id ?? 0)) ? back : []),
       ...earlier,
       // Side questions and commands live only on this page.
       ...c.items.filter((i) => before.has(i.id) && isSide(i)),
@@ -423,9 +462,9 @@ export function openChat(id: string, profile: string, speaker?: Speaker): Promis
  */
 async function readHistory(id: string, profile: string, speaker?: Speaker) {
   for (let tries = 0; ; tries++) {
-    let items: ChatItem[]
+    let rows: Row[]
     try {
-      items = await loadHistory(id, profile, speaker)
+      rows = await readRows(id, profile)
     } catch (e) {
       if (!(e instanceof HermesError && e.status === 404)) {
         // A few seconds of trying, then it says so.
@@ -434,8 +473,10 @@ async function readHistory(id: string, profile: string, speaker?: Speaker) {
         if (!viewing.has(id)) return false
         continue
       }
-      items = []
+      rows = []
     }
+    const items = rowsToItems(rows, speaker)
+    reach.set(id, { rows, offset: rows.length })
     // Anything sent while it loaded comes after the history, once: a message
     // Hermes saved meanwhile is in the history already.
     const saved = new Set(items.map(rowOf))
@@ -443,6 +484,7 @@ async function readHistory(id: string, profile: string, speaker?: Speaker) {
       items: [...items, ...c.items.filter((i) => rowOf(i) == null || !saved.has(rowOf(i)))],
       ready: true,
       stalled: undefined,
+      older: rows.length >= PAGE,
     }))
     return true
   }
@@ -1341,6 +1383,7 @@ function forget(id: string) {
   pendingReasoning.delete(id)
   asked.delete(id)
   viewing.delete(id)
+  reach.delete(id)
   savePick(id, null)
 }
 
