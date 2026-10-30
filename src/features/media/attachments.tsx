@@ -15,12 +15,12 @@ export function UserAttachments({ items, className }: { items: UserAttachment[];
       {images.length > 0 && (
         <div className="flex flex-wrap justify-end gap-1.5">
           {images.map((a, i) => (
-            <Thumb key={`${a.path ?? a.url}-${i}`} item={a} single={images.length === 1} />
+            <Thumb key={`${a.url ?? a.path}-${i}`} item={a} single={images.length === 1} />
           ))}
         </div>
       )}
       {files.map((a, i) => (
-        <FileChip key={`${a.path ?? a.name}-${i}`} item={a} />
+        <FileChip key={`${a.name}-${i}`} item={a} />
       ))}
     </div>
   )

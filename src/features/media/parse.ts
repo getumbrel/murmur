@@ -41,6 +41,13 @@ export function rememberUpload(path: string, name: string) {
   } catch {}
 }
 
+/** A file's `@file:` ref, quoted the way Hermes quotes one so a path with spaces reads back whole. */
+export function fileRef(path: string) {
+  if (!/[\s()[\]{}<>"'`]/.test(path)) return `@file:${path}`
+  const quote = ['`', '"', "'"].find((q) => !path.includes(q))
+  return `@file:${quote ? `${quote}${path}${quote}` : path}`
+}
+
 /** What the person called a file: an upload's own name never shows. */
 const nameFor = (path: string, names: Record<string, string>) =>
   names[path] ?? nameOf(path).replace(UPLOAD, 'image$1')

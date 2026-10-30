@@ -16,7 +16,7 @@ import { foundSubjects, readingLabel, resultLabel, toolLabel } from '@/features/
 import { approvalText, detailOf, isCallTo, toolAsked, type ToolCall } from '@/features/chat/approval-text'
 import { explainError } from '@/features/chat/errors'
 import type { ApprovalChoice, ChatItem, ChatStatus, ClarifyQuestion, Reaction, SecretAsk, Speaker } from '@/features/chat/types'
-import { parseUserMessage, rememberUpload, type UserAttachment } from '@/features/media/parse'
+import { fileRef, parseUserMessage, rememberUpload, type UserAttachment } from '@/features/media/parse'
 import { toolMedia } from '@/features/media/tool-media'
 import { scoped } from '@/hermes/instance'
 import {
@@ -673,6 +673,9 @@ const isImage = (f: File) => /^image\/(png|jpe?g|gif|webp|bmp)$/i.test(f.type)
 /** The full prompt each message went out with (refs included), for Try again. */
 const prompts = new Map<string, string>()
 
+/** A message Hermes doesn't have yet: its words and files, so Try again can finish sending it. */
+const unsent = new Map<string, { text: string; files: File[] }>()
+
 /** Pictures you sent, shown from memory until their chat goes away. */
 const pictures = new Map<string, string[]>()
 
@@ -686,7 +689,7 @@ export function attachmentsOf(files: File[]): UserAttachment[] {
 }
 
 type SendOptions = {
-  /** A caller that already showed the message keeps its id (and its thumbnails). */
+  /** A caller that already showed the message keeps its id (and its thumbnails, from attachmentsOf(files)). */
   itemId?: string
   attachments?: UserAttachment[]
   /** What the bubble says, when it differs from what's sent (a command's message). */
@@ -715,43 +718,93 @@ export async function send(id: string, text: string, files: File[] = [], opts: S
   }
   asked.set(id, Date.now())
   patch(id, (c) => ({ items: [...c.items, item], status: busy ? c.status : 'thinking' }))
+  unsent.set(itemId, { text, files })
+  await deliver(id, itemId, busy)
+}
 
+/**
+ * Get a message to Hermes: its files up, then its words. Run again by Try
+ * again, it sends only what didn't get there; a picture already up is queued
+ * once more by where it is (still queued if Hermes kept the chat, gone if it
+ * didn't: once either way).
+ */
+async function deliver(id: string, itemId: string, steer = false) {
+  const chat = getChat(id)
+  const message = unsent.get(itemId)
+  if (!chat || !message) return
+  const { text, files } = message
   try {
     const refs: string[] = []
-    for (const file of files) {
-      const data = await readDataUrl(file)
+    for (const [i, file] of files.entries()) {
+      const up = attachmentOf(id, itemId, i)?.path
       if (isImage(file)) {
+        if (up) {
+          await onChat(id, 'image.detach', { path: up })
+          await onChat(id, 'image.attach', { path: up })
+          continue
+        }
+        const data = await readDataUrl(file)
         const res = await onChat<{ path?: string }>(id, 'image.attach_bytes', {
           content_base64: data.split(',')[1] ?? '',
           filename: file.name || 'image.png',
         })
-        if (res.path && file.name) rememberUpload(res.path, file.name)
+        if (res.path) {
+          placeAttachment(id, itemId, i, res.path)
+          if (file.name) rememberUpload(res.path, file.name)
+        }
       } else {
+        if (up) {
+          refs.push(fileRef(up))
+          continue
+        }
         // (PDFs too: pdf.attach needs poppler, which Hermes may not have.)
-        const res = await onChat<{ ref_text?: string }>(id, 'file.attach', {
+        const data = await readDataUrl(file)
+        const res = await onChat<{ ref_text?: string; ref_path?: string }>(id, 'file.attach', {
           name: file.name || 'file',
           data_url: data.startsWith('data:;') ? data.replace('data:;', 'data:application/octet-stream;') : data,
         })
         if (res.ref_text) refs.push(res.ref_text)
+        if (res.ref_path) placeAttachment(id, itemId, i, res.ref_path)
       }
     }
-    const prompt = [refs.join('\n'), text].filter(Boolean).join('\n\n') || 'What do you see in this image?'
+    const prompt = promptOf(refs, text)
     prompts.set(itemId, prompt)
     // While it's working, a new message steers the current reply instead of
     // waiting its turn — the way you'd interrupt a person mid-thought. (Before
     // the agent is up it can't be steered yet; then it waits its turn.)
     const steered =
-      busy && !files.length && (await onChat(id, 'session.steer', { text: prompt }).then(() => true, () => false))
+      steer && !files.length && (await onChat(id, 'session.steer', { text: prompt }).then(() => true, () => false))
     if (!steered) {
       const res = await onChat<SubmitResult>(id, 'prompt.submit', { text: prompt, profile: chat.profile })
       if (res.user_row_id != null) setRowId(id, itemId, res.user_row_id)
     }
+    unsent.delete(itemId)
   } catch (e) {
     patch(id, (c) => ({
       status: 'error',
       items: [...c.items, { kind: 'error', id: uid('e'), message: attachError(e), retryable: true }],
     }))
   }
+}
+
+/** A message's words with its files' refs ahead of them, the way it goes to Hermes. */
+const promptOf = (refs: string[], text: string) =>
+  [refs.join('\n'), text].filter(Boolean).join('\n\n') || 'What do you see in this image?'
+
+function attachmentOf(id: string, itemId: string, index: number) {
+  const item = getChat(id)?.items.find((i) => i.id === itemId)
+  return item?.kind === 'user' ? item.attachments?.[index] : undefined
+}
+
+/** Where one of a message's files landed on Hermes: what lets it be sent again without sending it twice. */
+function placeAttachment(id: string, itemId: string, index: number, path: string) {
+  patch(id, (c) => ({
+    items: c.items.map((i) =>
+      i.id === itemId && i.kind === 'user' && i.attachments?.[index]
+        ? { ...i, attachments: i.attachments.map((a, at) => (at === index ? { ...a, path } : a)) }
+        : i,
+    ),
+  }))
 }
 
 type SubmitResult = { status?: string; user_row_id?: number | null }
@@ -762,13 +815,17 @@ function setRowId(id: string, itemId: string, rowId: number) {
 
 const isBusy = (c?: Chat) => !!c && c.status !== 'idle' && c.status !== 'error'
 
-/** Your last message, if it can be edited and sent again: saved, text only, and nothing running. */
-export function editableMessage(c?: Chat) {
+/** Your last message, if Hermes has it and nothing's running: it can be asked again in its place. */
+function savedMessage(c?: Chat) {
   if (!c || isBusy(c)) return undefined
   const last = c.items.findLast((i) => i.kind === 'user')
-  return last?.kind === 'user' && last.rowId != null && !last.attachments?.length && !last.images?.length
-    ? last
-    : undefined
+  return last?.kind === 'user' && last.rowId != null ? last : undefined
+}
+
+/** Your last message, if it can be edited and sent again: saved, text only, and nothing running. */
+export function editableMessage(c?: Chat) {
+  const last = savedMessage(c)
+  return last && !last.attachments?.length && !last.images?.length ? last : undefined
 }
 
 /**
@@ -777,37 +834,63 @@ export function editableMessage(c?: Chat) {
  * it couldn't.
  */
 export async function resend(id: string, itemId: string, text: string) {
+  const target = editableMessage(getChat(id))
+  if (!target || target.id !== itemId) throw new Error('That message can’t be edited now.')
+  return askAgain(id, target, text, text)
+}
+
+/**
+ * Send a saved message again in its own place: Hermes forgets it and what came
+ * after, and takes `prompt` instead. Its pictures go again from where they
+ * are on Hermes; its files ride in the prompt as refs. Throws (with the
+ * thread restored) if it couldn't.
+ */
+async function askAgain(id: string, target: Extract<ChatItem, { kind: 'user' }>, prompt: string, shown: string) {
   const chat = getChat(id)
-  const target = editableMessage(chat)
-  if (!chat || !target || target.id !== itemId) throw new Error('That message can’t be edited now.')
+  if (!chat) return
   const before = chat.items
-  const index = before.findIndex((i) => i.id === itemId)
+  const index = before.findIndex((i) => i.id === target.id)
   // A new id, so the old reply leaves and the new one arrives; the bubble stays put.
-  const next: ChatItem = { kind: 'user', id: uid('u'), text, at: Date.now(), was: target.was ?? target.id }
+  const next: ChatItem = {
+    kind: 'user',
+    id: uid('u'),
+    text: shown,
+    attachments: target.attachments,
+    at: Date.now(),
+    was: target.was ?? target.id,
+  }
   asked.set(id, Date.now())
   patch(id, () => ({ items: [...before.slice(0, index), next], status: 'thinking' }))
-  prompts.set(next.id, text)
+  prompts.set(next.id, prompt)
+  const queued = (target.attachments ?? []).flatMap((a) => (a.kind === 'image' && a.path ? [a.path] : []))
   try {
+    for (const path of queued) await onChat(id, 'image.attach', { path })
     const res = await onChat<SubmitResult>(id, 'prompt.submit', {
-      text,
+      text: prompt,
       profile: chat.profile,
       truncate_before_row_id: target.rowId,
       confirm_truncate: true,
-      // Editing the very first message empties the chat before it's answered again.
+      // Asking the very first message again empties the chat before it's answered.
       confirm_empty_truncate: true,
     })
     if (res.user_row_id != null) setRowId(id, next.id, res.user_row_id)
   } catch (e) {
+    // A picture queued for this try mustn't ride along with your next message.
+    for (const path of queued) void onChat(id, 'image.detach', { path }).catch(() => {})
     patch(id, () => ({ items: before, status: chat.status }))
     throw e
   }
 }
 
-/** Ask for a fresh reply to your last message. */
+/**
+ * Ask for a fresh reply to your last message: in its place if Hermes saved
+ * it (files and pictures too), or by sending what didn't get there if not.
+ */
 export async function regenerate(id: string) {
-  const last = editableMessage(getChat(id))
-  if (last) return resend(id, last.id, prompts.get(last.id) ?? last.text)
-  return retry(id)
+  const last = savedMessage(getChat(id))
+  if (!last) return retry(id)
+  const refs = (last.attachments ?? []).flatMap((a) => (a.kind === 'file' && a.path ? [fileRef(a.path)] : []))
+  return askAgain(id, last, prompts.get(last.id) ?? promptOf(refs, last.text), last.text)
 }
 
 /**
@@ -1040,12 +1123,14 @@ export async function react(id: string, itemId: string, emoji: string) {
   }
 }
 
-export async function retry(id: string) {
+/** Send your last message again when Hermes never got it whole: what's missing goes, and nothing twice. */
+async function retry(id: string) {
   const chat = getChat(id)
   const lastUser = chat?.items.findLast((i) => i.kind === 'user')
   if (!chat || !lastUser || lastUser.kind !== 'user') return
   asked.set(id, Date.now())
   patch(id, (c) => ({ items: c.items.filter((i) => i.kind !== 'error'), status: 'thinking' }))
+  if (unsent.has(lastUser.id)) return deliver(id, lastUser.id)
   const text = prompts.get(lastUser.id) ?? lastUser.text
   await onChat(id, 'prompt.submit', { text, profile: chat.profile }).catch((e) =>
     patch(id, (c) => ({
@@ -1193,7 +1278,11 @@ export async function deleteChat(id: string, profile = getChat(id)?.profile ?? '
 
 /** Let go of everything kept for a chat that's gone. */
 function forget(id: string) {
-  for (const item of getChat(id)?.items ?? []) if (item.kind === 'user') prompts.delete(item.id)
+  for (const item of getChat(id)?.items ?? []) {
+    if (item.kind !== 'user') continue
+    prompts.delete(item.id)
+    unsent.delete(item.id)
+  }
   pictures.get(id)?.forEach((url) => URL.revokeObjectURL(url))
   pictures.delete(id)
   pendingReasoning.delete(id)

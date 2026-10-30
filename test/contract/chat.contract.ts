@@ -391,6 +391,31 @@ describe('changing a chat', () => {
     expect((await history(stored)).map((r) => r.content)).toEqual(['First, edited [[say: Edited]]', 'Edited'])
   })
 
+  it('asks a message with a picture again in its place, the picture queued again by where it is', async () => {
+    const { runtime, stored } = await newChat(socket)
+    const dot = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+    const image = await socket.request('image.attach_bytes', { session_id: runtime, content_base64: dot, filename: 'dot.png' })
+    const failed = await turn(socket, runtime, 'What is this? [[fail]]')
+    expect(failed.payload).toMatchObject({ status: 'error' })
+    // A picture never sent can be taken off again: what Try again does before queueing it once more.
+    expect(await socket.request('image.detach', { session_id: runtime, path: '/nowhere.png' })).toMatchObject({ detached: false })
+    await whenIdle(() => socket.request('image.attach', { session_id: runtime, path: image.path }))
+    await whenIdle(() =>
+      socket.request('prompt.submit', {
+        session_id: runtime,
+        text: 'What is this? [[say: A dot]]',
+        truncate_before_row_id: failed.payload!.persisted_turn!.user_row_id,
+        confirm_truncate: true,
+        confirm_empty_truncate: true,
+      }),
+    )
+    await socket.until('the second try', () => socket.of(runtime).filter((e) => e.type === 'message.complete').length === 2 || undefined)
+    const rows = await history(stored)
+    expect(rows.filter((r) => r.role === 'user')).toEqual([expect.objectContaining({ content: expect.stringContaining(`@image:${image.path}`) })])
+    const asked = (await modelRequests()).filter((r) => JSON.stringify(r.body.messages ?? '').includes('[[say: A dot]]'))
+    expect(JSON.stringify(asked.at(-1)!.body.messages.at(-1))).toContain(image.path)
+  })
+
   it('undoes the last turn', async () => {
     const { runtime, stored } = await newChat(socket)
     await turn(socket, runtime, 'Keep [[say: Kept]]')
