@@ -1,7 +1,8 @@
 import { useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { create } from 'zustand'
 import { scoped } from '@/hermes/instance'
-import { agentsKey, useAgents, writeMeta, type Agent } from '@/state/agents'
+import { agentsKey, useAgents, type Agent } from '@/state/agents'
+import { agentsIn, settle, writeRecord } from '@/state/records'
 
 // Sections: shelves you file agents (and groups) on, so a long roster reads by
 // what each one is for. One level, never nested.
@@ -81,68 +82,21 @@ const newId = () => `sec-${Date.now().toString(36)}-${Math.random().toString(36)
 
 // ── Writing ─────────────────────────────────────────────────────────────────
 // Every change shows at once (the roster moves under your finger) and is then
-// written to Hermes: one write per agent that moved, one for the list, each a
-// change to what's there (writeMeta), made again on top of whatever it finds.
-// So every change can be made twice and land the same: it says where things
-// go, never how far.
-
-type Key = typeof BOTS | typeof LIST
-
-const agentsIn = (qc: QueryClient) => qc.getQueryData<Agent[]>(agentsKey) ?? []
-
-const patchAgent = (qc: QueryClient, id: string, fn: (agent: Agent) => Agent) =>
-  qc.setQueryData<Agent[]>(agentsKey, (list) => list?.map((a) => (a.id === id ? fn(a) : a)))
-
-/** One write at a time per record, so quick changes queue rather than race (and conflict) each other. */
-const lanes = new Map<string, Promise<unknown>>()
-function inLane<T>(lane: string, fn: () => Promise<T>): Promise<T> {
-  const next = (lanes.get(lane) ?? Promise.resolve()).catch(() => {}).then(fn)
-  lanes.set(lane, next)
-  return next
-}
-
-/** Writes on their way: the roster reads Hermes again once they've all landed, not between them. */
-let writing = 0
-
-/** Write one of an agent's records as `change` makes it from what the agent holds (see above). */
-function write(qc: QueryClient, id: string, key: Key, change: (agent: Agent) => unknown) {
-  const now = () => agentsIn(qc).find((a) => a.id === id)
-  const hold = (agent: Agent) => {
-    const value = change(agent)
-    patchAgent(qc, id, (a) =>
-      key === BOTS ? { ...a, botMeta: value as Record<string, unknown> } : { ...a, sectionsMeta: value },
-    )
-    return value
-  }
-  // Read again after a conflict: only this record is news, the agent's others may be mid-write.
-  const fresh = (read: Agent) => {
-    patchAgent(qc, id, (a) => ({
-      ...a,
-      ...(key === BOTS ? { botMeta: read.botMeta } : { sectionsMeta: read.sectionsMeta }),
-      metaRevisions: { ...a.metaRevisions, [key]: read.metaRevisions?.[key] ?? 0 },
-    }))
-    return now()
-  }
-  const agent = now()
-  if (!agent) return Promise.resolve()
-  hold(agent)
-  writing++
-  return inLane(`${id}/${key}`, async () => {
-    const revision = (await writeMeta(id, now(), (a) => ({ [key]: hold(a) }), { fresh }))?.[key]
-    if (revision !== undefined) {
-      patchAgent(qc, id, (a) => ({ ...a, metaRevisions: { ...a.metaRevisions, [key]: revision } }))
-    }
-  }).finally(() => writing--)
-}
+// written to Hermes: one write per agent that moved, one for the list
+// (state/records.ts).
 
 /** The agent on `section`, or (null) on none. Members carry the name too: Hermes Desktop rebuilds sections from it. */
 const place = (qc: QueryClient, id: string, section: Section | null) =>
-  write(qc, id, BOTS, (a) => ({ ...a.botMeta, sectionId: section?.id ?? null, sectionName: section?.name ?? null }))
+  writeRecord(qc, id, BOTS, (a) => ({
+    ...a.botMeta,
+    sectionId: section?.id ?? null,
+    sectionName: section?.name ?? null,
+  }))
 
 /** The list as `change` makes it from the list as it is now. */
 const writeList = (qc: QueryClient, change: (list: Section[]) => Section[]) => {
   const main = agentsIn(qc).find((a) => a.isDefault)
-  return main ? write(qc, main.id, LIST, () => change(sectionsOf(agentsIn(qc)))) : Promise.resolve()
+  return main ? writeRecord(qc, main.id, LIST, () => change(sectionsOf(agentsIn(qc)))) : Promise.resolve()
 }
 
 /** These groups on `to` (or on none), and on no other; those already there keep their place. */
@@ -267,7 +221,7 @@ export function useSectionWrites() {
       try {
         return await fn(qc, ...args)
       } finally {
-        if (!writing) void qc.invalidateQueries({ queryKey: agentsKey })
+        settle(qc)
       }
     }
   return {

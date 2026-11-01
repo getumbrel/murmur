@@ -1,15 +1,13 @@
-import { useMemo, useState, type CSSProperties } from 'react'
+import { useState, type CSSProperties } from 'react'
 import { Check } from 'lucide-react'
 import { toast } from 'sonner'
 import { Sheet, SheetPin } from '@/ui/sheet'
 import { Segmented } from '@/ui/segmented'
 import { Button } from '@/ui/button'
-import { Skeleton } from '@/ui/skeleton'
-import { cn } from '@/lib/cn'
 import { SearchField } from '@/features/search/search-field'
 import { EFFORT, THINKING_OPTIONS, prettyModel, thinkingOf, type Thinking } from './names'
 import { useModelOptions, useSetAgentDefault, useThinkingDefault, type ModelPick } from './use-models'
-import { Resting, ServiceHeading } from './plan'
+import { ModelList } from './model-list'
 
 const HINTS: Record<Thinking, (name: string) => string> = {
   auto: (name) => `${name}’s usual amount of thought.`,
@@ -43,17 +41,6 @@ export function ModelSheet({ open, onOpenChange, agent, pick, effort, onPick, on
   const count = groups.reduce((n, g) => n + g.models.length, 0)
   const canReason =
     groups.find((g) => g.provider === current?.provider)?.models.find((m) => m.id === current?.model)?.reasoning ?? true
-
-  const shown = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    if (!q) return groups
-    return groups
-      .map((g) => ({
-        ...g,
-        models: g.models.filter((m) => `${m.id} ${prettyModel(m.id)} ${g.name}`.toLowerCase().includes(q)),
-      }))
-      .filter((g) => g.models.length)
-  }, [groups, query])
 
   const isDefault =
     !!current && !!fallback && current.model === fallback.model && current.provider === fallback.provider && thinking === 'auto'
@@ -108,64 +95,7 @@ export function ModelSheet({ open, onOpenChange, agent, pick, effort, onPick, on
           </SheetPin>
         )}
 
-        {options.isPending ? (
-          // The list's own shape while it loads: a group label over a few rows.
-          <section role="status">
-            <span className="sr-only">Loading models</span>
-            <span className="mb-2 flex h-4.5 items-center px-4">
-              <Skeleton className="h-2.5 w-16 rounded-full" />
-            </span>
-            <div className="list-group overflow-hidden rounded-xl bg-fill-1">
-              {[44, 58, 36, 50].map((w, i) => (
-                <div key={i} className="flex min-h-12 items-center px-4">
-                  <Skeleton className="h-3.5 rounded-full" style={{ width: `${w}%` }} />
-                </div>
-              ))}
-            </div>
-          </section>
-        ) : options.isError ? (
-          <p className="py-8 text-center text-subhead text-ink-2">Can’t load models right now. Check that Hermes is running.</p>
-        ) : shown.length === 0 ? (
-          <p className="py-8 text-center text-subhead text-ink-3">No models match “{query.trim()}”.</p>
-        ) : (
-          shown.map((group) => (
-            <section key={group.provider}>
-              <ServiceHeading name={group.name} plan={group.plan} resting={group.resting} />
-              <div role="radiogroup" aria-label={group.name} className="list-group overflow-hidden rounded-xl bg-fill-1">
-                {group.models.map((m) => {
-                  const selected = current?.model === m.id && current.provider === group.provider
-                  const usual = fallback?.model === m.id && fallback.provider === group.provider
-                  return (
-                    <button
-                      key={m.id}
-                      type="button"
-                      role="radio"
-                      aria-checked={selected}
-                      onClick={() => !selected && onPick({ model: m.id, provider: group.provider })}
-                      className="flex min-h-12 w-full items-center gap-3 px-4 text-left transition-colors select-none hover:bg-fill-1 focus-visible:-outline-offset-2 active:bg-fill-2"
-                    >
-                      <span className={cn('min-w-0 flex-1 truncate text-body', selected && 'font-medium', m.resting && !selected && 'text-ink-2')}>
-                        {prettyModel(m.id)}
-                      </span>
-                      {/* (A whole service resting says so once, above.) */}
-                      {m.resting && !group.resting ? (
-                        <Resting until={m.resting} className="flex-none text-footnote text-ink-3" />
-                      ) : (
-                        usual && <span className="flex-none text-footnote text-ink-3">Default</span>
-                      )}
-                      <Check
-                        size={18}
-                        strokeWidth={2.5}
-                        aria-hidden
-                        className={cn('flex-none text-accent transition-opacity duration-200', !selected && 'opacity-0')}
-                      />
-                    </button>
-                  )
-                })}
-              </div>
-            </section>
-          ))
-        )}
+        <ModelList options={options} query={query} selected={current} usual={fallback} onPick={onPick} />
       </div>
     </Sheet>
   )

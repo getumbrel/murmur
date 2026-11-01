@@ -50,6 +50,7 @@ const SERVICES: Record<string, string> = {
   openrouter: 'OpenRouter',
   anthropic: 'Anthropic',
   openai: 'OpenAI',
+  'openai-api': 'OpenAI',
   nous: 'Nous Portal',
   gemini: 'Google',
   xai: 'xAI',

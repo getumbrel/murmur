@@ -86,6 +86,8 @@ export type Agent = {
   murmurMeta?: Record<string, unknown>
   /** The main agent's sections and their order (ui_meta['murmur-sections'], src/state/sections.ts). */
   sectionsMeta?: unknown
+  /** The main agent's pinned models (ui_meta['murmur-pinned-models'], src/features/model/pins.ts). */
+  pinsMeta?: unknown
   /** Each ui_meta record's revision (Profile.ui_meta_revisions); none on an older Hermes. */
   metaRevisions?: Record<string, number>
 }
@@ -203,6 +205,7 @@ export function toAgent(p: Profile, hues = storedHues(), pending = pendingLooks(
     template: text(murmur?.template) || undefined,
     murmurMeta: murmur,
     sectionsMeta: meta['murmur-sections'],
+    pinsMeta: meta['murmur-pinned-models'],
     metaRevisions: record(p.ui_meta_revisions) as Record<string, number> | undefined,
   }
 }
