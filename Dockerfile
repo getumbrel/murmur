@@ -7,7 +7,7 @@
 # ── Build ───────────────────────────────────────────────────────────────────
 # The web build is platform-independent, so it always runs natively on the
 # build machine (no emulation when cross-building arm64/amd64).
-FROM --platform=$BUILDPLATFORM node:22-alpine3.24@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402 AS build
+FROM --platform=$BUILDPLATFORM node:22-alpine3.24@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS build
 # An empty folder for the runtime stage's /data, which runs no commands.
 RUN mkdir /data
 WORKDIR /app
@@ -17,7 +17,7 @@ COPY . .
 RUN npm run build
 
 # The Node binary for the target platform.
-FROM node:22-alpine3.24@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402 AS node
+FROM node:22-alpine3.24@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS node
 
 # ── Runtime ─────────────────────────────────────────────────────────────────
 # The server has no dependencies and Node 22.18+ runs TypeScript natively, so
@@ -25,7 +25,7 @@ FROM node:22-alpine3.24@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a
 # libraries it links), the server's .ts files, the shared/ ones it imports and
 # the static build. No npm, npx, corepack or yarn: nothing installs at runtime.
 # The stage only copies files, so cross-building it needs no emulation.
-FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+FROM alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
 COPY --from=node /usr/lib/libstdc++.so.6 /usr/lib/libgcc_s.so.1 /usr/lib/
 COPY --from=node /usr/local/bin/node /usr/local/bin/node
 WORKDIR /app
