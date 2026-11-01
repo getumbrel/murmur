@@ -10,6 +10,8 @@ import { ListGroup, ListRow } from '@/ui/list'
 import { Spinner } from '@/ui/spinner'
 import { UmbrelIcon } from '@/ui/brand'
 import { cn } from '@/lib/cn'
+import { umbrelApp } from '@/lib/device'
+import { PastSafariWarning } from '@/features/home/install-tip'
 import { useAgents, type Agent } from '@/state/agents'
 import {
   connectUmbrel,
@@ -18,6 +20,7 @@ import {
   maskKey,
   clearHandoffKey,
   handoffKey,
+  openUmbrelPage,
   UmbrelKeyError,
   useUmbrel,
   useUmbrelMcp,
@@ -33,7 +36,7 @@ import { ask } from './ask'
 export function UmbrelSection() {
   const qc = useQueryClient()
   const umbrel = useUmbrel()
-  const openUmbrelOS = () => window.open(umbrel.settingsUrl, '_blank', 'noopener')
+  const openUmbrelOS = () => openUmbrelPage(umbrel.settingsUrl)
   const agents = useAgents().data ?? []
   const ids = agents.map((a) => a.id)
   const status = useUmbrelMcp(ids)
@@ -96,10 +99,10 @@ export function UmbrelSection() {
       ) : on ? (
         <>
           <AgentList agents={agents} has={(id) => connected.includes(id)} />
-          <ListGroup>
+          <ListGroup footer={umbrelApp && <PastSafariWarning />}>
             <ListRow
               title="Choose what they can use"
-              subtitle="In umbrelOS"
+              subtitle={umbrelApp ? 'Opens umbrelOS in Safari' : 'In umbrelOS'}
               onClick={openUmbrelOS}
               trailing={<ArrowUpRight size={18} className="-mr-1 flex-none text-ink-3" />}
             />
@@ -185,10 +188,23 @@ function ConnectForm({
 
   return (
     <div className="space-y-6">
-      <ListGroup footer="Turn it on, choose what agents can use, then copy what it shows.">
+      <ListGroup
+        footer={
+          <>
+            Turn it on, choose what agents can use, then copy what it shows.
+            {umbrelApp && (
+              <>
+                {' '}
+                <PastSafariWarning />
+              </>
+            )}
+          </>
+        }
+      >
         <ListRow
           icon={<UmbrelIcon size={29} />}
           title="Open AI agents in umbrelOS"
+          subtitle={umbrelApp ? 'Opens in Safari' : undefined}
           onClick={onOpenUmbrelOS}
           trailing={<ArrowUpRight size={18} className="-mr-1 flex-none text-ink-3" />}
         />

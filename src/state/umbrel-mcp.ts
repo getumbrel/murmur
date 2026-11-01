@@ -15,6 +15,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, HermesError } from '@/hermes/rest'
 import { rpc } from '@/hermes/gateway'
 import { scoped } from '@/hermes/instance'
+import { safariLink, umbrelApp } from '@/lib/device'
 import { rememberedSet, upkeep } from '@/lib/upkeep'
 import { useHermesConnection } from '@/state/connection'
 import { umbrelContextOf } from './umbrel-context'
@@ -84,6 +85,20 @@ export function umbrelOf(hermesUrl: string | undefined, page: Pick<Location, 'pr
   const beside = !url || url.hostname.includes('_')
   const { protocol, hostname } = beside ? page : url!
   return { name: beside ? 'this Umbrel' : 'your Umbrel', settingsUrl: `${protocol}//${hostname}/settings/mcp` }
+}
+
+/**
+ * Opens a page of umbrelOS. The umbrelOS iPhone app means to close Murmur and
+ * show it, but for now it only changes umbrelOS behind Murmur's page, so a new
+ * window there seems to do nothing: from the app, it's Safari until that's
+ * fixed. A click on a link, since the app asks first when a page goes to
+ * another app by itself.
+ */
+export function openUmbrelPage(url: string) {
+  if (!umbrelApp) return void window.open(url, '_blank', 'noopener')
+  const link = document.createElement('a')
+  link.href = safariLink(url)
+  link.click()
 }
 
 /** The Umbrel this browser's Hermes runs on. */

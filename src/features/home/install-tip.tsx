@@ -6,7 +6,7 @@ import { Button } from '@/ui/button'
 import { cn } from '@/lib/cn'
 import { useChats } from '@/state/chats'
 import { useMedia } from '@/lib/use-media'
-import { compactSafari, ios, standalone, umbrelApp } from '@/lib/device'
+import { compactSafari, ios, safariLink, standalone, umbrelApp } from '@/lib/device'
 
 // "Put Murmur on your Home Screen": once, on a phone, after the first chat
 // that got a reply. iOS can't be asked, so it shows the two taps (Share, then
@@ -220,17 +220,26 @@ export function OpenInSafari({ className }: { className?: string }) {
   return (
     <div className={className}>
       <a
-        href={`x-safari-https://${location.host}/?${ASK}`}
+        href={safariLink(`https://${location.host}/?${ASK}`)}
         className="pressable touch-target relative inline-flex h-8 items-center gap-1.5 rounded-full bg-accent pr-3.5 pl-3 text-footnote font-medium tracking-[-0.01em] text-accent-ink select-none hover:brightness-105 active:brightness-95"
       >
         <Compass size={15} strokeWidth={2} aria-hidden />
         Open in Safari
       </a>
       <p className="mt-2.5 text-caption text-pretty text-ink-3">
-        If Safari says the connection isn’t private, tap <span className="font-medium text-ink-2">Show Details</span>,
-        then <span className="font-medium text-ink-2">visit this website</span>.
+        <PastSafariWarning />
       </p>
     </div>
+  )
+}
+
+/** The two taps past Safari's warning, the way Safari words them. */
+export function PastSafariWarning() {
+  return (
+    <>
+      If Safari says the connection isn’t private, tap <span className="font-medium text-ink-2">Show Details</span>,
+      then <span className="font-medium text-ink-2">visit this website</span>.
+    </>
   )
 }
 

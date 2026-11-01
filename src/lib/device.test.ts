@@ -38,3 +38,11 @@ describe('Safari’s compact tab bar, with Share in the ⋯ menu', () => {
     expect((await on(CHROME)).compactSafari).toBe(false)
   })
 })
+
+describe('a link to Safari', () => {
+  it('is the same address, for iOS to hand over', async () => {
+    const { safariLink } = await on(SAFARI_26)
+    expect(safariLink('https://umbrel.local/settings/mcp')).toBe('x-safari-https://umbrel.local/settings/mcp')
+    expect(safariLink('http://192.168.1.20/settings/mcp')).toBe('x-safari-https://192.168.1.20/settings/mcp')
+  })
+})

@@ -6,8 +6,17 @@ import { Button } from '@/ui/button'
 import { Orb } from '@/ui/orb'
 import { UmbrelIcon } from '@/ui/brand'
 import { cn } from '@/lib/cn'
+import { umbrelApp } from '@/lib/device'
+import { PastSafariWarning } from '@/features/home/install-tip'
 import type { Agent } from '@/state/agents'
-import { connectUmbrel, findUmbrelKey, UmbrelKeyError, useHermesOnUmbrel, useUmbrel } from '@/state/umbrel-mcp'
+import {
+  connectUmbrel,
+  findUmbrelKey,
+  openUmbrelPage,
+  UmbrelKeyError,
+  useHermesOnUmbrel,
+  useUmbrel,
+} from '@/state/umbrel-mcp'
 
 // The moment someone pastes umbrelOS's "connect your agent" message into a
 // chat. Sent as is, it would hand the key to the model provider and ask the
@@ -220,11 +229,7 @@ function UmbrelKeyCard({
                   </Button>
                 )}
                 {phase === 'refused' && (
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={() => window.open(umbrel.settingsUrl, '_blank', 'noopener')}
-                  >
+                  <Button size="sm" variant="secondary" onClick={() => openUmbrelPage(umbrel.settingsUrl)}>
                     Open umbrelOS
                     <ArrowUpRight size={14} strokeWidth={2.25} aria-hidden />
                   </Button>
@@ -235,6 +240,11 @@ function UmbrelKeyCard({
                   </Button>
                 )}
               </div>
+            )}
+            {phase === 'refused' && umbrelApp && (
+              <p className="mt-2 text-caption text-pretty text-ink-3">
+                <PastSafariWarning />
+              </p>
             )}
           </motion.div>
         </AnimatePresence>

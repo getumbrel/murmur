@@ -16,6 +16,9 @@ export const standalone = () =>
 // It has no Share button, so Murmur can't be put on the Home Screen from there.
 export const umbrelApp = ios && /\bUmbrelApp\//.test(navigator.userAgent)
 
+/** An address as a link iOS opens in Safari, the one way out of another app's browser. */
+export const safariLink = (url: string) => url.replace(/^https?:/, 'x-safari-https:')
+
 // Safari 26 on an iPhone starts with its compact tab bar, where Share sits in
 // the ⋯ menu. (Its user agent keeps saying iOS 18; Version/ is Safari's own.)
 export const compactSafari =
