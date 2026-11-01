@@ -5,7 +5,7 @@ vi.mock('@/hermes/rest', () => ({ api: {}, HermesError: class extends Error {} }
 vi.mock('./live', () => ({ liveStatus: () => Promise.resolve('sign-in') }))
 
 const { Sentences, clauses, speakable } = await import('./voice')
-const { agentLanguage, localPlace, pickVoice, voiceName, voiceRows } = await import('./voice-setup')
+const { agentLanguage, localPlace, pickVoice, voiceChip, voiceName, voiceRows } = await import('./voice-setup')
 const { downloadLine } = await import('./local-voice')
 type Voice = import('./voice-setup').Voice
 type LocalVoice = import('./local-voice').LocalVoice
@@ -142,7 +142,28 @@ describe('where a local voice lives', () => {
     expect(localPlace(undefined)).toBe('your Umbrel')
   })
   it('reads the same in Settings', () => {
+    expect(voiceName({ unset: false, choice: 'openai', plugin } as Voice)).toBe('OpenAI API')
+    expect(voiceName({ unset: false, choice: 'elevenlabs', plugin } as Voice)).toBe('ElevenLabs API')
+    expect(voiceName({ unset: false, choice: 'chatgpt', plugin } as Voice)).toBe('ChatGPT')
     expect(voiceName({ unset: false, choice: 'local', plugin } as Voice)).toBe('On your Umbrel')
     expect(voiceName({ unset: false, choice: 'local', plugin: null } as Voice)).toBe('On this Hermes')
+  })
+})
+
+describe('a call’s chip', () => {
+  it('names the voice the call is on', () => {
+    expect(voiceChip('chatgpt', 'chatgpt', false)).toBe('ChatGPT')
+    expect(voiceChip('openai', 'openai', false)).toBe('OpenAI API')
+    expect(voiceChip('chained', 'elevenlabs', false)).toBe('ElevenLabs')
+    expect(voiceChip('chained', 'local', true)).toBe('Local')
+  })
+
+  it('goes by the call, not by what was chosen, when they differ', () => {
+    expect(voiceChip('chatgpt', 'local', true)).toBe('ChatGPT')
+    expect(voiceChip('chained', 'elevenlabs', true)).toBe('Local')
+  })
+
+  it('says Voice for one set up in Hermes itself', () => {
+    expect(voiceChip('chained', undefined, false)).toBe('Voice')
   })
 })

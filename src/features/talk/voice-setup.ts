@@ -16,6 +16,9 @@ import type { Engine } from './talk'
 export type VoiceChoice = 'local' | 'chatgpt' | 'openai' | 'elevenlabs'
 type Pair = Exclude<VoiceChoice, 'chatgpt'>
 
+/** What each voice is called, wherever one is named. (The company behind it keeps its own name.) */
+export const VOICE_NAMES = { chatgpt: 'ChatGPT', openai: 'OpenAI API', elevenlabs: 'ElevenLabs API' }
+
 type Provider = {
   name: string
   status?: 'ready' | 'needs_keys' | 'needs_auth' | string
@@ -142,7 +145,7 @@ export const localPlace = (plugin: LocalVoice | null | undefined) => (plugin ===
 /** What the agent talks with, in a word or two: "On your Umbrel", "ChatGPT plan". */
 export function voiceName(voice: Voice) {
   if (voice.unset) return 'Automatic'
-  const names: Record<VoiceChoice, string> = { local: `On ${localPlace(voice.plugin)}`, chatgpt: 'ChatGPT', openai: 'OpenAI', elevenlabs: 'ElevenLabs' }
+  const names: Record<VoiceChoice, string> = { local: `On ${localPlace(voice.plugin)}`, ...VOICE_NAMES }
   return voice.choice ? names[voice.choice] : 'Hermes’s own'
 }
 
@@ -155,6 +158,13 @@ export const voiceRows = (voice?: Voice): VoiceChoice[] =>
   (['local', 'chatgpt', 'openai', 'elevenlabs'] as const).filter((id) =>
     id === 'local' ? voice?.localWorks !== false : id === 'chatgpt' ? voice?.chatgpt !== 'unsupported' : true,
   )
+
+/** What a call's chip says, shortened to fit. `local`: it's running on the agent's own machine. */
+export function voiceChip(engine: Engine, choice: VoiceChoice | undefined, local: boolean) {
+  if (engine !== 'chained') return VOICE_NAMES[engine]
+  if (local) return 'Local'
+  return choice === 'elevenlabs' ? 'ElevenLabs' : 'Voice'
+}
 
 export const engineOf = (choice?: AutoVoice): Engine => (choice === 'chatgpt' || choice === 'openai' ? choice : 'chained')
 

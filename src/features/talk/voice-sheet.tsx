@@ -11,6 +11,7 @@ import { ChatGPTPanel } from '@/features/onboarding/connect'
 import { signOutChatGPT, useChatGPTSignIn, useRefreshModels } from '@/state/models'
 import {
   HELLO,
+  VOICE_NAMES,
   afterRemoving,
   agentLanguage,
   checkVoiceKey,
@@ -29,8 +30,7 @@ import {
 } from './voice-setup'
 import { downloadLine, useLocalRefresh, useLocalVoice } from './local-voice'
 
-const NAMES = { chatgpt: 'ChatGPT', openai: 'OpenAI', elevenlabs: 'ElevenLabs' }
-type Saved = keyof typeof NAMES
+type Saved = keyof typeof VOICE_NAMES
 const NOTES: Record<VoiceChoice, string> = {
   local: 'Free, no account needed',
   chatgpt: 'Included with your plan',
@@ -165,7 +165,7 @@ export function VoiceSheet({
       try {
         await checkVoiceKey(id, key)
       } catch (e) {
-        setFailed({ id, message: voiceSetupError(e, true, NAMES[id]), kept: true })
+        setFailed({ id, message: voiceSetupError(e, true, id === 'openai' ? 'OpenAI' : 'ElevenLabs'), kept: true })
         setWorking((w) => (w === id ? undefined : w))
         return
       }
@@ -233,7 +233,7 @@ export function VoiceSheet({
               <motion.div key={id} {...unfold} className="relative overflow-hidden">
                 <ListRow
                   className={cn(hasSaved(id) && 'pr-13')}
-                  title={id === 'local' ? `On ${localPlace(local.data)}` : NAMES[id]}
+                  title={id === 'local' ? `On ${localPlace(local.data)}` : VOICE_NAMES[id]}
                   subtitle={
                     failed?.id === id ? (
                       failed.message
@@ -254,7 +254,7 @@ export function VoiceSheet({
                 {hasSaved(id) && (
                   <span className="absolute top-2.5 right-2.5 flex">
                     <IconButton
-                      label={`${NAMES[id]} ${id === 'chatgpt' ? 'sign-in' : 'key'}`}
+                      label={`${VOICE_NAMES[id]} ${id === 'chatgpt' ? 'sign-in' : 'key'}`}
                       size="sm"
                       className="text-ink-3"
                       aria-expanded={manage === id}
@@ -273,7 +273,7 @@ export function VoiceSheet({
                     <motion.div {...unfold} className="overflow-hidden">
                       {asking ? (
                         <div className="px-4 pt-1 pb-3">
-                          <p className="text-footnote font-medium text-ink">{id === 'chatgpt' ? 'Sign out of ChatGPT?' : `Remove the ${NAMES[id]} key?`}</p>
+                          <p className="text-footnote font-medium text-ink">{id === 'chatgpt' ? 'Sign out of ChatGPT?' : `Remove the ${VOICE_NAMES[id]} key?`}</p>
                           <p className="text-footnote text-ink-2">
                             {id === 'chatgpt'
                               ? 'All your agents lose your ChatGPT plan, for calls and for models, until you sign in again.'
@@ -281,7 +281,7 @@ export function VoiceSheet({
                                 ? rows.includes('local')
                                   ? `${name} will talk on ${localPlace(local.data)} instead.`
                                   : `${name} will need another voice.`
-                                : `${name} can’t use ${NAMES[id]} until you add a key again.`}
+                                : `${name} can’t use ${VOICE_NAMES[id]} until you add a key again.`}
                           </p>
                           <div className="mt-2.5 flex justify-end gap-2">
                             <Button size="sm" variant="ghost" onClick={() => setAsking(false)}>
@@ -338,7 +338,7 @@ export function VoiceSheet({
                           autoComplete="off"
                           spellCheck={false}
                           placeholder="API key"
-                          aria-label={`${NAMES[id as keyof typeof NAMES]} API key`}
+                          aria-label={`${VOICE_NAMES[id as Saved]} key`}
                           value={keyText}
                           onChange={(e) => setKeyText(e.target.value)}
                           className="min-w-0 flex-1"

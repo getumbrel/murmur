@@ -45,6 +45,7 @@ import { SecureSheet } from '@/features/talk/secure-sheet'
 import { CallButton } from '@/features/talk/call-button'
 import { VoiceSheet } from '@/features/talk/voice-sheet'
 import {
+  VOICE_NAMES,
   agentLanguage,
   chooseVoice,
   engineOf,
@@ -106,8 +107,6 @@ const NONE: ChatItem[] = []
 // one), /chat/:agent/new is a blank chat that Hermes only creates on the first
 // message, and /chat/:agent/:id is a stored chat.
 
-/** What a call says it's moving to. */
-const VOICE_NAMES = { local: 'Local', chatgpt: 'ChatGPT', openai: 'OpenAI', elevenlabs: 'ElevenLabs' }
 
 export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: string }) {
   const agents = useAgents()
@@ -812,6 +811,7 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
               composer.current?.focus()
             }}
             local={talkVoice.data?.local}
+            voice={talkVoice.data?.choice}
             onSetup={() => {
               setMinimized(true)
               setVoiceSheet('change')
@@ -830,7 +830,7 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
               inCall
                 ? (choice) => {
                     const plugin = !!talkVoice.data?.plugin
-                    switchVoice({ engine: engineOf(choice), stream: choice === 'local' && plugin, fallbackStream: plugin, keeps: plugin }, VOICE_NAMES[choice])
+                    switchVoice({ engine: engineOf(choice), stream: choice === 'local' && plugin, fallbackStream: plugin, keeps: plugin }, choice === 'local' ? 'Local' : VOICE_NAMES[choice])
                   }
                 : undefined
             }

@@ -114,9 +114,9 @@ describe('moving a call to another voice', () => {
     await call('chatgpt')
     const { startedAt, chatId } = talk()
     expect(lives[0].greeted).toBe(1)
-    switchVoice({ engine: 'openai', keeps: true }, 'OpenAI')
+    switchVoice({ engine: 'openai', keeps: true }, 'OpenAI API')
     expect(lives[0].closed).toBe(true)
-    expect(talk().switching).toBe('OpenAI')
+    expect(talk().switching).toBe('OpenAI API')
     await settle()
     lives[1].on.ready()
     expect(lives[1].way).toBe('openai')
@@ -150,7 +150,7 @@ describe('moving a call to another voice', () => {
 
   it('only changes the mouth between two of Hermes’s own voices, and the mic stays', async () => {
     await call('chained', { stream: true })
-    switchVoice({ engine: 'chained', stream: false }, 'ElevenLabs')
+    switchVoice({ engine: 'chained', stream: false }, 'ElevenLabs API')
     await settle()
     expect(mics).toHaveLength(1)
     expect(mics[0].closed).toBe(false)
@@ -169,7 +169,7 @@ describe('moving a call to another voice', () => {
     await call('chatgpt')
     switchVoice({ engine: 'chained', stream: true }, 'Local')
     await settle()
-    switchVoice({ engine: 'openai' }, 'OpenAI')
+    switchVoice({ engine: 'openai' }, 'OpenAI API')
     await settle()
     switchVoice({ engine: 'chained', stream: true }, 'Local')
     await settle()
@@ -192,7 +192,7 @@ describe('moving a call to another voice', () => {
 
   it('keeps the latest choice when a voice is still connecting', async () => {
     await call('chatgpt')
-    switchVoice({ engine: 'openai' }, 'OpenAI')
+    switchVoice({ engine: 'openai' }, 'OpenAI API')
     await settle()
     switchVoice({ engine: 'chatgpt' }, 'ChatGPT')
     await settle()

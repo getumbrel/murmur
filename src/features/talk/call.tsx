@@ -15,6 +15,7 @@ import { reelShift } from './spoken'
 import { groups, hasPhotos, stepsTitle } from './stage-groups'
 import { FindPhotos, StagePhotos, type StagePhoto } from './stage-photos'
 import { endCall, finishTurn, setMinimized, setMuted, useTalk, voicePosition, type Phase, type StageItem, type Step } from './talk'
+import { voiceChip, type VoiceChoice } from './voice-setup'
 import './talk.css'
 
 const PreviewFrame = lazy(() => import('@/features/media/preview-frame').then((m) => ({ default: m.PreviewFrame })))
@@ -26,6 +27,8 @@ type Props = {
   media: MediaContext
   /** Heard and spoken on the agent's own machine: the call says so. */
   local?: boolean
+  /** The voice chosen for the agent, which a call on Hermes's own voices can't tell by itself. */
+  voice?: VoiceChoice
   /** Keyboard: the call folds into the chat's call button and the composer takes over. */
   onType: () => void
   onSetup: () => void
@@ -70,7 +73,7 @@ const labelFor = (phase: Phase, activity?: string, switching?: string) =>
             ? 'Speaking'
             : (activity ?? 'Thinking')
 
-function Surface({ name, hue, seed, local, onType, onSetup, style }: Props & { style: CSSProperties }) {
+function Surface({ name, hue, seed, local, voice, onType, onSetup, style }: Props & { style: CSSProperties }) {
   const phase = useTalk((s) => s.phase)
   const activity = useTalk((s) => s.activity)
   const switching = useTalk((s) => s.switching)
@@ -141,15 +144,7 @@ function Surface({ name, hue, seed, local, onType, onSetup, style }: Props & { s
               onClick={onSetup}
               title="Change the voice"
             >
-              {(local || onItsOwn) && engine === 'chained' ? (
-                'Local'
-              ) : engine === 'chatgpt' ? (
-                'ChatGPT'
-              ) : engine === 'openai' ? (
-                'OpenAI'
-              ) : (
-                'Voice'
-              )}
+              {voiceChip(engine, voice, !!local || onItsOwn)}
             </button>
           </div>
         </header>

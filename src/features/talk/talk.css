@@ -60,7 +60,9 @@
 
 .talk-top {
   display: grid;
-  grid-template-columns: 72px minmax(0, 1fr) 72px;
+  /* The title stays centred while there's room; a long one gives way, never the chip. */
+  grid-template-columns: minmax(max-content, 1fr) minmax(0, auto) minmax(max-content, 1fr);
+  column-gap: 10px;
   align-items: center;
   min-height: 52px;
 }
@@ -83,6 +85,7 @@
   padding: 5px 9px;
   border-radius: 999px;
   background: var(--fill-1);
+  white-space: nowrap;
 }
 
 .talk-full {
