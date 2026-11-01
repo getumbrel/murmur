@@ -14,6 +14,8 @@ import { useAgents, useFreshAgents } from '@/state/agents'
 import { usePicturesSync } from '@/state/pictures'
 import { useUmbrelContextSync } from '@/state/umbrel-context'
 import { useDesktopToolsSync } from '@/state/toolsets'
+import { useScreenSync } from '@/state/screen'
+import { ScreenViewer } from '@/features/screen'
 import { wireNotices } from '@/features/chat/notices'
 import { useUmbrelMcpSync } from '@/state/umbrel-mcp'
 import { ensureTimezone } from '@/state/timezone'
@@ -246,6 +248,7 @@ function Overlays() {
     <>
       <ConnectionBanner inset={inset} hold={booting} />
       <NotificationOffer inset={inset} />
+      <ScreenViewer />
       <Toaster
         position="top-center"
         toastOptions={{ className: 'murmur-toast' }}
@@ -266,6 +269,8 @@ function Background() {
   useUmbrelMcpSync(agents?.map((a) => a.id))
   // Hermes Desktop's tips and tours off, reactions on (src/state/toolsets.ts).
   useDesktopToolsSync(agents?.map((a) => a.id))
+  // On a Hermes made to show its agents' browsers, they all do (src/state/screen.ts).
+  useScreenSync(agents?.map((a) => a.id))
   useEffect(() => setMainAgent(agents?.find((a) => a.isDefault)?.id), [agents])
   useSeenTracking()
   useDocumentTitle()

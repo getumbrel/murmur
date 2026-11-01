@@ -11,6 +11,8 @@ import { FindCard } from '@/features/umbrel/cards'
 import { count } from '@/features/umbrel/finds'
 import { ApprovalCard } from '@/features/chat/approval-card'
 import { answerApproval } from '@/state/chats'
+import { useScreen } from '@/state/screen'
+import { HandCard, Peek } from '@/features/screen'
 import { reelShift } from './spoken'
 import { groups, hasPhotos, stepsTitle } from './stage-groups'
 import { FindPhotos, StagePhotos, type StagePhoto } from './stage-photos'
@@ -77,7 +79,7 @@ function Surface({ name, hue, seed, local, voice, onType, onSetup, style }: Prop
   const phase = useTalk((s) => s.phase)
   const activity = useTalk((s) => s.activity)
   const switching = useTalk((s) => s.switching)
-  const stage = useTalk((s) => s.stage)
+  const stage = useStage()
   const error = useTalk((s) => s.error)
   const origin = useTalk((s) => s.origin)
   const engine = useTalk((s) => s.engine)
@@ -92,10 +94,10 @@ function Surface({ name, hue, seed, local, voice, onType, onSetup, style }: Prop
   const closed = `circle(18px at ${from.x}px ${from.y}px)`
   const open = `circle(${reach}px at ${from.x}px ${from.y}px)`
 
-  // Esc minimises; the call keeps going. (A photo open full screen closes first.)
+  // Esc minimises; the call keeps going. (A photo, or the agent's browser, open full screen closes first.)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || document.querySelector('[data-lightbox]')) return
+      if (e.key !== 'Escape' || document.querySelector('[data-lightbox], [data-screen-viewer]')) return
       e.preventDefault()
       e.stopPropagation()
       setMinimized(true)
@@ -158,7 +160,7 @@ function Surface({ name, hue, seed, local, voice, onType, onSetup, style }: Prop
               <Label phase={phase} activity={activity} switching={switching} />
               <Bars phase={phase} />
             </div>
-            <Stage items={stage} hue={hue} seed={seed} />
+            <Stage items={stage} name={name} hue={hue} seed={seed} />
             <div className="talk-caption">
               <Caption compact />
             </div>
@@ -459,13 +461,25 @@ function MediaPhotos({ items }: { items: StageItem[] }) {
   return <StagePhotos photos={photos} total={photos.length} title={photos.length > 1 ? count(photos.length, 'photo') : photos[0].name} />
 }
 
+/** What's on the stage to see now: its browser only while it's on a screen, unless it's asking you there. */
+function useStage() {
+  const stage = useTalk((s) => s.stage)
+  const running = !!useScreen(useTalk((s) => s.profile))?.running
+  return useMemo(() => (running ? stage : stage.filter((i) => i.kind !== 'browser' || i.ask)), [stage, running])
+}
+
+/** Something it asks of you: an OK, or a hand in its browser. */
+const asks = (it: StageItem | undefined) =>
+  (it?.kind === 'approval' && it.item.status === 'pending') || (it?.kind === 'browser' && !!it.ask)
+
 /** The newest thing the reply brought, big; the rest as chips to bring back. */
-function Stage({ items, hue, seed }: { items: StageItem[]; hue: number; seed: string }) {
+function Stage({ items, name, hue, seed }: { items: StageItem[]; name: string; hue: number; seed: string }) {
   const all = useMemo(() => groups(items), [items])
   const chatId = useTalk((s) => s.chatId)
+  const profile = useTalk((s) => s.profile)
   const [picked, setPicked] = useState<string>()
   // What it's asking you comes first, until you've answered.
-  const asking = all.findLast((g) => g.items[0]?.kind === 'approval' && g.items[0].item.status === 'pending')
+  const asking = all.findLast((g) => asks(g.items[0]))
   const front = asking ?? all.find((g) => g.key === picked) ?? all.at(-1)!
   useEffect(() => setPicked(undefined), [all.length])
   return (
@@ -495,6 +509,7 @@ function Stage({ items, hue, seed }: { items: StageItem[]; hue: number; seed: st
               (front.items[0]?.kind === 'find' || front.items[0]?.kind === 'steps') && 'talk-found',
               front.items[0]?.kind === 'approval' && 'talk-asks',
               front.items[0]?.kind === 'preview' && 'talk-widget',
+              front.items[0]?.kind === 'browser' && 'talk-browser',
             )}
             initial={{ opacity: 0, y: 16, scale: 0.96, filter: 'blur(6px)' }}
             animate={{ opacity: 1, y: 0, scale: 1, filter: 'blur(0px)' }}
@@ -519,6 +534,13 @@ function Stage({ items, hue, seed }: { items: StageItem[]; hue: number; seed: st
                     seed={seed}
                     onApprove={(requestId, choice) => chatId && answerApproval(chatId, requestId, choice)}
                   />
+                ) : it.kind === 'browser' ? (
+                  profile &&
+                  (it.ask ? (
+                    <HandCard key={it.key} item={it.ask} agent={{ id: profile, name, hue }} site={it.site} hue={hue} seed={seed} />
+                  ) : (
+                    <Peek key={it.key} profile={profile} agent={{ id: profile, name, hue }} site={it.site} step={it.step} />
+                  ))
                 ) : (
                   <Suspense key={it.key} fallback={<div className="media-skeleton h-44 rounded-md" />}>
                     <PreviewFrame file={it.file} />

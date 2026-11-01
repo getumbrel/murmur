@@ -344,6 +344,26 @@ export function ComputerIcon(props: IconProps) {
   )
 }
 
+/** An agent's browser, with a hand on it: a window and a pointer, cut out where it sits over the page. */
+export function BrowserIcon(props: IconProps) {
+  const id = useCut()
+  const pointer = 'M14.5 12.25 20.5 14.6l-2.65 1.15-1.15 2.65Z'
+  return (
+    <Icon {...props}>
+      <mask id={id} maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24">
+        <rect width="24" height="24" fill="#fff" />
+        <path d={pointer} fill="#000" stroke="#000" strokeWidth="4.5" />
+      </mask>
+      <g mask={`url(#${id})`}>
+        <rect className="mi-tint" x="3" y="4.25" width="18" height="15.5" rx="3.5" />
+        <rect x="3" y="4.25" width="18" height="15.5" rx="3.5" />
+        <path d="M3 9h18" />
+      </g>
+      <path className="mi-solid" d={pointer} stroke="currentColor" strokeWidth="1.5" />
+    </Icon>
+  )
+}
+
 /** An API key. */
 export function KeyIcon(props: IconProps) {
   return (

@@ -45,7 +45,18 @@ export function groups(items: StageItem[]): Group[] {
       out.push({ key: it.key, label: findLabel({ ...find, files: [] }), items: [{ ...it, find: { ...find, files: [] } }], gallery: false })
       continue
     }
-    const label = it.kind === 'media' ? nameOf(it.path) : it.kind === 'find' ? findLabel(it.find) : it.kind === 'approval' ? 'Your OK' : 'View'
+    const label =
+      it.kind === 'media'
+        ? nameOf(it.path)
+        : it.kind === 'find'
+          ? findLabel(it.find)
+          : it.kind === 'approval'
+            ? 'Your OK'
+            : it.kind === 'browser'
+              ? it.ask
+                ? 'Needs a hand'
+                : (it.site ?? 'Browser')
+              : 'View'
     out.push({ key: it.key, label, items: [it], gallery: false })
   }
   return out

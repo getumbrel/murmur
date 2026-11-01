@@ -15,6 +15,12 @@ const send = vi.fn(async (..._: unknown[]) => {})
 let status = 'idle'
 let items: unknown[] = []
 const started = vi.fn()
+const stopReply = vi.fn(async () => {})
+const told = vi.fn()
+const said = vi.fn()
+// The chat changing: what the call follows.
+const listeners = new Set<() => void>()
+const changed = () => listeners.forEach((fn) => fn())
 
 vi.mock('@/hermes/rest', () => ({
   api: { post: async () => ({ ok: true }), get: async () => ({}) },
@@ -26,8 +32,13 @@ vi.mock('@/state/chats', () => ({
   getChat: () => ({ status, items }),
   keepSpoken,
   send,
-  stop: async () => {},
-  useChats: { subscribe: () => () => {} },
+  stop: stopReply,
+  useChats: {
+    subscribe: (fn: () => void) => {
+      listeners.add(fn)
+      return () => listeners.delete(fn)
+    },
+  },
 }))
 vi.mock('./live', () => ({
   LiveCall: class {
@@ -36,7 +47,8 @@ vi.mock('./live', () => ({
     }
     start = async (...args: unknown[]) => started(...args)
     greet() {}
-    say() {}
+    say = said
+    note = told
     close() {}
   },
   liveInstructions: () => 'the voice’s rules',
@@ -62,7 +74,7 @@ vi.mock('./stream-voice', () => ({
 vi.mock('@/features/voice/speech', () => ({ stopSpeaking() {} }))
 vi.stubGlobal('navigator', { userAgent: 'Macintosh', maxTouchPoints: 0 })
 
-const { endCall, startCall } = await import('./talk')
+const { endCall, startCall, useTalk } = await import('./talk')
 
 const call = (more: object = {}) => startCall({ engine: 'chatgpt', keeps: true, chatId: 'chat-1', profile: 'agent', origin: { x: 0, y: 0 }, ...more })
 const say = (you: string, voice: string) => {
@@ -255,5 +267,70 @@ describe('a live call', () => {
     await settle()
     expect(newChat).not.toHaveBeenCalled()
     expect(keepSpoken).not.toHaveBeenCalled()
+  })
+})
+
+describe('its browser on a call', () => {
+  const tool = (name: string, detail: string, state = 'running') => ({ kind: 'tool', id: name, name, label: name, detail, status: state, startedAt: 1 })
+  const REASON = 'Confirm you’re a person on Hearth & Bean, then I’ll place the order.'
+  /** Asks the agent for something, and returns what its turn then shows: these items after your words. */
+  const asked = async (...after: unknown[]) => {
+    call()
+    on.heard('Reorder my coffee')
+    on.request('d1', 'Reorder my coffee')
+    await settle(800)
+    const { itemId } = (send.mock.calls.at(-1) as unknown[])[3] as { itemId: string }
+    status = 'running'
+    items = [{ kind: 'user', id: itemId, text: 'Reorder my coffee', at: 1 }, ...after]
+    changed()
+    return (...next: unknown[]) => {
+      items = [items[0], ...next]
+      changed()
+    }
+  }
+  const browser = () => useTalk.getState().stage.find((i) => i.kind === 'browser')
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    send.mockClear()
+    stopReply.mockClear()
+    told.mockClear()
+    said.mockClear()
+    status = 'idle'
+    items = []
+  })
+  afterEach(() => {
+    endCall()
+    vi.useRealTimers()
+  })
+
+  it('shows its browser while it works there, with the site', async () => {
+    await asked(tool('browser_exec', 'hearthandbean.com'))
+    expect(browser()).toMatchObject({ kind: 'browser', site: 'hearthandbean.com', ask: undefined })
+  })
+
+  it('brings a hand it asks for to the front, says what it needs and waits', async () => {
+    await asked(tool('browser_exec', 'hearthandbean.com'), tool('ask_for_a_hand', REASON))
+    expect(browser()?.kind === 'browser' && browser()?.ask?.detail).toBe(REASON)
+    expect(useTalk.getState()).toMatchObject({ phase: 'waiting', activity: 'Needs you' })
+    expect(told).toHaveBeenCalledWith('d1', expect.stringContaining(REASON))
+  })
+
+  it('doesn’t stop waiting when you ask for something meanwhile, and says to hand it back', async () => {
+    await asked(tool('browser_exec', 'hearthandbean.com'), tool('ask_for_a_hand', REASON))
+    send.mockClear()
+    on.heard('Are you done yet?')
+    on.request('d2', 'Are you done yet?')
+    await settle(800)
+    expect(stopReply).not.toHaveBeenCalled()
+    expect(send).not.toHaveBeenCalled()
+    expect(said).toHaveBeenCalledWith('d2', expect.stringMatching(/hand it back/i))
+  })
+
+  it('carries on once it’s handed back, its browser still showing', async () => {
+    const next = await asked(tool('browser_exec', 'hearthandbean.com'), tool('ask_for_a_hand', REASON))
+    next(tool('browser_exec', 'hearthandbean.com', 'done'), tool('ask_for_a_hand', REASON, 'done'), tool('browser_exec', 'hearthandbean.com'))
+    expect(browser()).toMatchObject({ site: 'hearthandbean.com', ask: undefined })
+    expect(useTalk.getState().phase).toBe('thinking')
   })
 })

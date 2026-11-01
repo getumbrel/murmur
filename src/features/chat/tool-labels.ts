@@ -37,6 +37,8 @@ type Rule = {
   private?: boolean
   /** Verb that reads naturally with the detail: "Reading" + "notes.md". */
   verb?: string
+  /** The detail is the point of its own card, so it's never cut short. */
+  whole?: boolean
 }
 
 const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : undefined)
@@ -71,6 +73,11 @@ const site = (a: Args) => {
   const u = /https?:\/\/[^\s'"`]+/.exec(pick(a, 'command', 'cmd') ?? '')?.[0]
   return u ? domain(u) : undefined
 }
+
+/** The murmur-screen plugin's tool: the agent asks the person to take over its browser, and waits until they hand it back. */
+export const ASK_TOOL = 'ask_for_a_hand'
+/** Browser steps whose detail is the site they opened (browser_exec's, when it opened one). */
+export const OPENS_PAGES = new Set(['browser_navigate', 'browser_exec'])
 
 const RULES: Record<string, Rule> = {
   web_search: { label: 'Searching the web', category: 'web', detail: query },
@@ -112,6 +119,8 @@ const RULES: Record<string, Rule> = {
   cronjob: { label: 'Scheduling', category: 'schedule', detail: (a) => pick(a, 'name', 'schedule') },
   cronjob_manage: { label: 'Scheduling', category: 'schedule', detail: (a) => pick(a, 'name', 'schedule') },
   clarify: { label: 'Asking you', category: 'question' },
+  // The murmur-screen plugin: the agent asks the person to take over its browser.
+  ask_for_a_hand: { label: 'Asking you for a hand', category: 'question', detail: (a) => pick(a, 'reason'), whole: true },
   session_search: { label: 'Looking through past chats', category: 'history', detail: query },
 }
 
@@ -240,6 +249,13 @@ export function resultLabel(name: string, result: unknown): string | undefined {
   return typeof read?.subject === 'string' && read.subject.trim() ? readingLabel(read.subject) : undefined
 }
 
+/** How long the person had the agent's browser when it asked for a hand, if they handed it back (ms). */
+export function tookFor(name: string, result: unknown): number | undefined {
+  if (name !== ASK_TOOL) return undefined
+  const back = readMailResult<{ handed_back?: unknown; seconds?: unknown }>(result)
+  return back?.handed_back === true && typeof back.seconds === 'number' ? back.seconds * 1000 : undefined
+}
+
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 const SPAN: Record<string, [string, string]> = { d: ['day', 'days'], w: ['week', 'weeks'], m: ['month', 'months'], y: ['year', 'years'] }
 const IS: Record<string, string> = { unread: 'unread', read: 'read', starred: 'starred', flagged: 'starred', important: 'important' }
@@ -330,6 +346,18 @@ function connectorLabel(calls: { name: string }[]): ToolLabel | undefined {
   }
 }
 
+/**
+ * browser_exec, Hermes's default browser tool (the Browser Use CLI): Python driving the browser, opening
+ * with a comment Hermes writes for the person ("# Searching Amazon for paper towels"), which is the step.
+ * The site it opens, if it opens one, is the detail.
+ */
+function browserCodeLabel(a: Args, preview?: string): ToolLabel {
+  const code = str(a.code) ?? ''
+  const step = str(code.match(/^\s*#\s*(.+)/)?.[1]) ?? str(preview)
+  const to = code.match(/\b(?:new_tab|goto_url)\(\s*(['"])(.+?)\1/)?.[2]
+  return { label: step ? clip(step, 60) : 'Using the browser', category: 'browser', detail: to && domain(to) }
+}
+
 /** manage_connections: the agent looking at, or connecting, apps through Nous. */
 function connectionsLabel(a: Args): ToolLabel {
   const action = str(a.action)?.toLowerCase() ?? 'status'
@@ -359,6 +387,7 @@ export function toolLabel(name: string, args?: unknown, preview?: string): ToolL
   const mail = mailLabel(name, a)
   if (mail) return mail
   if (name === 'manage_connections') return connectionsLabel(a)
+  if (name === 'browser_exec') return browserCodeLabel(a, preview)
   const tool = connected(name, a)
   if (tool) return tool
   if (!rule) {
@@ -367,7 +396,7 @@ export function toolLabel(name: string, args?: unknown, preview?: string): ToolL
   }
   const detail = rule.detail?.(a) ?? (rule.detail && !rule.private ? str(preview) : undefined)
   if (detail && rule.verb) return { label: `${rule.verb} ${clip(detail, 40)}`, category: rule.category }
-  return { label: rule.label, category: rule.category, detail: detail && clip(detail) }
+  return { label: rule.label, category: rule.category, detail: detail && (rule.whole ? detail : clip(detail)) }
 }
 
 export function toolCategory(name: string): ToolCategory {
@@ -440,6 +469,7 @@ const DONE: Record<string, Done> = {
   cronjob: { key: 'schedule', one: 'Set up a routine' },
   cronjob_manage: { key: 'schedule', one: 'Set up a routine' },
   clarify: { key: 'ask', one: 'Asked you' },
+  ask_for_a_hand: { key: 'hand', one: 'Asked you for a hand' },
   session_search: { key: 'history', one: 'Looked through past chats' },
   email_search: { key: 'mail-search', one: 'Searched your email' },
   email_read: { key: 'mail-read', one: 'Read an email', many: (n) => `Read ${n} emails` },

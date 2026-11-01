@@ -102,6 +102,8 @@ export type ChatItem =
       callId?: string
       /** The mark of the app the step uses (an app through Nous), drawn in place of its kind's icon. */
       app?: string
+      /** How long the person had the agent's browser when it asked for a hand, once they handed it back (ms). */
+      took?: number
     }
   | {
       kind: 'approval'

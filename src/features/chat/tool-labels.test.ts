@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { didSummary, foundSubjects, pastLabel, peopleOf, resultLabel, searchWords, toolLabel } from './tool-labels'
+import { didSummary, foundSubjects, pastLabel, peopleOf, resultLabel, searchWords, toolLabel, tookFor } from './tool-labels'
 
 describe('tools from connected servers', () => {
   it('read as plain steps', () => {
@@ -128,5 +128,36 @@ describe('apps through Nous', () => {
     expect(toolLabel('manage_connections', { action: 'connect', connectors: ['slack'] })).toMatchObject({ label: 'Connecting Slack', app: 'slack' })
     expect(toolLabel('manage_connections', {}).label).toBe('Checking your apps')
     expect(toolLabel('manage_connections', { action: 'display' }).label).toBe('Finding apps')
+  })
+})
+
+describe('the browser', () => {
+  const exec = (code: string) => toolLabel('browser_exec', { code })
+
+  it('reads Hermes’s browser code as the step its comment says, and the site it opens', () => {
+    expect(exec('# Opening your basket at Hearth & Bean\nnew_tab("https://www.hearth.example/cart")\nwait_for_load()')).toEqual({
+      label: 'Opening your basket at Hearth & Bean',
+      category: 'browser',
+      detail: 'hearth.example',
+    })
+    expect(exec("# Searching for flights\ngoto_url('https://flights.example/?q=LIS')").detail).toBe('flights.example')
+    expect(pastLabel(exec('# Opening the shop\nnew_tab("https://shop.example")').label)).toBe('Opened the shop')
+  })
+
+  it('falls back to Hermes’s own summary, then plain words', () => {
+    expect(toolLabel('browser_exec', { code: 'print(page_info())' }, 'Checking the page').label).toBe('Checking the page')
+    expect(exec('print(page_info())')).toEqual({ label: 'Using the browser', category: 'browser', detail: undefined })
+  })
+
+  it('reads an ask for a hand as what the agent asked, in full', () => {
+    const reason = 'Confirm you’re a person on Hearth & Bean, then I’ll place the order for you.'
+    expect(toolLabel('ask_for_a_hand', { reason })).toMatchObject({ label: 'Asking you for a hand', detail: reason })
+  })
+
+  it('knows how long the person had the browser, once they handed it back', () => {
+    expect(tookFor('ask_for_a_hand', { handed_back: true, seconds: 42, note: '…' })).toBe(42_000)
+    expect(tookFor('ask_for_a_hand', JSON.stringify({ handed_back: true, seconds: 3 }))).toBe(3_000)
+    expect(tookFor('ask_for_a_hand', { handed_back: false, note: 'Nobody took over' })).toBeUndefined()
+    expect(tookFor('browser_exec', { handed_back: true, seconds: 1 })).toBeUndefined()
   })
 })

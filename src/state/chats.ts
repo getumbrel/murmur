@@ -13,7 +13,7 @@ import { isMissingMethod } from '@/hermes/compat'
 import { attachmentsDir, fitPhoto, isPhoto, upload } from '@/features/media/upload'
 import { restoreChatConnect } from '@/state/hosted-apps-chat'
 import type { ConnectionRequestPayload } from '@/hermes/vendor/gateway-contract.generated'
-import { foundSubjects, readingLabel, resultLabel, toolLabel } from '@/features/chat/tool-labels'
+import { foundSubjects, readingLabel, resultLabel, toolLabel, tookFor } from '@/features/chat/tool-labels'
 import { approvalText, detailOf, isCallTo, toolAsked, type ToolCall } from '@/features/chat/approval-text'
 import { explainError } from '@/features/chat/errors'
 import type { ApprovalChoice, ChatItem, ChatStatus, ClarifyQuestion, Reaction, SecretAsk, Speaker } from '@/features/chat/types'
@@ -297,6 +297,7 @@ function rowsToItems(rows: Row[], speaker?: Speaker, errands: Map<string, Errand
         tool.status = /"exit_code":\s*-1|BLOCKED:|"error":\s*"/.test(row.content ?? '') ? 'error' : 'done'
         tool.endedAt = (row.timestamp ?? 0) * 1000
         tool.label = resultLabel(tool.name, row.content) ?? tool.label
+        tool.took = tookFor(tool.name, row.content)
         for (const [id, subject] of foundSubjects(tool.name, row.content)) subjects.set(id, subject)
         const media = toolMedia(tool.name, row.content)
         if (media.length) tool.media = media
@@ -1809,6 +1810,7 @@ function onEvent(ev: GatewayEvent) {
       const subjects = foundSubjects(name, payload.result)
       if (subjects.length) mailSubjects.set(id, new Map([...(mailSubjects.get(id) ?? []), ...subjects]))
       const read = failed ? undefined : resultLabel(name, payload.result)
+      const took = failed ? undefined : tookFor(name, payload.result)
       return patch(id, (c) => {
         // Helpers sent off to work in the background stay live after this turn,
         // and their card takes the place of the step that sent them.
@@ -1820,6 +1822,7 @@ function onEvent(ev: GatewayEvent) {
               {
                 ...i,
                 label: read ?? i.label,
+                took,
                 status: failed ? 'error' : 'done',
                 endedAt: Date.now(),
                 media: media.length ? media : i.media,

@@ -42,6 +42,8 @@ import { Plan } from './plan'
 import { HelperPill, Helpers, HelpersBack, useCardInSight } from './helpers'
 import { WakeLine } from './wake-line'
 import { ReactionBadge, ReactionPills, Tapback, useHoldToReact } from './reactions'
+import { BrowserPeek, HandCard } from '@/features/screen'
+import { ASK_TOOL, OPENS_PAGES } from '@/state/screen'
 
 type Of<K extends ChatItem['kind']> = Extract<ChatItem, { kind: K }>
 
@@ -56,6 +58,8 @@ type Block =
   /** Helpers the agent sent off; `back`, when Hermes woke the agent with them. */
   | { kind: 'helpers'; id: string; items: Of<'helper'>[]; back?: Of<'wake'> }
   | { kind: 'wake'; id: string; item: Of<'wake'> }
+  /** The agent asking for a hand with its browser, then how that went. */
+  | { kind: 'hand'; id: string; item: Of<'tool'> }
 
 type Section = { id: string; speaker?: Speaker; blocks: Block[] }
 
@@ -142,6 +146,11 @@ function toRows(items: ChatItem[], busy: boolean, live: Set<string>): Row[] {
     if (item.kind === 'error' && last?.kind === 'error' && last.item.message === item.message) continue
     // Sending helpers off: their card takes the step's place as soon as the call returns (a failed one stays a step).
     if (item.kind === 'tool' && item.name === 'delegate_task' && item.status === 'running') continue
+    // Asking for a hand: a card while it waits, then a line once it's handed back (unanswered, it's just a step).
+    if (item.kind === 'tool' && item.name === ASK_TOOL && (item.status === 'running' || item.took !== undefined)) {
+      section.blocks.push({ kind: 'hand', id: item.id, item })
+      continue
+    }
     if (
       item.kind === 'tool' ||
       item.kind === 'thinking' ||
@@ -1024,8 +1033,21 @@ const Turn = memo(function Turn({
     !(tail?.kind === 'work') &&
     !(tail?.kind === 'helpers' && tail.items.some((h) => h.status === 'running')) &&
     !(tail?.kind === 'text' && tail.item.streaming) &&
-    !((tail?.kind === 'approval' || tail?.kind === 'clarify' || tail?.kind === 'secret') && tail.item.status === 'pending')
+    !((tail?.kind === 'approval' || tail?.kind === 'clarify' || tail?.kind === 'secret') && tail.item.status === 'pending') &&
+    !(tail?.kind === 'hand' && tail.item.status === 'running')
   const fallback = sections.at(-1)?.speaker ?? agent
+  // Where the agent's browser is, as far as this reply says: the last page it opened.
+  const site = sections
+    .flatMap((s) => s.blocks)
+    .flatMap((b) => (b.kind === 'work' ? b.items : []))
+    .flatMap((i) => (i.kind === 'tool' && OPENS_PAGES.has(i.name) && i.detail ? [i.detail] : []))
+    .at(-1)
+  // Its first step in its browser: until the browser draws something after it, the card waits.
+  const browsed = sections
+    .flatMap((s) => s.blocks)
+    .flatMap((b) => (b.kind === 'work' ? b.items : []))
+    .find((i) => i.kind === 'tool' && i.name.startsWith('browser_'))
+  const step = browsed?.kind === 'tool' ? { key: browsed.id, done: browsed.status !== 'running' } : undefined
 
   // What a tapback lands on: the reply's last words, once it's finished (and,
   // until Hermes has saved it, only while it's the newest).
@@ -1052,6 +1074,7 @@ const Turn = memo(function Turn({
         const lastSection = si === sections.length - 1
         const hue = section.speaker?.hue ?? agent?.hue ?? DEFAULT_HUE
         const seed = section.speaker?.id ?? agent?.id
+        const who = section.speaker ?? agent
         return (
           <div
             key={section.id}
@@ -1067,9 +1090,16 @@ const Turn = memo(function Turn({
                     .flatMap((i) => (i.kind === 'tool' && i.media ? i.media : []))
                     .filter((m) => !delivered.has(m))
                   const finds = found.get(block.id) ?? []
+                  // While it works in its browser: the browser itself, live.
+                  const browsing = liveBlock && block.items.some((i) => i.kind === 'tool' && i.name.startsWith('browser_'))
                   return (
                     <Fragment key={block.id}>
                       <Work items={block.items} live={liveBlock} hue={hue} seed={seed} />
+                      <AnimatePresence initial={false}>
+                        {browsing && who && step && (
+                          <BrowserPeek key="peek" profile={who.id} agent={who} site={site} step={step} />
+                        )}
+                      </AnimatePresence>
                       {made.length > 0 && <ToolMedia items={made} />}
                       {finds.length > 0 && <Finds finds={finds} agent={seed} />}
                     </Fragment>
@@ -1109,6 +1139,8 @@ const Turn = memo(function Turn({
                   )
                 case 'wake':
                   return <WakeLine key={block.id} item={block.item} hue={hue} seed={seed} />
+                case 'hand':
+                  return who && <HandCard key={block.id} item={block.item} agent={who} site={site} hue={hue} seed={seed} />
                 case 'approval':
                   return <ApprovalCard key={block.id} item={block.item} hue={hue} seed={seed} onApprove={onApprove} />
                 case 'clarify':

@@ -12,8 +12,9 @@ import { api, HermesError } from '@/hermes/rest'
 import { getChat, keepSpoken, send, stop as stopReply, useChats } from '@/state/chats'
 import { splitMessage } from '@shared/message.ts'
 import { gather, umbrelTool, type Find, type Found } from '@/features/umbrel/finds'
-import { pastLabel, serverName, toolCategory } from '@/features/chat/tool-labels'
+import { ASK_TOOL, OPENS_PAGES, pastLabel, serverName, toolCategory } from '@/features/chat/tool-labels'
 import type { ChatItem } from '@/features/chat/types'
+import type { BrowserStep } from '@/features/screen/drawn'
 import { stopSpeaking } from '@/features/voice/speech'
 import { LiveCall, liveInstructions, liveStartError, openaiLiveInstructions } from './live'
 import { developerMessage, liveHistory } from './live-history'
@@ -41,6 +42,8 @@ export type StageItem =
   | { key: string; kind: 'steps'; steps: Step[] }
   /** It asks before doing something: answered right on the call. */
   | { key: string; kind: 'approval'; item: Extract<ChatItem, { kind: 'approval' }> }
+  /** Its browser, live while it works in it; `ask` while it waits for you to take over there. */
+  | { key: string; kind: 'browser'; step: BrowserStep; site?: string; ask?: Extract<ChatItem, { kind: 'tool' }> }
 
 /** Something the agent did with a connected app, for the stage. */
 export type Step = { id: string; label: string; detail?: string; done: boolean; failed: boolean; where?: string }
@@ -119,6 +122,8 @@ let rejoining = false
 let watch: (() => void) | undefined
 let run = 0
 let interrupted = false
+/** It's waiting for you in its browser (asking for a hand): talking doesn't stop that, handing back does. */
+let handing = false
 let turn = 0
 /** The reply to your last turn is fully written (or there's none coming). */
 let replyDone = true
@@ -433,6 +438,7 @@ async function requested(id: string, text: string, mine: number) {
   exchange = { you: '', saying: '', said: '' }
   const chatId = await chatFor(mine)
   if (!chatId || mine !== run) return
+  if (handing) return live?.say(id, 'I’m still waiting for you in the browser. Hand it back when you’re done, and I’ll carry on.')
   // A new request while it's still on the last one: that one stops.
   if (busy(chatId)) {
     await stopReply(chatId)
@@ -554,6 +560,7 @@ export function endCall() {
   delegation = undefined
   watch?.()
   watch = undefined
+  handing = false
   mic?.close()
   mic = undefined
   for (const mouth of mouths ? [mouths.plain, mouths.streamed] : [voice]) {
@@ -716,9 +723,22 @@ function follow(chatId: string, itemId: string, mine: number) {
     let activity: string | undefined
     const found: Found[] = []
     const steps: Step[] = []
+    let site: string | undefined
+    let ask: ToolStep | undefined
+    let browsed: ToolStep | undefined
     for (const item of after) {
       if (item.kind === 'tool') {
         if (item.status === 'running') activity = activityOf(item) ?? activity
+        // Its browser, live, while it works in it; asking you to take over there when it needs a hand.
+        if (item.name === ASK_TOOL || item.name.startsWith('browser_')) {
+          if (OPENS_PAGES.has(item.name) && item.detail) site = item.detail
+          if (item.name === ASK_TOOL) ask = item.status === 'running' ? item : undefined
+          else browsed ??= item
+          // Its first step there, which the card waits for (the chat's card goes by the same one).
+          const step = { key: browsed?.id ?? itemId, done: browsed?.status !== 'running' }
+          show({ key: 'browser', kind: 'browser', step, site, ask })
+          continue
+        }
         // Shown at once, then filled in: a search's card appears as it starts looking.
         const piece = item.found ?? (item.status === 'running' ? item.looking : undefined)
         if (piece) {
@@ -746,17 +766,29 @@ function follow(chatId: string, itemId: string, mine: number) {
     const inCards = new Set(
       [...shown.values()].flatMap((i) => (i.kind === 'find' && i.find.kind === 'photos' ? i.find.photos.flatMap((p) => p.media ?? []) : [])),
     )
-    const waiting = chat.status === 'waiting'
+    handing = !!ask
+    const waiting = chat.status === 'waiting' || handing
     const asking = after.findLast((i) => i.kind === 'approval' && i.status === 'pending')
     // The live voice keeps the person company while the agent works: it knows what it's doing.
-    // An OK it needs is always said; the rest only when it's been quiet a while.
-    const ok = waiting && asking?.kind === 'approval' ? `Waiting for their OK on screen to ${lower(asking.title)}.` : undefined
-    const doing = ok ?? (activity && `Still working on it: ${lower(activity)}.`)
-    if (live && answer && doing && !answering && !noted.has(doing) && (ok || Date.now() - notedAt >= NOTE_GAP)) {
+    // An OK or a hand it needs is always said; the rest only when it's been quiet a while.
+    const needs = ask
+      ? `Waiting for them to take over the browser on screen${ask.detail ? `: ${ask.detail}` : '.'}`
+      : waiting && asking?.kind === 'approval'
+        ? `Waiting for their OK on screen to ${lower(asking.title)}.`
+        : undefined
+    const doing = needs ?? (activity && `Still working on it: ${lower(activity)}.`)
+    if (live && answer && doing && (!answering || ask) && !noted.has(doing) && (needs || Date.now() - notedAt >= NOTE_GAP)) {
       noted.add(doing)
       notedAt = Date.now()
       live.note(answer, doing)
     }
+    // Hermes's own voice says what it needs in the agent's words, and stops listening until it's
+    // handed back: nothing said while you're in its browser stops it waiting.
+    if (!live && ask && !noted.has(ask.id)) {
+      noted.add(ask.id)
+      if (ask.detail) voice?.say(ask.detail)
+    }
+    if (!live && handing && mic && mic.mode !== 'off') mic.setMode('off')
     if (waiting && !wasWaiting) playSound('blocked')
     wasWaiting = waiting
     const fresh = [...shown.values()].filter((i) => now.has(i.key) && !landed.has(i.key) && filled(i))
@@ -778,7 +810,7 @@ function follow(chatId: string, itemId: string, mine: number) {
       ...(waiting ? { phase: 'waiting' as const } : phase === 'waiting' ? { phase: 'thinking' as const } : {}),
     })
     // Once the reply is under way, talking over it is an interruption.
-    if (after.length && mic?.mode === 'off') mic.setMode('barge')
+    if (after.length && mic?.mode === 'off' && !handing) mic.setMode('barge')
     replyDone = chat.status === 'idle' || chat.status === 'error'
     if (replyDone) settle()
   }

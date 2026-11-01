@@ -1,0 +1,191 @@
+import * as Dialog from '@radix-ui/react-dialog'
+import { useRef, useState, type CSSProperties } from 'react'
+import { motion, useReducedMotion } from 'motion/react'
+import { Keyboard, X } from 'lucide-react'
+import { toast } from 'sonner'
+import { create } from 'zustand'
+import { Orb } from '@/ui/orb'
+import { Button, IconButton } from '@/ui/button'
+import { cn } from '@/lib/cn'
+import { useIsWide } from '@/lib/use-media'
+import type { Speaker } from '@/features/chat/types'
+import { takeOver, useControl, useStill } from '@/state/screen'
+import { giveBack, LiveView, type LiveViewHandle } from './live-view'
+
+/** What the viewer shows: whose browser, the site it's on, and what the agent asked for, if it did. */
+export type Viewing = { profile: string; agent: Speaker; site?: string; reason?: string }
+
+const useViewer = create<{ viewing?: Viewing; open: boolean }>(() => ({ open: false }))
+
+/** Opens the agent's browser big, over everything. */
+export const openViewer = (viewing: Viewing) => useViewer.setState({ viewing, open: true })
+
+/** Takes over the agent's browser and opens it big, for the person to do what it asked. */
+export async function takeOverAndOpen(viewing: Viewing) {
+  try {
+    await takeOver(viewing.profile, viewing.reason)
+    openViewer(viewing)
+  } catch {
+    toast.error('Couldn’t take over the browser. Try again.')
+  }
+}
+
+/**
+ * The agent's browser, live and big (one, over everything). Watching: what it's
+ * doing right now, with Take over. In control: your pointer and keys reach the
+ * page, the frame wears the agent's colour, and Hand back gives it back, as
+ * does closing. Phones get the whole screen, the one action under the thumb
+ * and a keyboard; wide, it's a window over the chat.
+ */
+export function ScreenViewer() {
+  const { viewing, open } = useViewer()
+  if (!viewing) return null
+  return <Viewer viewing={viewing} open={open} />
+}
+
+function Viewer({ viewing, open }: { viewing: Viewing; open: boolean }) {
+  const { profile, agent, site } = viewing
+  const wide = useIsWide()
+  const reduce = useReducedMotion()
+  const control = useControl(profile)
+  const yours = control === 'you'
+  const live = useRef<LiveViewHandle>(null)
+  const [typing, setTyping] = useState(false)
+  const [busy, setBusy] = useState(false)
+  // Until the live picture arrives, the latest still stands in.
+  const still = useStill(profile, open && !yours, 2000)
+
+  const close = () => useViewer.setState({ open: false })
+  const act = async () => {
+    setBusy(true)
+    try {
+      if (yours) {
+        await giveBack(profile)
+        close()
+      } else await takeOver(profile, viewing.reason)
+    } catch {
+      toast.error(yours ? 'Couldn’t hand the browser back. Try again.' : 'Couldn’t take over the browser. Try again.')
+    } finally {
+      setBusy(false)
+    }
+  }
+  // Closing while in control hands back: nobody's left to finish.
+  const onOpenChange = (next: boolean) => {
+    if (next) return
+    if (yours) void act()
+    else close()
+  }
+
+  const title = yours
+    ? 'You’re in control'
+    : control === 'elsewhere'
+      ? 'In control on another device'
+      : `${agent.name}’s browser`
+  const sub = control === 'agent' ? site : site ? `${agent.name} is waiting · ${site}` : `${agent.name} is waiting`
+  const action = (
+    <Button
+      variant={yours ? 'accent' : 'primary'}
+      size={wide ? 'md' : 'lg'}
+      loading={busy}
+      onClick={act}
+      className={cn(wide && 'min-w-28')}
+    >
+      {yours ? `Hand back to ${agent.name}` : control === 'elsewhere' ? 'Take over here' : 'Take over'}
+    </Button>
+  )
+
+  return (
+    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+      <Dialog.Portal>
+        {/* Over everything, a call included: it's where you help the agent. */}
+        <Dialog.Overlay asChild>
+          <motion.div
+            className="fixed inset-0 z-[70] bg-scrim"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.24 }}
+          />
+        </Dialog.Overlay>
+        <Dialog.Content
+          aria-describedby={undefined}
+          data-screen-viewer
+          onCloseAutoFocus={(e) => e.preventDefault()}
+          className={cn(
+            'hue-scope fixed z-[70] flex flex-col bg-bg outline-none',
+            wide
+              ? 'top-1/2 left-1/2 h-[min(820px,90dvh)] w-[min(1240px,94vw)] -translate-1/2 rounded-2xl shadow-sheet'
+              : 'inset-0',
+          )}
+          style={{ '--hue': agent.hue } as CSSProperties}
+        >
+          <motion.div
+            className="flex min-h-0 flex-1 flex-col"
+            initial={reduce ? { opacity: 0 } : { opacity: 0, scale: wide ? 0.97 : 1, y: wide ? 8 : 24 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            transition={{ type: 'spring', duration: 0.45, bounce: 0.1 }}
+          >
+            <header className={cn('safe-top flex flex-none items-center gap-3', wide ? 'h-[72px] px-6' : 'h-16 px-4')}>
+              <Orb
+                hue={agent.hue}
+                size={wide ? 34 : 30}
+                state={control === 'agent' ? 'working' : 'waiting'}
+                seed={agent.id}
+              />
+              <div className="min-w-0 flex-1">
+                <Dialog.Title className="truncate text-subhead font-semibold tracking-[-0.01em]">{title}</Dialog.Title>
+                <p className="flex min-w-0 items-center gap-1.5 text-caption text-ink-3">
+                  {control === 'agent' && (
+                    <span className="live-dot relative flex size-1.5 flex-none">
+                      <span className="size-1.5 rounded-full bg-accent" />
+                    </span>
+                  )}
+                  <span className="truncate">{control === 'agent' ? (sub ? `Live · ${sub}` : 'Live') : sub}</span>
+                </p>
+              </div>
+              {wide && action}
+              {(wide || !yours) && (
+                <Dialog.Close asChild>
+                  <IconButton label={yours ? 'Hand back and close' : 'Close'} variant="filled" size="md">
+                    <X size={18} strokeWidth={2} />
+                  </IconButton>
+                </Dialog.Close>
+              )}
+            </header>
+            <LiveView
+              ref={live}
+              profile={profile}
+              fit={!wide}
+              still={still}
+              onTyping={setTyping}
+              off={
+                <p className="absolute inset-0 grid place-items-center px-8 text-center text-subhead text-ink-3">
+                  {agent.name}’s browser is closed. It opens here when {agent.name} browses.
+                </p>
+              }
+              className={cn('min-h-0 flex-1', wide ? 'px-6 pb-6' : 'px-3 pb-3')}
+            />
+            {!wide && (
+              <footer className="safe-bottom flex flex-none items-center gap-3 px-4 pt-1 pb-4">
+                {yours && (
+                  <IconButton
+                    label={typing ? 'Hide keyboard' : 'Keyboard'}
+                    aria-pressed={typing}
+                    variant="filled"
+                    size="lg"
+                    className="size-13"
+                    // Before the tap's focus moves: the keyboard only opens from within the tap itself.
+                    onPointerDown={(e) => e.preventDefault()}
+                    onClick={() => live.current?.keyboard()}
+                  >
+                    <Keyboard size={20} strokeWidth={1.75} />
+                  </IconButton>
+                )}
+                <div className="min-w-0 flex-1">{action}</div>
+              </footer>
+            )}
+          </motion.div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  )
+}

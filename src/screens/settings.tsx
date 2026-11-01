@@ -24,6 +24,7 @@ import { useHermesOnUmbrel, useUmbrelMcp } from '@/state/umbrel-mcp'
 import { AskHost } from '@/features/settings/ask'
 import { isBuiltinHermes, isUmbrelHermes, useOnUmbrel } from '@/features/connection/hermes-connection-form'
 import { HermesSection } from '@/features/settings/hermes-section'
+import { BrowsersRow } from '@/features/screen/browsers-row'
 import { StatusDot } from '@/features/connection/fields'
 import { useHermesConnection, useMurmurSession } from '@/state/connection'
 import { useTheme, type ThemePref } from '@/features/settings/theme'
@@ -275,6 +276,7 @@ function AgentsSection() {
           onClick={importer.busy ? undefined : importer.pick}
         />
       </ListGroup>
+      <BrowsersRow agentIds={(data ?? []).map((a) => a.id)} />
       {importer.input}
       {actions.sheets}
     </>

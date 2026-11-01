@@ -1,0 +1,479 @@
+// Agents' browsers, live (src/state/screen.ts): Hermes's Bot Screen, where an
+// agent's browser opens for the person to watch and take over, and the
+// murmur-screen plugin in Umbrel's Hermes image (getumbrel/hermes-agent-umbrel,
+// umbrel-context/plugins/murmur-screen) that lets the agent ask for a hand.
+// Murmur's own syncScreens, showBrowsers, watch, takeOver, handBack and
+// installScreen run here against a real Hermes, and the agent browses a page
+// served inside its container, through the fake model.
+//
+// Which tests run depends on the Hermes under test, as the app does:
+//  - one with the screen's packages and murmur-screen (Umbrel's image): every
+//    agent shows its browser, live, and asks for a hand when it needs one;
+//  - one without them (Nous's own image, a Hermes of someone's own on Linux):
+//    nothing changes by itself, and switching it on means a one-time install.
+
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
+import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest'
+import { rpc, startGateway, stopGateway } from '@/hermes/gateway'
+import type { PluginsManageResult } from '@/hermes/vendor/gateway-contract.generated'
+import type { GatewayEvent } from '@/hermes/vendor/json-rpc-gateway'
+import { createAgent } from '@/state/agents'
+import {
+  ASK_TOOL,
+  SCREEN_PLUGIN,
+  addScreenPlugin,
+  controlOf,
+  handBack,
+  installScreen,
+  loadScreen,
+  showBrowsers,
+  syncScreens,
+  takeOver,
+  useInstall,
+  useScreens,
+  watch,
+  type Screen,
+} from '@/state/screen'
+import { tookFor } from '@/features/chat/tool-labels'
+import { agentName, api, connect, modelRequests, newChat, q, sleep, turn, type Socket } from './client'
+import { toolsTag } from './fake-model'
+
+const run = promisify(execFile)
+const hermes = inject('hermes')
+const exec = (...argv: string[]) =>
+  run('docker', ['exec', '-u', 'hermes', hermes.container, ...argv], { maxBuffer: 1 << 20 })
+
+/** A page for the agent to browse, served inside Hermes's container (its browser runs there). */
+const PAGE = 'http://127.0.0.1:8765/'
+const TITLE = 'Murmur contract shop'
+
+let socket: Socket
+let host: Screen | null
+let plugin: boolean
+let other: string | undefined
+
+beforeAll(async () => {
+  startGateway()
+  socket = await connect()
+  host = await loadScreen('default')
+  plugin = (await pluginOn('default')) !== undefined
+  await exec(
+    'sh',
+    '-c',
+    `mkdir -p /tmp/site && printf '<title>${TITLE}</title><h1>${TITLE}</h1><p>Prove you are human.</p>' > /tmp/site/index.html`,
+  )
+  // Detached, it lives as long as the container.
+  await run('docker', [
+    'exec',
+    '-d',
+    '-u',
+    'hermes',
+    '-w',
+    '/tmp/site',
+    hermes.container,
+    '/opt/hermes/.venv/bin/python3',
+    '-m',
+    'http.server',
+    '8765',
+    '--bind',
+    '127.0.0.1',
+  ])
+  // Hermes keeps an agent's browser off this machine's own addresses unless told otherwise.
+  await api.put(`/api/config?${q('default')}`, { config: { browser: { allow_private_urls: true } } })
+}, 180_000)
+
+afterAll(async () => {
+  if (other) await api.call('DELETE', `/api/profiles/${other}`)
+  socket?.close()
+  stopGateway()
+})
+
+/** Whether murmur-screen is on for an agent (undefined: this Hermes has no such plugin). */
+const pluginOn = (profile: string) =>
+  rpc<PluginsManageResult>('plugins.manage', { action: 'list', profile }).then((r) => {
+    const row = (r.plugins ?? []).find((p) => p.name === SCREEN_PLUGIN || p.key === SCREEN_PLUGIN)
+    return row && row.status === 'enabled'
+  })
+
+/** What an agent's own config says about its browser and its screen. */
+async function shownFor(profile: string) {
+  const config = await api.get(`/api/config?${q(profile)}&include_defaults=false`)
+  return { headed: config.browser?.headed, autoStart: config.bot_desktop?.auto_start }
+}
+
+/** The latest chat request Hermes sent the model: its system prompt, and the tools it offered (listed or loaded on demand). */
+async function lastAsk() {
+  const requests = await modelRequests()
+  const last = requests.findLast((r) => r.body.tools?.length)
+  const messages = (last?.body.messages ?? []) as { role: string; content: unknown }[]
+  const system = messages
+    .filter((m) => m.role === 'system')
+    .map((m) => (typeof m.content === 'string' ? m.content : JSON.stringify(m.content)))
+    .join('\n')
+  const tools = (last?.body.tools ?? []) as { function: { name: string; description?: string } }[]
+  const listing = tools.find((t) => t.function.name === 'tool_search')?.function.description ?? ''
+  const names = tools.map((t) => t.function.name)
+  return {
+    system,
+    direct: names.includes(ASK_TOOL),
+    offered: names.includes(ASK_TOOL) || new RegExp(`\\b${ASK_TOOL}\\b`).test(listing),
+  }
+}
+
+/** A call to `name`, the way a model reaches it: directly when it's in the tool list, else through Hermes's tool_call. */
+const reach = (name: string, args: Record<string, unknown>, direct: boolean) =>
+  direct ? { name, args } : { name: 'tool_call', args: { calls: [{ name, arguments: args }] } }
+
+/** The first event `find` matches from now on. */
+function next<T>(what: string, find: (e: GatewayEvent) => T | undefined, timeoutMs = 90_000) {
+  const from = socket.events.length
+  return () =>
+    socket.until(
+      what,
+      () =>
+        socket.events
+          .slice(from)
+          .map(find)
+          .find((v) => v !== undefined),
+      timeoutMs,
+    )
+}
+
+/** Resolves once Murmur's own screen store (fed by Hermes's events alone) says `check`. */
+function seen(what: string, check: (screen: Screen | undefined) => boolean, timeoutMs = 90_000) {
+  return new Promise<void>((resolve, reject) => {
+    const done = () => (unsubscribe(), clearTimeout(timer), resolve())
+    const unsubscribe = useScreens.subscribe((s) => check(s.screens.default) && done())
+    const timer = setTimeout(() => (unsubscribe(), reject(new Error(`Timed out waiting for ${what}`))), timeoutMs)
+    if (check(useScreens.getState().screens.default)) done()
+  })
+}
+
+/**
+ * The agent's browser at work, the way Hermes's default browser tool (browser_exec, the Browser Use CLI)
+ * drives it: Python with browser helpers, a comment first that Hermes shows as the step.
+ */
+const step = (comment: string, code: string) => ({ name: 'browser_exec', args: { code: `# ${comment}\n${code}` } })
+const OPEN = step('Opening the shop', `new_tab("${PAGE}")\nwait_for_load()\nprint(js("document.title"))`)
+const LOOK = step('Looking at the page', 'print(js("document.title"))')
+
+/** What browser_exec printed in a chat, latest first. */
+const printed = (runtime: string) =>
+  socket
+    .of(runtime)
+    .filter((e) => e.type === 'tool.complete' && (e.payload as { name?: string }).name === 'browser_exec')
+    .map((e) => String((e.payload as { result?: { output?: unknown } }).result?.output ?? ''))
+    .reverse()
+
+/** The agent opens the page; its browser printed the page's title. */
+async function browse(runtime: string) {
+  await turn(socket, runtime, toolsTag([OPEN]))
+  expect(printed(runtime)[0]).toContain(TITLE)
+}
+
+/** What a command prints on the agent's screen, run there the way its desktop runs things. */
+async function onTheScreen(command: string) {
+  const { stdout } = await run('docker', [
+    ...['exec', '-u', 'hermes', hermes.container, 'sh', '-c'],
+    `set -a; . /opt/data/bot-desktop/env; ${command}`,
+  ])
+  return stdout.trim()
+}
+
+/**
+ * The agent's browser came up through murmur-screen's launcher: maximized on
+ * the screen, without Chrome for Testing's bar, in a frame of its own (no title
+ * bar), and with no window buttons (Chromium takes them from the screen's
+ * desktop layout).
+ */
+async function openedForTheScreen() {
+  const { stdout } = await run('docker', ['exec', hermes.container, 'ps', '-eo', 'args'])
+  const launched = stdout
+    .split('\n')
+    .some((p) => p.includes('--user-data-dir') && p.includes('--start-maximized') && p.includes('--disable-infobars'))
+  const frames = await onTheScreen(
+    `for w in $(xwininfo -root -tree | awk '/Chromium-browser/ && !/ 1x1\\+| 10x10\\+/ { print $1 }'); do xprop -id $w _MOTIF_WM_HINTS; done`,
+  )
+  const ownFrame = frames !== '' && frames.split('\n').every((f) => f.endsWith('= 0x2, 0x0, 0x0, 0x0, 0x0'))
+  const layout = await onTheScreen('xfconf-query -c xsettings -p /Gtk/DecorationLayout')
+  return launched && ownFrame && layout === 'menu:'
+}
+
+describe('the host', () => {
+  it('says what it can show, without Murmur assuming anything about it', () => {
+    expect(host).toMatchObject({ profile: 'default', supported: true })
+    expect(host?.profile_key).toBeTruthy()
+    // Either it's ready, or Hermes says what's missing and how to install it.
+    if (!host?.installed) {
+      expect(host?.missing.length).toBeGreaterThan(0)
+      expect(host?.install_command).toEqual(expect.any(String))
+    }
+  })
+})
+
+describe('a Hermes made for this (the screen and murmur-screen)', () => {
+  const ready = () => !!host?.installed && plugin
+
+  it('keeps an agent’s browser where nobody sees it until Murmur puts it on the screen', async (ctx) => {
+    if (!ready()) return ctx.skip()
+    expect(await shownFor('default')).toEqual({ headed: undefined, autoStart: undefined })
+    expect(await pluginOn('default')).toBe(false)
+    const { runtime } = await newChat(socket)
+    await browse(runtime)
+    expect((await loadScreen('default'))?.running).toBe(false)
+  })
+
+  it('remembers being switched off, even before it was ever on', async (ctx) => {
+    if (!ready()) return ctx.skip()
+    await showBrowsers(false, ['default'])
+    // Murmur opened again, here or on another device.
+    await syncScreens(['default'])
+    expect((await shownFor('default')).headed).not.toBe(true)
+    expect(await pluginOn('default')).toBe(false)
+    // As it came, for the rest.
+    const { plugins } = await api.get(`/api/config?${q('default')}&include_defaults=false`)
+    const disabled = (plugins.disabled as string[]).filter((name) => name !== SCREEN_PLUGIN)
+    await api.put(`/api/config?${q('default')}`, { config: { plugins: { disabled } } })
+  })
+
+  it('shows every agent’s browser once Murmur puts them in step', async (ctx) => {
+    if (!ready()) return ctx.skip()
+    other = await createAgent({ name: `Contract Screen ${Date.now().toString(36)}`, hue: 200, role: 'Shopping' })
+    await api.put(`/api/config?${q(other)}`, { config: { browser: { allow_private_urls: true } } })
+    await syncScreens(['default', other])
+    for (const agent of ['default', other]) {
+      expect(await shownFor(agent)).toEqual({ headed: true, autoStart: true })
+      expect(await pluginOn(agent)).toBe(true)
+    }
+  })
+
+  it('catches up an agent left half-done (Murmur closed between its browser and its tool)', async (ctx) => {
+    if (!ready() || !other) return ctx.skip()
+    await rpc('plugins.manage', { action: 'toggle', key: SCREEN_PLUGIN, enable: false, profile: other })
+    await syncScreens(['default', other])
+    expect(await pluginOn(other)).toBe(true)
+  })
+
+  it('tells the agent when to ask for a hand, in a chat that can show its browser', async (ctx) => {
+    if (!ready()) return ctx.skip()
+    const { runtime } = await newChat(socket)
+    await turn(socket, runtime, 'Hello')
+    const ask = await lastAsk()
+    expect(ask.offered).toBe(true)
+    expect(ask.system).toContain(`call \`${ASK_TOOL}\``)
+  })
+
+  it('opens the browser on its screen, live through Murmur, as soon as the agent browses', async (ctx) => {
+    if (!ready()) return ctx.skip()
+    // The screen was off a moment ago (the agent browsed where nobody sees it): switching on counts at once.
+    const { runtime } = await newChat(socket)
+    await browse(runtime)
+    // Murmur hears it from Hermes, without asking again.
+    await seen('the screen to start', (s) => !!s?.running)
+
+    const { data_url } = await rpc<{ data_url: string | null }>('display.thumbnail', { profile: 'default' })
+    expect(data_url).toMatch(/^data:image\//)
+
+    // The live picture, through Murmur's own /hermes proxy: Hermes's RFB bridge answers with its version.
+    const ws = new WebSocket(await watch('default'))
+    ws.binaryType = 'arraybuffer'
+    const hello = await new Promise<string>((resolve, reject) => {
+      ws.onmessage = (e) => resolve(Buffer.from(e.data as ArrayBuffer).toString('latin1'))
+      ws.onerror = () => reject(new Error('The live picture didn’t connect'))
+      setTimeout(() => reject(new Error('No picture in 15s')), 15_000)
+    })
+    ws.close(1000)
+    expect(hello).toMatch(/^RFB 003\.00\d\n/)
+    expect(await openedForTheScreen()).toBe(true)
+  })
+
+  it('waits while the person has the browser, and carries on once they hand it back', async (ctx) => {
+    if (!ready()) return ctx.skip()
+    const { runtime } = await newChat(socket)
+    await turn(socket, runtime, 'Hello')
+    const { direct } = await lastAsk()
+    const reason = 'Solve the check on 127.0.0.1'
+
+    const asked = next('the ask', (e) =>
+      e.type === 'tool.start' && e.session_id === runtime && JSON.stringify(e.payload).includes(ASK_TOOL)
+        ? e
+        : undefined,
+    )
+    const answered = next('the hand back', (e) =>
+      e.type === 'tool.complete' && e.session_id === runtime && (e.payload as { name?: string }).name === ASK_TOOL
+        ? (e.payload as { result: unknown })
+        : undefined,
+    )
+    const leased = next('the lease', (e) =>
+      e.type === 'display.lease' && (e.payload as { lease?: { holder?: string } }).lease?.holder === 'human'
+        ? e
+        : undefined,
+    )
+    const done = turn(socket, runtime, toolsTag([OPEN, reach(ASK_TOOL, { reason }, direct), LOOK]))
+    await asked()
+    await takeOver('default', reason)
+    await leased()
+    const { screens, held } = useScreens.getState()
+    expect(controlOf(screens.default, held.default)).toBe('you')
+
+    // The agent waits for as long as the person has it.
+    await sleep(2500)
+    expect(
+      socket.of(runtime).some((e) => e.type === 'tool.complete' && (e.payload as { name?: string }).name === ASK_TOOL),
+    ).toBe(false)
+
+    await handBack('default')
+    const { result } = await answered()
+    expect(tookFor(ASK_TOOL, result)).toBeGreaterThanOrEqual(2000)
+    await done
+    // Its page is still there, as the person left it.
+    expect(printed(runtime)[0]).toContain(TITLE)
+    expect(controlOf(useScreens.getState().screens.default, useScreens.getState().held.default)).toBe('agent')
+  })
+
+  it('goes by each agent’s own setting', async (ctx) => {
+    if (!ready() || !other) return ctx.skip()
+    await api.put(`/api/config?${q(other)}`, { config: { browser: { headed: false } } })
+    const { runtime } = await newChat(socket, other)
+    await turn(socket, runtime, 'Hello', other)
+    expect((await lastAsk()).system).not.toContain(ASK_TOOL)
+    await api.put(`/api/config?${q(other)}`, { config: { browser: { headed: true } } })
+  })
+
+  it('stops showing every agent’s browser when switched off', async (ctx) => {
+    if (!ready() || !other) return ctx.skip()
+    await showBrowsers(false, ['default', other])
+    for (const agent of ['default', other]) {
+      expect(await shownFor(agent)).toEqual({ headed: false, autoStart: false })
+      expect(await pluginOn(agent)).toBe(false)
+    }
+    // Murmur opened again: off stays off.
+    await syncScreens(['default', other])
+    expect(await pluginOn('default')).toBe(false)
+    const { runtime } = await newChat(socket)
+    await turn(socket, runtime, 'Hello')
+    const ask = await lastAsk()
+    expect(ask.offered).toBe(false)
+    expect(ask.system).not.toContain(ASK_TOOL)
+    // And on again, the way it was.
+    await showBrowsers(true, ['default', other])
+    expect(await shownFor(other)).toEqual({ headed: true, autoStart: true })
+  })
+
+  it('has what murmur-screen uses from Hermes where it looks for it', async (ctx) => {
+    if (!plugin) return ctx.skip()
+    // The plugin looks each one up when it's used and fails soft without it; this is where a Hermes
+    // update that moved one shows up.
+    const needs = {
+      'tools.environments.base': ['touch_activity_if_due'],
+      'tools.browser_tool': ['_cleanup_lock', '_session_last_activity'],
+      'tools.browser_tool_lifecycle': ['_update_session_activity'],
+      'tools.bot_desktop.runtime': ['touch_activity', 'published_env', 'is_supported_host', 'missing_binaries'],
+      'tools.bot_desktop.lease': ['get', 'HUMAN'],
+      'gateway.session_context': ['get_session_env'],
+      'tools.interrupt': ['is_interrupted'],
+      'tools.registry': ['no_cache_check_fn'],
+      'hermes_cli.config': ['read_raw_config'],
+      'tools.bot_desktop.browser': ['executable', 'profile_dir', 'running_instance_cdp_port'],
+    }
+    const script = [
+      'import importlib, json, sys',
+      'needs = json.loads(sys.argv[1])',
+      'missing = []',
+      'for module, names in needs.items():',
+      '    try:',
+      '        found = importlib.import_module(module)',
+      '        missing += [f"{module}.{n}" for n in names if not hasattr(found, n)]',
+      '    except Exception as error:',
+      '        missing.append(f"{module} ({error})")',
+      'print(json.dumps(missing))',
+    ].join('\n')
+    const { stdout } = await run(
+      'docker',
+      [
+        'exec',
+        '-u',
+        'hermes',
+        '-w',
+        '/opt/hermes',
+        hermes.container,
+        '/opt/hermes/.venv/bin/python3',
+        '-c',
+        script,
+        JSON.stringify(needs),
+      ],
+      { maxBuffer: 1 << 20 },
+    )
+    expect(JSON.parse(stdout.trim().split('\n').at(-1) ?? '[]')).toEqual([])
+  })
+})
+
+describe('a Hermes of someone’s own, with the screen (Nous’s desktop image)', () => {
+  const own = () => !!host?.installed && !plugin
+
+  it('gets the tool to ask for a hand once its browser shows, the way it gets email', async (ctx) => {
+    if (!own()) return ctx.skip()
+    await showBrowsers(true, [])
+    // Murmur doesn't hold the switch for it: this joins the install it started.
+    await addScreenPlugin('default')
+    expect(await pluginOn('default')).toBe(true)
+    // Live, with no restart.
+    const { runtime } = await newChat(socket)
+    await turn(socket, runtime, 'Hello')
+    expect((await lastAsk()).offered).toBe(true)
+  })
+
+  it('opens its browser the way it does on Umbrel’s image: maximized on the screen, with no testing bar or window buttons', async (ctx) => {
+    if (!own()) return ctx.skip()
+    const { runtime } = await newChat(socket)
+    await browse(runtime)
+    await seen('the screen to start', (s) => !!s?.running)
+    expect(await openedForTheScreen()).toBe(true)
+  })
+
+  it('takes it away again when switched off', async (ctx) => {
+    if (!own()) return ctx.skip()
+    await showBrowsers(false, [])
+    expect(await pluginOn('default')).toBe(false)
+    expect(await shownFor('default')).toEqual({ headed: false, autoStart: false })
+  })
+})
+
+describe('a Hermes without the screen (Linux, not set up for it)', () => {
+  const bare = () => !host?.installed
+
+  it('leaves its agents as they are', async (ctx) => {
+    if (!bare()) return ctx.skip()
+    const name = agentName('screen')
+    other = await createAgent({ name, hue: 30, role: 'Shopping' })
+    await syncScreens(['default', other])
+    expect(await shownFor('default')).toEqual({ headed: undefined, autoStart: undefined })
+    expect(await shownFor(other)).toEqual({ headed: undefined, autoStart: undefined })
+  })
+
+  it('sets it up with Hermes’s own installer, and says what to run when it can’t', async (ctx) => {
+    if (!bare()) return ctx.skip()
+    // Nobody types the server's password here: asked for one, the person gives up.
+    const unsubscribe = useInstall.subscribe((s) => {
+      const state = s.default
+      if (state?.phase === 'password') state.answer('')
+    })
+    try {
+      await installScreen()
+    } finally {
+      unsubscribe()
+    }
+    const state = useInstall.getState().default
+    expect(state).toMatchObject({ phase: 'failed' })
+    expect(state?.phase === 'failed' && state.command).toEqual(expect.any(String))
+    expect((await loadScreen('default'))?.installed).toBe(false)
+    // Nous's own image runs Hermes without root or sudo: an install can't work there, and Murmur knows it.
+    const { stdout } = await exec('sh', '-c', 'id -u; command -v sudo || true')
+    const [uid, sudo] = stdout.trim().split('\n')
+    if (uid !== '0' && !sudo) {
+      expect(state).toMatchObject({ unprivileged: true })
+      expect(state?.phase === 'failed' && state.command).not.toMatch(/^sudo /)
+    }
+  })
+})
