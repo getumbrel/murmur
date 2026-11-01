@@ -263,6 +263,17 @@ export function useChatActivities(): Readonly<Record<string, ChatActivity>> {
   return useMemo(() => mergeActivities(local, remote), [local, remote])
 }
 
+/** What one chat is doing right now, as useChatActivities has it. */
+export function useChatActivity(chatId: string | undefined): ChatActivity | undefined {
+  wireStatus()
+  const local = useChats((s) => {
+    const chat = chatId ? s.chats[chatId] : undefined
+    return chat ? localActivities({ [chat.id]: chat })[chat.id] : undefined
+  })
+  const remote = useStatus((s) => (chatId ? s.remote[chatId]?.status : undefined))
+  return local === 'idle' ? undefined : (local ?? remote)
+}
+
 /**
  * What the chats on this page are doing; one attached here and at rest says so too. A turn
  * Hermes started elsewhere counts from its start, before this page shows it.

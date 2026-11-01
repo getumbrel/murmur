@@ -241,6 +241,62 @@ describe('who hears a note', () => {
     expect(pushes).toEqual([])
   })
 
+  it('the device they’re at, though not in Murmur there, and the others once they’ve gone', async () => {
+    await start()
+    const phone = await register(1)
+    const laptop = await register(2)
+    // Another app in front on the laptop, Murmur touched a minute ago.
+    await beat('t1', { device: laptop, active: false, here: true, viewing: 'murmur:chat:c1' })
+    await beat('t2', { device: phone, active: false, here: false })
+    tell!({ kind: 'note', note: { ...note, body: 'First.' } })
+    tell!({ kind: 'note', note })
+    tell!({ kind: 'note', note: { ...note, tag: 'murmur:chat:c3', href: '/chat/atlas/c3' } })
+    expect(to()).toEqual(['device-2', 'device-2', 'device-2'])
+    await beat('t1', { device: laptop, active: false, here: true })
+    expect(pushes).toHaveLength(3)
+    // Two minutes on: gone. The phone hears what's still not looked at, the newest for each chat.
+    await beat('t1', { device: laptop, active: false, here: false })
+    expect(to().slice(3)).toEqual(['device-1', 'device-1'])
+    expect(pushes.slice(3).map((p) => p.payload.notification.body)).toEqual(['Booked.', 'Booked.'])
+    expect(pushes.slice(3).map((p) => p.payload.notification.tag)).toEqual(['murmur:chat:c1', 'murmur:chat:c3'])
+    // Once.
+    await beat('t1', { device: laptop, active: false, here: true })
+    await beat('t1', { device: laptop, active: false, here: false })
+    expect(pushes).toHaveLength(5)
+  })
+
+  it('not the others, once they’re back in Murmur before they go, or for what came while they were in it', async () => {
+    await start()
+    await register(1)
+    const laptop = await register(2)
+    await beat('t1', { device: laptop, active: false, here: true })
+    tell!({ kind: 'note', note })
+    tell!({ kind: 'note', note: { ...note, tag: 'murmur:chat:c3', href: '/chat/atlas/c3' } })
+    // Back in Murmur, on another chat.
+    await beat('t1', { device: laptop, active: true, here: true, viewing: 'murmur:chat:other' })
+    tell!({ kind: 'note', note: { ...note, tag: 'murmur:chat:c4', href: '/chat/atlas/c4' } })
+    await beat('t1', { device: laptop, active: false, here: true })
+    await beat('t1', { device: laptop, active: false, here: false })
+    expect(to()).toEqual(['device-2', 'device-2', 'device-2'])
+  })
+
+  it('the others, once the computer they were at goes quiet (asleep, say)', async () => {
+    await start()
+    await register(1)
+    const laptop = await register(2)
+    await beat('t1', { device: laptop, active: false, here: true })
+    tell!({ kind: 'note', note })
+    expect(to()).toEqual(['device-2'])
+    const now = Date.now
+    Date.now = () => now() + TAB_TTL_MS + 1
+    try {
+      await beat('t2', { active: false, here: false })
+    } finally {
+      Date.now = now
+    }
+    expect(to()).toEqual(['device-2', 'device-1'])
+  })
+
   it('every device again once the tab they were using goes quiet', async () => {
     await start()
     const phone = await register(1)
@@ -351,6 +407,18 @@ describe('questions', () => {
     await beat('t1', { device: laptop, active: true })
     await post('/murmur/presence', { tab: 't1', gone: true })
     expect(pushes).toHaveLength(2)
+  })
+
+  it('wait, like replies, while the person’s still at a device', async () => {
+    await start()
+    await register(1)
+    const laptop = await register(2)
+    await beat('t1', { device: laptop, active: false, here: true })
+    tell!({ kind: 'ask', key: 'srq-1', note: ask })
+    expect(to()).toEqual(['device-2'])
+    await beat('t1', { device: laptop, active: false, here: false })
+    expect(to()).toEqual(['device-2', 'device-1', 'device-2'])
+    expect(pushes.every((p) => p.ttl === 60 * 60)).toBe(true)
   })
 
   it('not once they’re answered', async () => {

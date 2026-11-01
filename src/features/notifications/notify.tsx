@@ -11,13 +11,14 @@ import { desktop, focusWindow } from '@/lib/desktop'
 import { umbrelApp } from '@/lib/device'
 import { tabHermes, HERMES_PARAM } from '@/hermes/instance'
 import { useAgents } from '@/state/agents'
-import { onChatMoment } from '@/state/status'
+import { useTalk } from '@/features/talk/talk'
+import { onChatMoment, useChatActivity } from '@/state/status'
 import { Tile } from '@/features/settings/page'
 import { HomeScreenSteps, OpenInSafari } from '@/features/home/install-tip'
 import { BellIcon } from '@/ui/icons'
 import { chatTag, groupTag } from '@shared/notes.ts'
 import { isOn, setNotifications, shouldOffer, support, syncNotifications, useNotifications, type Problem } from './notifications'
-import { setViewing, startPresence } from './presence'
+import { setCalling, setReplying, setViewing, startPresence } from './presence'
 
 /**
  * Where notifications are allowed. The desktop app always reads as allowed to
@@ -57,10 +58,16 @@ const PROBLEMS: Record<Problem, string> = {
   unreachable: 'Couldn’t reach Murmur to turn them on. Check your connection, then try again.',
 }
 
+/** The chat on screen, by its stored id, if it has one yet. */
+function chatOnScreen(location: string) {
+  const chat = /^\/chat\/[^/]+\/([^/]+)/.exec(location)?.[1]
+  return chat && chat !== 'new' ? decodeURIComponent(chat) : undefined
+}
+
 /** The tag of what's on screen (shared/notes.ts), so a note about it needn't be sent. */
 function onScreen(location: string) {
-  const chat = /^\/chat\/[^/]+\/([^/]+)/.exec(location)?.[1]
-  if (chat && chat !== 'new') return chatTag(decodeURIComponent(chat))
+  const chat = chatOnScreen(location)
+  if (chat) return chatTag(chat)
   const group = /^\/group\/([^/]+)/.exec(location)?.[1]
   return group ? groupTag(decodeURIComponent(group)) : undefined
 }
@@ -98,6 +105,13 @@ export function useNotifier() {
   }, [])
 
   useEffect(() => setViewing(onScreen(location)), [location])
+
+  // A reply coming in on screen: someone watching it touches nothing.
+  const replying = useChatActivity(chatOnScreen(location)) === 'working'
+  useEffect(() => setReplying(replying), [replying])
+
+  // On a call the person's here, though nothing's touched (a call is always in its own chat, so that's on screen too).
+  useEffect(() => useTalk.subscribe((talk) => setCalling(talk.open)), [])
 
   // A notification was clicked (public/sw.js, or the desktop app): open what it's about, on its Hermes.
   useEffect(() => {

@@ -10,13 +10,18 @@
 //   DELETE /murmur/notifications/devices/:id  → {ok}
 //   POST   /murmur/notifications/shown        {endpoint, id?} → {missed}: this browser showed note `id`;
 //                                             the others it was sent and hasn't shown (see Catching up)
-//   POST   /murmur/presence                   {tab, device?, hermes?, active, viewing?} or {tab, gone: true} → 204
+//   POST   /murmur/presence                   {tab, device?, hermes?, active, here?, viewing?} or {tab, gone: true} → 204
 //
 // Who's told: nobody, when someone active is already looking at that chat;
-// else the devices the person is active on, if they're active anywhere; else
-// every device. A question still open when the person goes away is told to
-// every device then, once. Active is a tab in front, in a focused window,
-// touched in the last two minutes (the app decides, and says so as it changes).
+// else the devices the person is at, if they're at any (and, when they're not
+// active anywhere, the others too once they've gone, unless they're back in
+// Murmur first); else every device. A question still open when the person goes
+// away is told to every device then, once. Active is a tab in front, in a
+// focused window, touched in the last two minutes, or one with a call going.
+// At a device is a tab there touched in the last two minutes, in front or not,
+// or with a reply coming in on screen in front of them then, or a call (the
+// app decides both, and says so as they change:
+// src/features/notifications/presence.ts).
 //
 // Devices and Murmur's push keys are kept in DATA_DIR/notifications.json; the
 // notes a device hasn't shown yet, only in memory.
@@ -49,13 +54,15 @@ export type NotifyOptions = {
 
 type Device = Subscription & { id: string; /** Where its links open. */ origin: string; since: number }
 type Stored = { vapid?: VapidKeys; devices?: Device[]; native?: boolean }
-type Tab = { device?: string; hermes?: string; active: boolean; viewing?: string; at: number }
+type Tab = { device?: string; hermes?: string; active: boolean; here: boolean; viewing?: string; at: number }
 type Ask = { note: Note; hermes: string; everyone: boolean }
+/** A note told only where the person was, away from Murmur there, for the others once they've gone: who was told it. */
+type Held = { note: Note; hermes: string; told: Set<string>; at: number }
 /** A note as one device was sent it. */
 type Sent = { id: string; note: Note; hermes: string; ask: boolean; at: number; until: number }
 
 export const NATIVE = 'desktop'
-/** A tab not heard from in this long has gone, or its computer is asleep (it says every 20 seconds while in front). */
+/** A tab not heard from in this long has gone, or its computer is asleep (it says every 20 seconds while the person's there). */
 export const TAB_TTL_MS = 50_000
 const SWEEP_MS = 15_000
 /** More than anyone signs up; past it, the device signed up longest ago makes room. */
@@ -128,30 +135,38 @@ export function createNotifications(options: NotifyOptions = {}) {
   const tabs = new Map<string, Tab>()
   /** Questions told and not yet answered, by Hermes and Hermes's own key for them. */
   const asks = new Map<string, Ask>()
-  let wasActive = false
+  /** Replies told only where the person was, away from Murmur there, by Hermes and chat or group: the newest for each. */
+  const held = new Map<string, Held>()
+  let wasHere = false
 
-  function activeTabs() {
+  function liveTabs() {
     const cutoff = Date.now() - TAB_TTL_MS
     for (const [id, tab] of tabs) if (tab.at < cutoff) tabs.delete(id)
-    return [...tabs.values()].filter((t) => t.active)
+    return [...tabs.values()]
   }
 
-  /** Someone just went away: questions still open are told everywhere, once. */
+  /** Someone just went away: questions still open are told everywhere, once, and replies held for the others told them. */
   function settle() {
-    const active = activeTabs().length > 0
-    if (wasActive && !active) {
+    const here = liveTabs().some((t) => t.here)
+    if (wasHere && !here) {
       for (const ask of asks.values()) {
         if (ask.everyone) continue
         ask.everyone = true
         send(ask.note, ask.hermes, everyDevice(), true)
       }
+      const fresh = Date.now() - TTL.note * 1000
+      for (const { note, hermes, told, at } of held.values()) {
+        if (at > fresh) send(note, hermes, everyDevice().filter((t) => !told.has(targetId(t))), false)
+      }
+      held.clear()
     }
-    wasActive = active
+    wasHere = here
   }
 
   // ── Telling ───────────────────────────────────────────────────────────────
 
   type Target = { kind: 'push'; device: Device } | { kind: 'native' }
+  const targetId = (target: Target) => (target.kind === 'native' ? NATIVE : target.device.id)
   /** Pushes a push service turned away in a row, by device. */
   const refusals = new Map<string, number>()
 
@@ -160,13 +175,16 @@ export function createNotifications(options: NotifyOptions = {}) {
     ...(native() ? [{ kind: 'native' } as const] : []),
   ]
 
+  /** A note about this chat or group, from this Hermes. */
+  const about = (tag: string, hermes: string | undefined) => (note: Note, from: string) => note.tag === tag && (!hermes || from === hermes)
+
   /** Who hears a note now: undefined when someone's looking at it already. */
   function audience(note: Note, hermes: string): { to: Target[]; everyone: boolean } | undefined {
-    const active = activeTabs()
-    if (active.some((t) => t.viewing === note.tag && (!t.hermes || t.hermes === hermes))) return undefined
-    if (!active.length) return { to: everyDevice(), everyone: true }
-    const here = new Set(active.map((t) => t.device))
-    return { to: everyDevice().filter((t) => here.has(t.kind === 'native' ? NATIVE : t.device.id)), everyone: false }
+    const live = liveTabs()
+    if (live.some((t) => t.active && t.viewing && about(t.viewing, t.hermes)(note, hermes))) return undefined
+    const at = new Set(live.filter((t) => t.here).map((t) => t.device))
+    if (!at.size) return { to: everyDevice(), everyone: true }
+    return { to: everyDevice().filter((t) => at.has(targetId(t))), everyone: false }
   }
 
   function send(note: Note, hermes: string, to: Target[], ask: boolean) {
@@ -211,6 +229,12 @@ export function createNotifications(options: NotifyOptions = {}) {
     const ask = moment.kind === 'ask'
     const heard = audience(moment.note, hermes)
     if (ask) asks.set(`${hermes}\n${moment.key}`, { note: moment.note, hermes, everyone: heard?.everyone ?? false })
+    // Held while they're at a device but not in Murmur: they may miss it there. Not a question (asks), nor one looked at.
+    const key = `${hermes}\n${moment.note.tag}`
+    held.delete(key)
+    if (heard && !heard.everyone && !ask && !liveTabs().some((t) => t.active)) {
+      held.set(key, { note: moment.note, hermes, told: new Set(heard.to.map(targetId)), at: Date.now() })
+    }
     if (heard) send(moment.note, hermes, heard.to, ask)
   }
 
@@ -267,6 +291,7 @@ export function createNotifications(options: NotifyOptions = {}) {
       watcher.stop()
       watchers.delete(id)
       for (const key of asks.keys()) if (key.startsWith(`${id}\n`)) asks.delete(key)
+      for (const key of held.keys()) if (key.startsWith(`${id}\n`)) held.delete(key)
     }
     for (const [id, hermes] of wanted) {
       if (watchers.has(id)) continue
@@ -320,15 +345,23 @@ export function createNotifications(options: NotifyOptions = {}) {
       if (!tab) return reply(res, 422, { error: 'Say which tab.' })
       if (body.gone === true) tabs.delete(tab)
       else {
+        const active = body.active === true
         const seen: Tab = {
           device: text(body.device, 64),
           hermes: text(body.hermes, 64),
-          active: body.active === true,
+          active,
+          // An app from before `here` says only whether it's active.
+          here: active || body.here === true,
           viewing: text(body.viewing, 512),
           at: Date.now(),
         }
         tabs.set(tab, seen)
-        if (seen.active && seen.viewing) unsee((sent) => sent.note.tag === seen.viewing && (!seen.hermes || sent.hermes === seen.hermes))
+        if (seen.active && seen.viewing) {
+          const looked = about(seen.viewing, seen.hermes)
+          unsee((sent) => looked(sent.note, sent.hermes))
+        }
+        // Back in Murmur: what came in meanwhile is there to see.
+        if (seen.active) held.clear()
       }
       settle()
       res.writeHead(204, { 'cache-control': 'no-store' }).end()
