@@ -6,7 +6,7 @@
 // ui_meta['hermes-bots'] ({title, color}), the exact hue in ui_meta.murmur,
 // the role in the profile description, the personality in SOUL.md.
 
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { api } from '@/hermes/rest'
 import { useEffect } from 'react'
 import { gateway, rpc } from '@/hermes/gateway'
@@ -20,7 +20,7 @@ import { personalityPrompt, type Personality } from '@/features/agents/agent-edi
 import { parseUserMessage } from '@/features/media/parse'
 import type { Speaker } from '@/features/chat/types'
 import { scoped } from '@/hermes/instance'
-import { listProfileNames, listProfiles } from '@/hermes/compat'
+import { listProfiles } from '@/hermes/compat'
 import { isQuietExcerpt, isRunBrief, resultLine, runTitle } from '@shared/routines.ts'
 import { agentName, botTitle } from '@shared/agents.ts'
 import { fetchRunResult, knowRun, runOf } from '@/state/routines'
@@ -297,8 +297,11 @@ function devPrefix(): string {
 
 export const agentsKey = ['agents'] as const
 
-/** Agents still being made here: they join the roster when their creator says so. */
-const hatching = new Set<string>()
+/** The roster's order: the main agent first, then everyone else alphabetically. */
+const byRank = (a: Agent, b: Agent) => Number(b.isDefault) - Number(a.isDefault) || a.name.localeCompare(b.name)
+
+/** Agents still being made here, as they'll look: they join the roster when their creator says so. */
+const hatching = new Map<string, Agent>()
 
 export function useAgents() {
   return useQuery({
@@ -311,12 +314,11 @@ export function useAgents() {
       const pending = pendingLooks()
       const prefix = devPrefix()
       for (const p of res.profiles) if (pending[p.name] && !hatching.has(p.name)) void finishLook(p, pending[p.name])
-      // Main agent first, then everyone else alphabetically.
       return res.profiles
         .filter((p) => !import.meta.env.DEV || !p.name.startsWith(TEST_PREFIX) || (prefix && p.name.startsWith(prefix)))
         .filter((p) => !hatching.has(p.name))
         .map((p) => toAgent(p, hues, pending))
-        .sort((a, b) => Number(b.isDefault) - Number(a.isDefault) || a.name.localeCompare(b.name))
+        .sort(byRank)
     },
     staleTime: 30_000,
   })
@@ -433,16 +435,19 @@ async function finishLook(p: Profile, meta: Record<string, unknown>) {
 
 /**
  * Create an agent and return its id. It shares the main agent's model accounts.
- * It stays out of the roster until `revealAgent(id)`, so its arrival can be
+ * It stays out of the roster until `revealAgent(qc, id)`, so its arrival can be
  * staged; call that even if the caller doesn't stage anything.
  */
 export async function createAgent(input: AgentInput) {
-  const id = slugFor(input.name, await listProfileNames())
+  const profiles = await listProfiles<Profile>()
+  const id = slugFor(input.name, profiles.map((p) => p.name))
   const meta = look(input)
   // Its look is known before Hermes knows the agent, so no read ever shows a slug.
   rememberHue(id, input.hue)
   setPendingLook(id, meta)
-  hatching.add(id)
+  // As Hermes will list it: Hermes starts a new agent on the main agent's model.
+  const { model, provider } = profiles.find((p) => p.is_default) ?? {}
+  hatching.set(id, toAgent({ name: id, is_default: false, description: input.role, ui_meta: meta, model, provider }))
   try {
     // The socket twin of POST /api/profiles: unlike REST it also carries over
     // API keys, so the new agent can think straight away.
@@ -469,9 +474,19 @@ export async function createAgent(input: AgentInput) {
   return id
 }
 
-/** Let a just-made agent into the roster (see createAgent). */
-export function revealAgent(id: string) {
+/**
+ * Let a just-made agent into the roster (see createAgent). It's there at once,
+ * as Murmur made it: reading every agent from Hermes again can take seconds.
+ * Then Hermes is read again, quietly, to settle it as Hermes has it.
+ */
+export async function revealAgent(qc: QueryClient, id: string) {
+  const agent = hatching.get(id)
+  if (!agent) return
   hatching.delete(id)
+  // A read already on its way began without it, and would take it out again.
+  await qc.cancelQueries({ queryKey: agentsKey })
+  qc.setQueryData<Agent[]>(agentsKey, (list) => list && [...list.filter((a) => a.id !== id), agent].sort(byRank))
+  void qc.invalidateQueries({ queryKey: agentsKey })
 }
 
 export async function updateAgent(agent: Agent, input: AgentInput) {

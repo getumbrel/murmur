@@ -88,14 +88,13 @@ export function useAgentActions() {
       setCreating(false)
       await wait(calm ? 0 : 220)
       // Only now does it join the roster: in its place, with its halo.
-      revealAgent(id)
-      await refresh()
+      await revealAgent(qc, id)
       await wait(calm ? 120 : 1000)
       navigate(`/chat/${id}`)
     } catch (e) {
       fail(e)
     } finally {
-      if (id) revealAgent(id)
+      if (id) void revealAgent(qc, id)
       setBusy(false)
       setBorn(false)
     }
