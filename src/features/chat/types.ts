@@ -33,7 +33,14 @@ export type UserAttachment =
       /** On the Hermes host. */ path?: string
       /** Already in the browser. */ url?: string
     }
-  | { kind: 'file'; name: string; path?: string; size?: number }
+  | {
+      kind: 'file'
+      name: string
+      path?: string
+      size?: number
+      /** How far along it is going up to Hermes, from 0 to 1. Only while it is. */
+      progress?: number
+    }
 
 export type ChatItem =
   | {

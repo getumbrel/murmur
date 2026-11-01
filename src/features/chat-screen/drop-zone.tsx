@@ -80,7 +80,7 @@ export function DropZone({
               <Paperclip size={22} strokeWidth={1.9} />
             </span>
             <p className="text-subhead font-semibold tracking-[-0.01em]">{label}</p>
-            <p className="-mt-2 text-footnote text-ink-2">Photos and files up to 25 MB</p>
+            <p className="-mt-2 text-footnote text-ink-2">Photos and files up to 100 MB</p>
           </motion.div>
         </motion.div>
       )}

@@ -120,13 +120,21 @@ function FileChip({ item }: { item: Extract<UserAttachment, { kind: 'file' }> })
   const ref = useAttachmentRef(item.path)
   const fetched = useFileSize(item.size == null ? ref : null)
   const size = item.size ?? fetched
-  const meta = [kindName(item.name), size != null ? formatSize(size) : null].filter(Boolean).join(' · ')
+  const sending = item.progress != null
+  const meta =
+    sending && size != null
+      ? `${formatSize(size * item.progress!)} of ${formatSize(size)}`
+      : [kindName(item.name), size != null ? formatSize(size) : null].filter(Boolean).join(' · ')
   const body = (
     <>
-      <TypeIcon path={item.name} className="size-9 rounded-[10px]" />
+      {sending ? (
+        <Sending progress={item.progress!} />
+      ) : (
+        <TypeIcon path={item.name} className="size-9 rounded-[10px]" />
+      )}
       <span className="min-w-0 text-left">
         <span className="block truncate text-subhead font-medium tracking-[-0.01em] text-ink">{item.name}</span>
-        <span className="block truncate text-caption text-ink-3">{meta}</span>
+        <span className="block truncate text-caption text-ink-3 tabular-nums">{meta}</span>
       </span>
     </>
   )
@@ -137,5 +145,36 @@ function FileChip({ item }: { item: Extract<UserAttachment, { kind: 'file' }> })
     </button>
   ) : (
     <div className={chip}>{body}</div>
+  )
+}
+
+/** A file on its way to Hermes: where its icon goes, a ring filling up. */
+function Sending({ progress }: { progress: number }) {
+  const r = 7.25
+  const c = 2 * Math.PI * r
+  return (
+    <span
+      role="progressbar"
+      aria-label="Sending"
+      aria-valuenow={Math.round(progress * 100)}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      className="flex size-9 flex-none items-center justify-center rounded-[10px] bg-accent-soft text-accent"
+    >
+      <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden className="-rotate-90">
+        <circle cx="10" cy="10" r={r} fill="none" strokeWidth="2.25" className="stroke-current opacity-20" />
+        <circle
+          cx="10"
+          cy="10"
+          r={r}
+          fill="none"
+          strokeWidth="2.25"
+          strokeLinecap="round"
+          strokeDasharray={c}
+          strokeDashoffset={c * (1 - Math.max(0.04, progress))}
+          className="stroke-current transition-[stroke-dashoffset] duration-300 ease-out"
+        />
+      </svg>
+    </span>
   )
 }

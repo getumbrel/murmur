@@ -10,6 +10,7 @@ import { create } from 'zustand'
 import { gateway, rpc, useConnection, whenOpen, type GatewayEvent, type ServerRequest } from '@/hermes/gateway'
 import { api, HermesError } from '@/hermes/rest'
 import { isMissingMethod } from '@/hermes/compat'
+import { attachmentsDir, fitPhoto, isPhoto, upload } from '@/features/media/upload'
 import { restoreChatConnect } from '@/state/hosted-apps-chat'
 import type { ConnectionRequestPayload } from '@/hermes/vendor/gateway-contract.generated'
 import { foundSubjects, readingLabel, resultLabel, toolLabel } from '@/features/chat/tool-labels'
@@ -787,8 +788,6 @@ function readDataUrl(file: File) {
   })
 }
 
-const isImage = (f: File) => /^image\/(png|jpe?g|gif|webp|bmp)$/i.test(f.type)
-
 /** The full prompt each message went out with (refs included), for Try again. */
 const prompts = new Map<string, string>()
 
@@ -801,7 +800,7 @@ const pictures = new Map<string, string[]>()
 /** What a message shows for its files: thumbnails for pictures, chips for the rest. */
 export function attachmentsOf(files: File[]): UserAttachment[] {
   return files.map((f) =>
-    isImage(f)
+    isPhoto(f)
       ? { kind: 'image', name: f.name || 'Image', url: URL.createObjectURL(f) }
       : { kind: 'file', name: f.name || 'File', size: f.size },
   )
@@ -822,9 +821,9 @@ type SendOptions = {
 }
 
 /**
- * Send a message, with any files. Images go to the model natively; other
- * files are staged in the chat's folder and referenced as `@file:` so Hermes
- * inlines them.
+ * Send a message, with any files. Photos go to the model natively; other
+ * files go to the agent's attachments on Hermes and are referenced as
+ * `@file:`, which Hermes reads into the prompt when they're small enough.
  */
 export async function send(id: string, text: string, files: File[] = [], opts: SendOptions = {}) {
   const chat = getChat(id)
@@ -883,36 +882,44 @@ async function deliver(id: string, itemId: string, steer = false, voice?: SendOp
     asked.set(id, Date.now())
     patch(id, (c) => (isBusy(c) ? undefined : { status: 'thinking' }))
     const refs: string[] = []
+    let dir: string | undefined
     for (const [i, file] of files.entries()) {
       const up = attachmentOf(id, itemId, i)?.path
-      if (isImage(file)) {
+      if (isPhoto(file)) {
         if (up) {
           await onChat(id, 'image.detach', { path: up })
           await onChat(id, 'image.attach', { path: up })
           continue
         }
-        const data = await readDataUrl(file)
+        const photo = await fitPhoto(file)
+        const data = await readDataUrl(photo)
         const res = await onChat<{ path?: string }>(id, 'image.attach_bytes', {
           content_base64: data.split(',')[1] ?? '',
-          filename: file.name || 'image.png',
+          filename: photo.name || 'image.png',
         })
         if (res.path) {
-          placeAttachment(id, itemId, i, res.path)
-          if (file.name) rememberUpload(res.path, file.name)
+          patchAttachment(id, itemId, i, { path: res.path })
+          if (photo.name) rememberUpload(res.path, photo.name)
         }
       } else {
         if (up) {
           refs.push(fileRef(up))
           continue
         }
-        // (PDFs too: pdf.attach needs poppler, which Hermes may not have.)
-        const data = await readDataUrl(file)
-        const res = await onChat<{ ref_text?: string; ref_path?: string }>(id, 'file.attach', {
-          name: file.name || 'file',
-          data_url: data.startsWith('data:;') ? data.replace('data:;', 'data:application/octet-stream;') : data,
-        })
-        if (res.ref_text) refs.push(res.ref_text)
-        if (res.ref_path) placeAttachment(id, itemId, i, res.ref_path)
+        // Onto Hermes's disk, then attached from there. (PDFs too: pdf.attach
+        // needs poppler, which Hermes may not have.)
+        dir ??= await attachmentsDir(chat.profile)
+        const path = await upload(file, dir, (progress) => patchAttachment(id, itemId, i, { progress })).finally(() =>
+          patchAttachment(id, itemId, i, { progress: undefined }),
+        )
+        const res = await onChat<{ path?: string; ref_path?: string; uploaded?: boolean }>(id, 'file.attach', { path })
+        // Outside the chat's folder, Hermes copies it to where it already is, under a second name: ours will do.
+        if (res.uploaded && res.path) void api.delete('/api/files', { path: res.path }).catch(() => {})
+        const ref = res.uploaded ? path : res.ref_path
+        if (ref) {
+          refs.push(fileRef(ref))
+          patchAttachment(id, itemId, i, { path: ref })
+        }
       }
     }
     const prompt = promptOf(refs, text)
@@ -984,12 +991,15 @@ function attachmentOf(id: string, itemId: string, index: number) {
   return item?.kind === 'user' ? item.attachments?.[index] : undefined
 }
 
-/** Where one of a message's files landed on Hermes: what lets it be sent again without sending it twice. */
-function placeAttachment(id: string, itemId: string, index: number, path: string) {
+/**
+ * News of one of a message's files: how far along it is going up, or where it
+ * landed on Hermes (what lets it be sent again without sending it twice).
+ */
+function patchAttachment(id: string, itemId: string, index: number, news: { path?: string; progress?: number }) {
   patch(id, (c) => ({
     items: c.items.map((i) =>
       i.id === itemId && i.kind === 'user' && i.attachments?.[index]
-        ? { ...i, attachments: i.attachments.map((a, at) => (at === index ? { ...a, path } : a)) }
+        ? { ...i, attachments: i.attachments.map((a, at) => (at === index ? { ...a, ...news } : a)) }
         : i,
     ),
   }))

@@ -18,6 +18,7 @@ import { haptic } from '@/lib/haptics'
 import { cn } from '@/lib/cn'
 import { TypeIcon } from '@/features/media/blocks'
 import { formatSize } from '@/features/media/files'
+import { MAX_UPLOAD, isPhoto } from '@/features/media/upload'
 import { CommandPalette, useCommandPalette } from '@/features/commands/command-palette'
 import { parseCommand, type Command } from '@/features/commands/commands'
 import { useAutoGrow, useDraft } from './use-draft'
@@ -83,10 +84,8 @@ type Props = {
 
 type Attachment = { id: string; file: File; url?: string }
 
-// Images go to the model natively (Hermes caps them at 25 MB); other files
-// are read into the prompt, so keep them modest.
-const MAX_IMAGE = 20 * 1024 * 1024
-const MAX_FILE = 25 * 1024 * 1024
+// Photos of any size go: one too big for Hermes is made smaller on the way.
+// Other files can be as big as Hermes takes.
 const MAX_COUNT = 10
 const previewable = (f: File) => /^image\/(png|jpe?g|gif|webp|bmp|avif|svg\+xml)$/i.test(f.type)
 
@@ -145,8 +144,8 @@ export function Composer({
     }
     const ok: File[] = []
     for (const f of files) {
-      const limit = previewable(f) ? MAX_IMAGE : MAX_FILE
-      if (f.size > limit) toast(`“${f.name}” is too large. Files can be up to ${formatSize(limit)}.`)
+      if (f.size > MAX_UPLOAD && !isPhoto(f))
+        toast(`“${f.name}” is too large. Files can be up to ${formatSize(MAX_UPLOAD)}.`)
       else if (f.size === 0) toast(`“${f.name}” is empty.`)
       else ok.push(f)
     }
