@@ -5,6 +5,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { clearUnread, titleTaken, updateChat } from '@/state/chats'
 import { errandsOf, isYours, sentItems, wakeItems, type SavedRow } from '@/features/chat/wake'
+import { holdsSummary } from '@/features/chat/compaction'
 import { api, connect, modelRequests, MURMUR, newChat, q, sleep, turn, whenIdle, type Socket } from './client'
 import { toolsTag } from './fake-model'
 
@@ -14,7 +15,7 @@ beforeAll(async () => {
 })
 afterAll(() => socket?.close())
 
-type Row = { id: number; role: string; content: string | null; timestamp: number; tool_calls?: unknown[]; tool_call_id?: string; tool_name?: string; display_kind?: string | null; display_metadata?: unknown }
+type Row = { id: number; role: string; content: string | null; timestamp: number; tool_calls?: unknown[]; tool_call_id?: string; tool_name?: string; display_kind?: string | null; display_metadata?: unknown; display_content?: string | null }
 
 /** A chat's saved messages, the way the app loads them (oldest first). */
 async function history(stored: string, agent = 'default') {
@@ -334,6 +335,51 @@ describe('coming back to a chat', () => {
     expect([...older.messages, ...newest.messages].map((r) => r.content).sort()).toEqual(
       ['Reply 1', 'Reply 2', 'Reply 3', 'Turn 1 [[say: Reply 1]]', 'Turn 2 [[say: Reply 2]]', 'Turn 3 [[say: Reply 3]]'],
     )
+  })
+
+  it('summarizes a chat that has filled the model’s context, and still reads every message back', async () => {
+    const { runtime, stored } = await newChat(socket)
+    // Long enough to outgrow the recent messages Hermes keeps word for word (about 38K tokens here).
+    const asked = Array.from({ length: 16 }, (_, n) => `Turn ${n + 1}: ${'All the words of a long message. '.repeat(600)}[[say: Reply ${n + 1}]]`)
+    for (const text of asked) await turn(socket, runtime, text)
+    const before = socket.events.length
+    // The model says the chat has filled its context (Hermes takes 256K for a model it can't look up).
+    await turn(socket, runtime, 'Fill it [[say: Full]] [[tokens: 230000]]')
+    const done = await turn(socket, runtime, 'And now? [[say: Done]]')
+    expect(done.payload?.text).toBe('Done')
+    // Hermes says it's summarizing while it does, and when it's done.
+    const kinds = socket.events
+      .slice(before)
+      .filter((e) => e.session_id === runtime && e.type === 'status.update')
+      .map((e) => (e.payload as { kind?: string }).kind)
+    expect(kinds).toContain('compacting')
+    expect(kinds.lastIndexOf('compacted')).toBeGreaterThan(kinds.indexOf('compacting'))
+
+    // Read the way the app reads it: every message is still there, the summary among them once.
+    const path = `/api/sessions/${stored}/messages?${q('default')}&order=latest&limit=500&include_compacted=true`
+    const rows = (await api.get<{ messages: Row[] }>(path)).messages
+    const yours = rows.filter((r) => isYours(r)).map((r) => r.display_content ?? r.content)
+    expect(yours).toEqual([...asked, 'Fill it [[say: Full]] [[tokens: 230000]]', 'And now? [[say: Done]]'])
+    expect(rows.filter((r) => holdsSummary(r))).toHaveLength(1)
+    // Read the way it was before, the summarized messages were missing.
+    const active = (await api.get<{ messages: Row[] }>(path.replace('&include_compacted=true', ''))).messages
+    expect(active.filter((r) => isYours(r)).length).toBeLessThan(yours.length)
+  })
+
+  it('never says a chat was summarized when Hermes refuses to', async () => {
+    const { runtime, stored } = await newChat(socket)
+    // All of it fits in the recent messages Hermes keeps word for word: a summary would only add to it.
+    await turn(socket, runtime, 'Fill it [[say: Full]] [[tokens: 230000]]')
+    const before = socket.events.length
+    await turn(socket, runtime, 'And now? [[say: Done]]')
+    const kinds = socket.events
+      .slice(before)
+      .filter((e) => e.session_id === runtime && e.type === 'status.update')
+      .map((e) => (e.payload as { kind?: string }).kind)
+    expect(kinds).toContain('compacting')
+    expect(kinds).not.toContain('compacted')
+    const rows = (await api.get<{ messages: Row[] }>(`/api/sessions/${stored}/messages?${q('default')}&order=latest&limit=500&include_compacted=true`)).messages
+    expect(rows.filter((r) => holdsSummary(r))).toHaveLength(0)
   })
 
   it('refuses an unknown runtime id with code 4001, which the app re-attaches on', async () => {

@@ -538,6 +538,8 @@
 
 /* Calling the agent, in the chat's header: a tint of its colour, a live pill while the call is on. */
 .call-button {
+  /* Holds its 44px touch target to itself, off the agent's name beside it. */
+  position: relative;
   flex: none;
   display: inline-flex;
   align-items: center;

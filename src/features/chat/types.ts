@@ -155,6 +155,18 @@ export type ChatItem =
       status: 'pending' | 'sent' | 'skipped' | 'expired'
       speaker?: Speaker
     }
+  /**
+   * The agent summarizing the chat's earlier messages so it can keep going
+   * (Hermes's compaction). Read back from history, it has no times.
+   */
+  | {
+      kind: 'compaction'
+      id: string
+      status: 'running' | 'done'
+      startedAt?: number
+      endedAt?: number
+      speaker?: Speaker
+    }
   | { kind: 'error'; id: string; message: string; retryable?: boolean }
   | { kind: 'notice'; id: string; text: string }
   /**

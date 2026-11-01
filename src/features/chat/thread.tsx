@@ -20,6 +20,7 @@ import { Spinner } from '@/ui/spinner'
 import { cn } from '@/lib/cn'
 import type { ApprovalChoice, ChatItem, Speaker } from './types'
 import { Work, type WorkItem } from './work'
+import { asStep } from './compaction'
 import { RichText } from '@/features/media/rich-text'
 import { UserAttachments } from '@/features/media/attachments'
 import { ToolMedia } from '@/features/media/tool-media-view'
@@ -48,7 +49,8 @@ import { ASK_TOOL, OPENS_PAGES } from '@/state/screen'
 type Of<K extends ChatItem['kind']> = Extract<ChatItem, { kind: K }>
 
 type Block =
-  | { kind: 'work'; id: string; items: WorkItem[] }
+  /** `alone`: a step that stands on its own line, which the steps after it don't join. */
+  | { kind: 'work'; id: string; items: WorkItem[]; alone?: boolean }
   | { kind: 'text'; id: string; item: Of<'assistant'> }
   | { kind: 'approval'; id: string; item: Of<'approval'> }
   | { kind: 'clarify'; id: string; item: Of<'clarify'> }
@@ -151,12 +153,15 @@ function toRows(items: ChatItem[], busy: boolean, live: Set<string>): Row[] {
       section.blocks.push({ kind: 'hand', id: item.id, item })
       continue
     }
-    if (
+    if (item.kind === 'compaction') {
+      // Summarizing the chat so far is a moment in the reply, not one of its steps.
+      section.blocks.push({ kind: 'work', id: item.id, items: [asStep(item)], alone: true })
+    } else if (
       item.kind === 'tool' ||
       item.kind === 'thinking' ||
       (item.kind === 'approval' && item.status !== 'pending' && !live.has(item.id))
     ) {
-      if (last?.kind === 'work') last.items.push(item)
+      if (last?.kind === 'work' && !last.alone) last.items.push(item)
       else section.blocks.push({ kind: 'work', id: item.id, items: [item] })
     } else if (item.kind === 'helper') {
       // Helpers sent off together stack together.

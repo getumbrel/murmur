@@ -102,12 +102,25 @@ state in `src/state/access.ts`).
 ## 4. Usage
 
 - **Plan limits and resting models:** see [models-and-onboarding.md](models-and-onboarding.md), §5.1.
-- **This chat** (`src/state/insights.ts`, `chat-screen/chat-info.tsx`): once a chat is over half full, a small
-  ring sits beside the model chip; tapping it (or Chat info in the chat menu) opens a sheet with how full
-  it is, what's taking the room (folded from `session.context_breakdown`'s eight categories into five),
-  the spend and how many times it made room. RPC `session.usage` gives the live context numbers; spend
-  comes from `GET /api/sessions/{id}` (`actual_cost_usd`, else `estimated_cost_usd`), because 0.22 doesn't
-  send cost in `session.usage`. Hidden when a plan covers the chat (`cost_status: included`) or nothing was spent.
+- **This chat** (`src/state/insights.ts`, `chat-screen/chat-info.tsx`): Chat info in the chat menu opens a
+  sheet that says what the agent remembers ("remembers every message", or "summarized earlier messages"
+  once Hermes has compacted the chat), what it's keeping in mind (folded from `session.context_breakdown`'s
+  eight categories into five) and the spend. There is no gauge of how full the context is: Hermes compacts
+  well before it fills (at 50%, raised to 75% for windows under 512K), so a gauge never reaches its end and
+  only drops back afterwards, and there is nothing for the person to do about it. Summarized comes from
+  `compacted` or a summary in the chat's history, not `session.usage`'s `compressions`, which also counts a
+  summary Hermes then refuses. Spend comes from `GET /api/sessions/{id}` (`actual_cost_usd`, else `estimated_cost_usd`),
+  because 0.22 doesn't send cost in `session.usage`. Hidden when a plan covers the chat (`cost_status:
+  included`) or nothing was spent.
+- **Summarizing a chat** (`src/features/chat/compaction.ts`, `state/chats.ts`): while Hermes compacts mid-reply
+  (`status.update` kind `compacting`, ended by `compacted`), the reply's live line says "Summarizing earlier
+  messages"; afterwards a line of its own says "Summarized earlier messages · 14s". Without `compacted` nothing
+  was summarized (Hermes refuses a summary that wouldn't shorten the chat, and carries on), so no line stays.
+  History is read with
+  `include_compacted=true`, as Hermes's own clients read it, so the summarized messages stay in the chat. The
+  summary row (its content opens `[CONTEXT COMPACTION — REFERENCE ONLY]`, or is folded into a message after
+  `[END OF PRIOR CONTEXT — COMPACTION SUMMARY BELOW]`, which Hermes then shows as `display_content`) reads back
+  as the same step, without a time. A summary you ask for with Tidy up (`/compress`) has its own command card.
 - **This week** (agent page, between the tiles and Chats; `agent-page/week.tsx`): `GET /api/analytics/usage?days=31`
   → seven day bars, this month's spend and the three most-used kinds of tool. Hidden until there's been a chat
   that week.

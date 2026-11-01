@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 vi.mock('@/hermes/rest', () => ({ api: {} }))
 vi.mock('@/hermes/gateway', () => ({ rpc: vi.fn() }))
 
-const { chatUsageOf, contextWorthShowing, money, slicesOf, summarizeWeek, tokensText } = await import('./insights')
+const { chatUsageOf, money, slicesOf, summarizeWeek, tokensText } = await import('./insights')
 
 const now = new Date(2026, 9, 15, 14, 0)
 
@@ -87,17 +87,8 @@ describe('the week', () => {
 })
 
 describe('a chat', () => {
-  it('reads how full it is and what it cost', () => {
-    const u = chatUsageOf(
-      { context_percent: 64, context_used: 82_000, context_max: 128_000, compressions: 1 },
-      { estimated_cost_usd: 0.0412 },
-    )
-    expect(u).toEqual({ context: 64, used: 82_000, max: 128_000, cost: 0.0412, included: false, compressions: 1 })
-    expect(contextWorthShowing(u)).toBe(true)
-  })
-
-  it('works the percentage out when Hermes leaves it off', () => {
-    expect(chatUsageOf({ context_used: 32_000, context_max: 128_000 }, null).context).toBe(25)
+  it('reads what it cost', () => {
+    expect(chatUsageOf({}, { estimated_cost_usd: 0.0412 })).toEqual({ cost: 0.0412, included: false })
   })
 
   it('prefers the live figure, then what was billed, then the estimate', () => {
@@ -105,13 +96,10 @@ describe('a chat', () => {
     expect(chatUsageOf({}, { actual_cost_usd: 0.05, estimated_cost_usd: 0.04 }).cost).toBe(0.05)
   })
 
-  it('has no bill when a plan covers it, and no ring before the agent has thought', () => {
-    const plan = chatUsageOf({ context_max: 0 }, { estimated_cost_usd: 0, cost_status: 'included' })
+  it('has no bill when a plan covers it', () => {
+    const plan = chatUsageOf({}, { estimated_cost_usd: 0, cost_status: 'included' })
     expect(plan.included).toBe(true)
     expect(plan.cost).toBeUndefined()
-    expect(plan.context).toBeUndefined()
-    expect(contextWorthShowing(plan)).toBe(false)
-    expect(contextWorthShowing(chatUsageOf({ context_percent: 30, context_max: 100 }, null))).toBe(false)
   })
 
   it('folds Hermes’s categories into a few a person would name', () => {

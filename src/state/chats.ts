@@ -16,6 +16,7 @@ import type { ConnectionRequestPayload } from '@/hermes/vendor/gateway-contract.
 import { foundSubjects, readingLabel, resultLabel, toolLabel, tookFor } from '@/features/chat/tool-labels'
 import { approvalText, detailOf, isCallTo, toolAsked, type ToolCall } from '@/features/chat/approval-text'
 import { explainError } from '@/features/chat/errors'
+import { holdsSummary } from '@/features/chat/compaction'
 import type { ApprovalChoice, ChatItem, ChatStatus, ClarifyQuestion, Reaction, SecretAsk, Speaker } from '@/features/chat/types'
 import { fileRef, parseUserMessage, rememberUpload, type UserAttachment } from '@/features/media/parse'
 import { toolMedia } from '@/features/media/tool-media'
@@ -61,6 +62,8 @@ export type Chat = {
   speaker?: Speaker
   /** Counts finished replies, so widgets know to re-read files the agent may have rewritten. */
   turns?: number
+  /** Hermes said it summarized the chat just now, a summary you asked for included; its history says so afterwards. */
+  summarized?: boolean
   /** What the agent is working toward (/goal), while one is set. */
   goal?: Goal
   /** Counts the times you've been sweet to the agent (thanks, <3), so its face can show it. */
@@ -198,6 +201,14 @@ function rowsToItems(rows: Row[], speaker?: Speaker, errands: Map<string, Errand
   for (const [n, row] of rows.entries()) {
     const at = (row.timestamp ?? 0) * 1000
     const key = `h${row.id ?? items.length}`
+    // Where Hermes summarized the chat so far, the step says so. (A summary
+    // folded into a message is shown with that message, below.)
+    const summary = (row.role === 'user' || row.role === 'assistant') && holdsSummary(row)
+    const shown = typeof row.display_content === 'string' ? row.display_content : undefined
+    if (summary && shown == null) {
+      if (items.at(-1)?.kind !== 'compaction') items.push({ kind: 'compaction', id: key, status: 'done', speaker })
+      continue
+    }
     // Hidden turns aren't for the person at all.
     if (row.display_kind === 'hidden') continue
     // Hermes writing in the person's name: waking the agent (a helper back, say) or a note to the model.
@@ -206,7 +217,6 @@ function rowsToItems(rows: Row[], speaker?: Speaker, errands: Map<string, Errand
       continue
     }
     if (row.role === 'user') {
-      const shown = typeof row.display_content === 'string' ? row.display_content : undefined
       const raw = shown ?? row.content ?? ''
       // A message sent mid-reply is stored wrapped in Hermes's steering markers (an older Hermes shows them).
       const { text, attachments } = parseUserMessage(
@@ -223,6 +233,8 @@ function rowsToItems(rows: Row[], speaker?: Speaker, errands: Map<string, Errand
           reactions: reactionsOf(row.display_metadata?.reactions),
         })
       }
+      // Its reply begins where Hermes summarized what came before.
+      if (summary) items.push({ kind: 'compaction', id: `${key}-sum`, status: 'done', speaker })
     } else if (row.role === 'assistant') {
       if (row.display_kind === 'failed_turn') {
         items.push({ kind: 'notice', id: key, text: 'This reply was stopped before it finished.' })
@@ -233,6 +245,7 @@ function rowsToItems(rows: Row[], speaker?: Speaker, errands: Map<string, Errand
         if (items.at(-1)?.kind !== 'notice') items.push({ kind: 'notice', id: key, text: 'Stopped' })
         continue
       }
+      if (summary) items.push({ kind: 'compaction', id: `${key}-sum`, status: 'done', speaker })
       if (row.reasoning?.trim()) {
         items.push({
           kind: 'thinking',
@@ -245,7 +258,7 @@ function rowsToItems(rows: Row[], speaker?: Speaker, errands: Map<string, Errand
         })
       }
       // The model writes before it calls tools: its words go first.
-      const text = row.content?.trim()
+      const text = (shown ?? row.content)?.trim()
       if (text) {
         const reactions = reactionsOf(row.display_metadata?.reactions)
         items.push({ kind: 'assistant', id: key, text, streaming: false, at, speaker, rowId: row.id, reactions })
@@ -312,15 +325,23 @@ function rowsToItems(rows: Row[], speaker?: Speaker, errands: Map<string, Errand
 /** The most rows Hermes sends at once. A page that full may have older rows behind it. */
 const PAGE = 500
 
-/** A chat's saved rows, oldest first: its newest page, or the one `offset` rows back from its end. */
+/**
+ * A chat's saved rows, oldest first: its newest page, or the one `offset`
+ * rows back from its end. Every message, including the ones Hermes has
+ * since summarized for the model (its own clients read them the same way).
+ */
 async function readRows(id: string, profile: string, offset = 0) {
   type Res = { messages?: Row[]; data?: Row[] }
+  const query = `profile=${encodeURIComponent(profile)}&order=latest&limit=${PAGE}&include_compacted=true`
   const res = await api.get<Res>(
-    `/api/sessions/${encodeURIComponent(id)}/messages?profile=${encodeURIComponent(profile)}&order=latest&limit=${PAGE}${offset ? `&offset=${offset}` : ''}`,
+    `/api/sessions/${encodeURIComponent(id)}/messages?${query}${offset ? `&offset=${offset}` : ''}`,
   )
   const rows = res.messages ?? res.data ?? []
-  // "latest" pages from the end; put them back in reading order.
-  if (rows.length > 1 && (rows[0].id ?? 0) > (rows.at(-1)!.id ?? 0)) rows.reverse()
+  // An older Hermes gave a "latest" page newest first; put it back in reading order. (A row
+  // copied forward when Hermes summarized keeps its place but not its id: both have to say so.)
+  const first = rows[0]
+  const end = rows.at(-1)
+  if (first && end && (first.id ?? 0) > (end.id ?? 0) && (first.timestamp ?? 0) > (end.timestamp ?? 0)) rows.reverse()
   return rows
 }
 
@@ -345,8 +366,9 @@ async function readOlder(id: string) {
   if (!chat?.older || !read) return
   const page = await readRows(id, chat.profile, read.offset)
   // Rows saved since push every page back a little: what's already read is left out.
-  const first = read.rows[0]?.id ?? Infinity
-  const rows = page.filter((r) => (r.id ?? 0) < first)
+  const have = new Set(read.rows.map((r) => r.id))
+  const overlap = page.findIndex((r) => r.id != null && have.has(r.id))
+  const rows = overlap < 0 ? page : page.slice(0, overlap)
   reach.set(id, { rows: rows.length ? rows : read.rows, offset: read.offset + page.length })
   // Read with the rows after them, so a step whose result is on the newer page shows as done.
   const items = rowsToItems([...rows, ...read.rows], chat.speaker)
@@ -1708,7 +1730,7 @@ function onEvent(ev: GatewayEvent) {
         if (payload.already_streamed || !text.trim()) return
         return {
           items: [
-            ...c.items,
+            ...closeThinking(c.items),
             {
               kind: 'assistant',
               id: uid('a'),
@@ -1730,7 +1752,7 @@ function onEvent(ev: GatewayEvent) {
         return {
           status: 'thinking',
           items: [
-            ...c.items,
+            ...endSummarizing(c.items),
             { kind: 'thinking', id: uid('t'), text, streaming: true, startedAt: Date.now(), speaker: c.speaker },
           ],
         }
@@ -1994,11 +2016,31 @@ function onEvent(ev: GatewayEvent) {
       }))
     }
 
+    // Hermes summarizing the chat's earlier messages to keep going: a step of its own while it lasts.
+    case 'status.update': {
+      const kind = String(payload.kind ?? '')
+      if (kind === 'compacted')
+        return patch(id, (c) => ({ summarized: true, items: endSummarizing(c.items, true) }))
+      if (kind !== 'compacting') return
+      return patch(id, (c) => {
+        // (A summary you asked for, with Tidy up, has its own card.)
+        if (!isBusy(c) || c.items.some(summarizing)) return
+        const step: ChatItem = {
+          kind: 'compaction',
+          id: uid('k'),
+          status: 'running',
+          startedAt: Date.now(),
+          speaker: c.speaker,
+        }
+        return { items: [...closeThinking(sealAssistant(c.items)), step] }
+      })
+    }
+
     case 'error':
       return patch(id, (c) => ({
         status: 'error',
         items: [
-          ...c.items,
+          ...endSummarizing(c.items),
           {
             kind: 'error',
             id: uid('e'),
@@ -2034,11 +2076,26 @@ function flowTail(items: ChatItem[]) {
 
 const replaceAt = (items: ChatItem[], at: number, item: ChatItem) => items.map((i, n) => (n === at ? item : i))
 
+/** The agent carries on: its thinking is over, and so is any summarizing Hermes didn't finish. */
 function closeThinking(items: ChatItem[]) {
   const { item: last, at } = flowTail(items)
   return last?.kind === 'thinking' && last.streaming
     ? replaceAt(items, at, { ...last, streaming: false, endedAt: Date.now() })
-    : items
+    : endSummarizing(items)
+}
+
+const summarizing = (i: ChatItem): i is Extract<ChatItem, { kind: 'compaction' }> =>
+  i.kind === 'compaction' && i.status === 'running'
+
+/**
+ * Summarizing the chat is over. Only `compacted` makes it `done`: Hermes also gives up and
+ * carries on (a summary that wouldn't be any shorter, say), and then nothing was summarized.
+ */
+function endSummarizing(items: ChatItem[], done = false) {
+  if (!items.some(summarizing)) return items
+  if (!done) return items.filter((i) => !summarizing(i))
+  const now = Date.now()
+  return items.map((i) => (summarizing(i) ? { ...i, status: 'done' as const, endedAt: now } : i))
 }
 
 function sealAssistant(items: ChatItem[]) {

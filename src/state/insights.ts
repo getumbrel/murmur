@@ -93,10 +93,6 @@ export function money(amount: number) {
 // ── One chat ────────────────────────────────────────────────────────────────
 
 type SessionUsage = {
-  context_percent?: number | null
-  context_used?: number | null
-  context_max?: number | null
-  compressions?: number | null
   cache_hit_pct?: number | null
   cost_usd?: number | null
   cost_status?: string | null
@@ -104,42 +100,25 @@ type SessionUsage = {
 type SessionRow = { estimated_cost_usd?: number | null; actual_cost_usd?: number | null; cost_status?: string | null }
 
 export type ChatUsage = {
-  /** How full its memory of this chat is, 0–100; undefined until the agent has thought in it. */
-  context?: number
-  used?: number
-  max?: number
   /** Spent so far; undefined when it's covered by a plan or nothing's known. */
   cost?: number
   /** Covered by a subscription (a ChatGPT plan), so there's no bill. */
   included: boolean
-  /** Times it tidied older messages away to make room. */
-  compressions: number
 }
 
 const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined)
 
 export function chatUsageOf(usage: SessionUsage | null | undefined, row: SessionRow | null | undefined): ChatUsage {
-  const max = num(usage?.context_max)
-  const used = num(usage?.context_used)
   const status = usage?.cost_status ?? row?.cost_status ?? undefined
   const cost = num(usage?.cost_usd) ?? num(row?.actual_cost_usd) ?? num(row?.estimated_cost_usd)
   return {
-    context: max
-      ? Math.max(0, Math.min(100, num(usage?.context_percent) ?? Math.round(((used ?? 0) / max) * 100)))
-      : undefined,
-    used,
-    max,
     cost: status === 'included' || !cost ? undefined : cost,
     included: status === 'included',
-    compressions: num(usage?.compressions) ?? 0,
   }
 }
 
-/** Worth a glance in the chat itself: the agent is past half its room. */
-export const contextWorthShowing = (u?: ChatUsage) => (u?.context ?? 0) >= 50
-
 /**
- * A chat's room left and spend. Re-read after every reply (`turns`); the
+ * What a chat has cost. Re-read after every reply (`turns`); the
  * live numbers need the chat open in Hermes (`runtimeId`), the spend doesn't.
  */
 export function useChatUsage(chat: { id: string; profile: string; runtimeId?: string; turns?: number } | undefined) {

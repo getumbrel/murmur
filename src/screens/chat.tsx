@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react'
 import { useLocation } from 'wouter'
 import { MotionConfig } from 'motion/react'
-import { Gauge } from 'lucide-react'
+import { Info } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { Thread } from '@/features/chat/thread'
@@ -21,7 +21,7 @@ import { GoalChip } from '@/features/chat-screen/goal-chip'
 import { useLoved } from '@/features/chat-screen/hearts'
 import { BackBadge, backHint, useElsewhere } from '@/features/chat-screen/elsewhere'
 import { ChatMenu, ChatMenuButton, useChatMenu } from '@/features/chat-screen/chat-menu'
-import { ChatInfoSheet, ContextRing } from '@/features/chat-screen/chat-info'
+import { ChatInfoSheet } from '@/features/chat-screen/chat-info'
 import { useAgentChatList, useArchivedChats, useChatActions, type AgentChat } from '@/features/agent-page/chats'
 import { chatOptions } from '@/features/agent-page/chat-list'
 import { RenameChatSheet } from '@/features/agent-page/rename-chat'
@@ -326,9 +326,14 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
     [id],
   )
   const [modelSheet, setModelSheet] = useState(false)
-  // How full this chat is and what it's cost: a ring once it's past half, a sheet from it or the menu.
+  // What the agent remembers of this chat and what it's cost, in a sheet from the menu.
   const usage = useChatUsage(chat).data
   const [info, setInfo] = useState(false)
+  // From the chat itself: Hermes's own count (`compressions`) goes up for a summary it then refuses.
+  const summarized = useMemo(
+    () => !!chat?.summarized || items.some((i) => i.kind === 'compaction' && i.status === 'done'),
+    [chat?.summarized, items],
+  )
   const thinkingDefault = useThinkingDefault(agentId).data
   const thinking = thinkingOf(effort, thinkingDefault)
   const qc = useQueryClient()
@@ -603,7 +608,7 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
     },
     id
       ? [
-          { label: 'Chat info', icon: Gauge, onSelect: () => setInfo(true) },
+          { label: 'Chat info', icon: Info, onSelect: () => setInfo(true) },
           ...options.map((o, i) => ({
             label: o.label,
             icon: o.icon,
@@ -757,18 +762,15 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
               more={appsItem && [appsItem, ...vaultItems]}
               accessory={
                 agent && (
-                  <>
-                    <ModelChip
-                      agent={agent}
-                      pick={pick}
-                      effort={effort}
-                      onPick={onPick}
-                      onThinking={onThinking}
-                      open={modelSheet}
-                      onOpenChange={setModelSheet}
-                    />
-                    <ContextRing usage={usage} onClick={() => setInfo(true)} />
-                  </>
+                  <ModelChip
+                    agent={agent}
+                    pick={pick}
+                    effort={effort}
+                    onPick={onPick}
+                    onThinking={onThinking}
+                    open={modelSheet}
+                    onOpenChange={setModelSheet}
+                  />
                 )
               }
             />
@@ -784,7 +786,16 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
             onRename={(title) => act.rename(renaming!, title)}
           />
         )}
-        {agent && <ChatInfoSheet open={info} onOpenChange={setInfo} agent={agent} usage={usage} runtimeId={chat?.runtimeId} />}
+        {agent && (
+          <ChatInfoSheet
+            open={info}
+            onOpenChange={setInfo}
+            agent={agent}
+            usage={usage}
+            summarized={summarized}
+            runtimeId={chat?.runtimeId}
+          />
+        )}
         {agent && (
           <AppsSheet
             agent={agent}

@@ -1,118 +1,64 @@
-import type { CSSProperties } from 'react'
-import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
+import { useId, type CSSProperties } from 'react'
+import { motion } from 'motion/react'
 import { Sheet } from '@/ui/sheet'
 import { ListGroup, ListRow } from '@/ui/list'
+import { Orb } from '@/ui/orb'
 import { Skeleton } from '@/ui/skeleton'
-import { cn } from '@/lib/cn'
-import {
-  contextWorthShowing,
-  money,
-  tokensText,
-  useContextBreakdown,
-  type ChatUsage,
-  type Slice,
-} from '@/state/insights'
+import { money, tokensText, useContextBreakdown, type ChatUsage, type Slice } from '@/state/insights'
 
-// How much room a chat has left, and what it's cost. Only past half full does
-// a small ring show in the composer; any time, the chat's menu opens the same
-// sheet, where the ring is big and the room is broken down.
+// What the agent remembers of a chat, and what it's cost; the chat's menu
+// opens it. A long chat outgrows what the model can read at once, and Hermes
+// then summarizes its earlier messages: the agent keeps those in brief and
+// the recent ones word for word, while the person still has every one.
 
-const FULL = 80
-
-/** A ring that fills as the agent's room in this chat does. */
-function Ring({ value, size, stroke, className }: { value: number; size: number; stroke: number; className?: string }) {
-  const reduce = useReducedMotion()
-  const r = (size - stroke) / 2
-  const c = 2 * Math.PI * r
-  return (
-    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden className={cn('-rotate-90', className)}>
-      <circle cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth={stroke} className="stroke-fill-3" />
-      <motion.circle
-        cx={size / 2}
-        cy={size / 2}
-        r={r}
-        fill="none"
-        strokeWidth={stroke}
-        strokeLinecap="round"
-        strokeDasharray={c}
-        className={value >= FULL ? 'stroke-warning' : 'stroke-current'}
-        initial={{ strokeDashoffset: c }}
-        animate={{ strokeDashoffset: c * (1 - Math.max(0.02, value / 100)) }}
-        transition={reduce ? { duration: 0 } : { type: 'spring', duration: 0.8, bounce: 0 }}
-      />
-    </svg>
-  )
-}
-
-/** Beside the model chip, once the chat is past half full. */
-export function ContextRing({ usage, onClick }: { usage?: ChatUsage; onClick: () => void }) {
-  const shown = contextWorthShowing(usage)
-  return (
-    <AnimatePresence initial={false}>
-      {shown && (
-        <motion.button
-          type="button"
-          onClick={onClick}
-          aria-label={`${usage!.context}% of this chat’s room used`}
-          title={`${usage!.context}% full`}
-          className="pressable relative flex h-9 flex-none items-center gap-1.5 rounded-full px-2.5 text-footnote font-medium text-ink-3 tabular-nums select-none after:absolute after:-inset-y-1 after:inset-x-0 hover:bg-fill-2 hover:text-ink-2"
-          initial={{ opacity: 0, scale: 0.9 }}
-          animate={{ opacity: 1, scale: 1 }}
-          exit={{ opacity: 0, scale: 0.9 }}
-          transition={{ type: 'spring', duration: 0.35, bounce: 0 }}
-        >
-          <Ring value={usage!.context!} size={15} stroke={2.5} />
-          {/* The number too: a lone arc reads as a spinner. */}
-          {usage!.context}%
-        </motion.button>
-      )}
-    </AnimatePresence>
-  )
-}
-
-/** Each part of the room in the agent's own colour, the chat itself boldest. */
+/** Each part of what it's keeping in mind in the agent's own colour, the chat itself boldest. */
 const SHADE: Record<Slice['id'], number> = { chat: 1, tools: 0.62, instructions: 0.42, skills: 0.3, memory: 0.22 }
 const shade = (id: Slice['id']) => `color-mix(in oklab, var(--accent) ${SHADE[id] * 100}%, transparent)`
 
 type Props = {
   open: boolean
   onOpenChange: (open: boolean) => void
-  agent: { name: string; hue: number }
+  agent: { id: string; name: string; hue: number }
   usage?: ChatUsage
-  /** The chat's live id in Hermes, for what's taking up its room. */
+  /** The agent has summarized this chat's earlier messages (just now, or read back from its history). */
+  summarized: boolean
+  /** The chat's live id in Hermes, for what it's keeping in mind. */
   runtimeId?: string
 }
 
-export function ChatInfoSheet({ open, onOpenChange, agent, usage, runtimeId }: Props) {
+export function ChatInfoSheet({ open, onOpenChange, agent, usage, summarized, runtimeId }: Props) {
   const breakdown = useContextBreakdown(runtimeId, open)
   const slices = breakdown.data?.slices ?? []
   const total = slices.reduce((n, s) => n + s.tokens, 0)
-  const context = usage?.context
-  const full = (context ?? 0) >= FULL
+  const heading = useId()
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange} title="This chat" width={420}>
       <div className="hue-scope space-y-7 pt-1" style={{ '--hue': agent.hue } as CSSProperties}>
         <div className="flex flex-col items-center text-center">
-          <div className="relative grid place-items-center text-accent">
-            <Ring value={context ?? 0} size={120} stroke={10} />
-            <span className="absolute inset-0 grid place-items-center">
-              <span className="text-large font-semibold tracking-[-0.03em] text-ink tabular-nums">
-                {context === undefined ? '—' : `${context}%`}
-              </span>
-            </span>
-          </div>
-          <p className="mt-4 max-w-72 text-subhead text-balance text-ink-2">
-            {context === undefined
-              ? `${agent.name} hasn’t needed much room here yet.`
-              : full
-                ? `Getting full. ${agent.name} will tidy older messages away to make room.`
-                : `of what ${agent.name} can keep in mind`}
+          <Orb hue={agent.hue} size={64} seed={agent.id} />
+          <p className="mt-4 text-body font-semibold tracking-[-0.01em] text-balance text-ink">
+            {summarized ? `${agent.name} summarized earlier messages` : `${agent.name} remembers every message`}
+          </p>
+          <p className="mt-1 max-w-72 text-subhead text-balance text-ink-2">
+            {summarized ? (
+              <>
+                It remembers those in brief, and recent ones <span className="whitespace-nowrap">word for word</span>.
+                You still have them all.
+              </>
+            ) : (
+              <>
+                <span className="whitespace-nowrap">Word for word</span>, from the first one.
+              </>
+            )}
           </p>
         </div>
 
         {(breakdown.isPending && open && runtimeId) || slices.length > 0 ? (
-          <section aria-label="What’s taking up room">
+          <section aria-labelledby={heading} className="space-y-3">
+            <h3 id={heading} className="px-1 text-footnote font-medium text-ink-2">
+              What it’s keeping in mind
+            </h3>
             <div className="flex h-2.5 w-full gap-0.5 overflow-hidden rounded-full bg-fill-2">
               {breakdown.isPending ? (
                 <Skeleton className="h-full w-full" />
@@ -129,7 +75,7 @@ export function ChatInfoSheet({ open, onOpenChange, agent, usage, runtimeId }: P
                 ))
               )}
             </div>
-            <ul className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1.5 px-1">
+            <ul className="grid grid-cols-2 gap-x-4 gap-y-1.5 px-1">
               {slices.map((s) => (
                 <li key={s.id} className="flex items-center gap-2 text-footnote">
                   <span aria-hidden className="size-2 flex-none rounded-full" style={{ background: shade(s.id) }} />
@@ -141,15 +87,12 @@ export function ChatInfoSheet({ open, onOpenChange, agent, usage, runtimeId }: P
           </section>
         ) : null}
 
-        {(usage?.cost !== undefined || usage?.included || !!usage?.compressions) && (
+        {(usage?.cost !== undefined || usage?.included) && (
           <ListGroup>
             {usage?.cost !== undefined && (
               <ListRow title="Spent" detail={<span className="tabular-nums">≈ {money(usage.cost)}</span>} />
             )}
             {usage?.included && <ListRow title="Spent" detail="Covered by your plan" />}
-            {!!usage?.compressions && (
-              <ListRow title="Made room" detail={usage.compressions === 1 ? 'Once' : `${usage.compressions} times`} />
-            )}
           </ListGroup>
         )}
       </div>

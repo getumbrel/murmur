@@ -171,12 +171,12 @@ describe('insights', () => {
     expect(week?.chats).toBeGreaterThan(0)
   })
 
-  it('reads how full a chat is and what fills it', async () => {
+  it('reads what a chat has cost and what fills its context', async () => {
     const { runtime, stored } = await newChat(socket, agent)
     await turn(socket, runtime, 'Hi [[say: Hi]]', agent)
     const usage = await socket.request('session.usage', { session_id: runtime }, 15_000)
     const row = await api.get(`/api/sessions/${stored}?${p}`)
-    expect(chatUsageOf(usage, row)).toMatchObject({ max: expect.any(Number), used: expect.any(Number), included: false, compressions: 0 })
+    expect(chatUsageOf(usage, row)).toMatchObject({ included: false })
 
     const { categories } = await socket.request('session.context_breakdown', { session_id: runtime })
     const slices = slicesOf(categories)

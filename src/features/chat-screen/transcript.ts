@@ -1,5 +1,6 @@
 import type { ChatItem } from '@/features/chat/types'
 import { proseOf } from '@shared/message.ts'
+import { SUMMARIZED } from '@/features/chat/compaction'
 
 // A chat as plain markdown, for pasting into Notes or a message: who said
 // what, with the agent's steps folded to one line each.
@@ -47,6 +48,9 @@ export function transcript(items: ChatItem[], { title, agent }: { title?: string
       }
       case 'tool':
         step(name, `${item.label}${item.detail ? `: ${item.detail}` : ''}${item.status === 'error' ? ' (didn’t work)' : ''}`)
+        break
+      case 'compaction':
+        if (item.status === 'done') step(name, SUMMARIZED)
         break
       case 'approval':
         step(

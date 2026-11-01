@@ -11,6 +11,10 @@
 //                          then answer "[[tools done]]"
 //   [[slow: ms]]           stream the answer a word at a time, `ms` apart
 //   [[fail]]               refuse the request (400), an error Hermes won't retry
+//   [[tokens: n]]          say the request took `n` tokens, as a chat that has
+//                          filled the model's context would (Hermes summarizes
+//                          the chat's earlier messages before the next turn)
+//   [[slow summary: ms]]   anywhere in the chat: Hermes's summary of it takes `ms`
 //
 // Anything else gets "pong". Requests without tools (titles and other side
 // calls Hermes makes) always get a short plain answer. Every request is kept,
@@ -33,7 +37,8 @@ type Message = { role: string; content?: unknown; tool_calls?: unknown[] }
 type Body = { model?: string; stream?: boolean; messages?: Message[]; tools?: unknown[] }
 
 export type Reply =
-  | { kind: 'text'; text: string; delayMs?: number }
+  /** `delayMs`: between the words it streams; `waitMs`: before it answers at all. */
+  | { kind: 'text'; text: string; delayMs?: number; waitMs?: number }
   | { kind: 'tool'; name: string; args: string }
   | { kind: 'fail' }
 
@@ -49,11 +54,22 @@ export function toolsTag(calls: { name: string; args: Record<string, unknown> }[
   return `[[tools: ${Buffer.from(JSON.stringify(calls)).toString('base64')}]]`
 }
 
+/** How many tokens to say the request took: what the newest message asks, or a few. */
+export function promptTokens(body: Body) {
+  const lastUser = textOf([...(body.messages ?? [])].reverse().find((m) => m.role === 'user')?.content)
+  return Number(lastUser.match(/\[\[tokens:\s*(\d+)\s*\]\]/)?.[1] ?? 12)
+}
+
 /** What to answer, from the newest message Hermes sent. Exported for the suite's own unit test. */
 export function decide(body: Body): Reply {
   const messages = body.messages ?? []
   const last = messages.at(-1)
-  if (!body.tools?.length) return { kind: 'text', text: 'Contract test' }
+  if (!body.tools?.length) {
+    // A side call: a title, or Hermes summarizing the chat (which quotes it).
+    const chat = messages.map((m) => textOf(m.content)).join('\n')
+    const waitMs = Number(chat.match(/\[\[slow summary:\s*(\d+)\s*\]\]/)?.[1] ?? 0)
+    return { kind: 'text', text: 'Contract test', waitMs: waitMs || undefined }
+  }
 
   // Several tools in a row: the next one for each result Hermes has sent back this turn.
   const userAt = messages.map((m) => m.role).lastIndexOf('user')
@@ -181,10 +197,12 @@ export async function startFakeModel(port = 0) {
 
       const model = body.model ?? MODELS[0]
       const id = `fake-${++calls}`
-      const usage = { prompt_tokens: 12, completion_tokens: 4, total_tokens: 16 }
+      const prompt = promptTokens(body)
+      const usage = { prompt_tokens: prompt, completion_tokens: 4, total_tokens: prompt + 4 }
       const toolCall = reply.kind === 'tool' ? { id: `call_${calls}`, type: 'function', function: { name: reply.name, arguments: reply.args } } : null
       const finish = toolCall ? 'tool_calls' : 'stop'
 
+      if (reply.kind === 'text' && reply.waitMs) await sleep(reply.waitMs)
       if (!body.stream) {
         const message = toolCall ? { role: 'assistant', content: null, tool_calls: [toolCall] } : { role: 'assistant', content: reply.kind === 'text' ? reply.text : '' }
         return send(200, { id, object: 'chat.completion', created: 1, model, choices: [{ index: 0, message, finish_reason: finish }], usage })
