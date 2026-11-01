@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { QueryClient, QueryObserver } from '@tanstack/react-query'
 import type { Agent } from './agents'
 
@@ -12,7 +12,7 @@ vi.mock('./umbrel-context', () => ({ ensureUmbrelContext: vi.fn(async () => {}) 
 vi.mock('./umbrel-mcp', () => ({ ensureUmbrelMcp: vi.fn(async () => {}) }))
 vi.mock('./mail', () => ({ forgetInheritedMail: vi.fn(async () => {}) }))
 
-const { agentsKey, createAgent, revealAgent } = await import('./agents')
+const { agentsKey, createAgent, revealAgent, rosterQuery } = await import('./agents')
 const { rpc } = (await import('@/hermes/gateway')) as unknown as { rpc: ReturnType<typeof vi.fn> }
 const { listProfiles } = (await import('@/hermes/compat')) as unknown as { listProfiles: ReturnType<typeof vi.fn> }
 
@@ -96,5 +96,46 @@ describe('a new agent', () => {
     await expect(make()).rejects.toThrow('Hermes said no')
     await revealAgent(qc, 'coder')
     expect(names(qc)).toEqual(['Hermes', 'Zed'])
+  })
+})
+
+describe('the roster kept on this device', () => {
+  let kept: Map<string, string>
+  const KEY = 'murmur:roster'
+  const open = () => new QueryObserver(new QueryClient(), rosterQuery)
+
+  beforeEach(() => {
+    kept = new Map()
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => kept.get(key) ?? null,
+      setItem: (key: string, value: string) => void kept.set(key, value),
+    })
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('is shown at once on a later open, and Hermes is read all the same', async () => {
+    kept.set(KEY, JSON.stringify([agent('default', { name: 'Hermes', isDefault: true })]))
+    const observer = open()
+    expect(observer.getCurrentResult()).toMatchObject({ isPending: false, data: [{ id: 'default' }] })
+
+    const off = observer.subscribe(() => {})
+    await vi.waitFor(() => expect(observer.getCurrentResult().data?.map((a) => a.id)).toEqual(['default', 'zed']))
+    expect(listProfiles).toHaveBeenCalled()
+    expect((JSON.parse(kept.get(KEY)!) as Agent[]).map((a) => a.id)).toEqual(['default', 'zed'])
+    off()
+  })
+
+  it('leaves a first open waiting for Hermes, with nothing to show yet', () => {
+    expect(open().getCurrentResult()).toMatchObject({ isPending: true, data: undefined })
+  })
+
+  it('is ignored when it can’t be read, or is empty', () => {
+    kept.set(KEY, 'not json')
+    expect(open().getCurrentResult().isPending).toBe(true)
+    kept.set(KEY, '[]')
+    expect(open().getCurrentResult().isPending).toBe(true)
   })
 })

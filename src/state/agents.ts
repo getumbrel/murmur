@@ -303,25 +303,55 @@ const byRank = (a: Agent, b: Agent) => Number(b.isDefault) - Number(a.isDefault)
 /** Agents still being made here, as they'll look: they join the roster when their creator says so. */
 const hatching = new Map<string, Agent>()
 
-export function useAgents() {
-  return useQuery({
-    queryKey: agentsKey,
-    queryFn: async () => {
-      const res = {
-        profiles: await placeLastChats(await listProfiles<Profile & { [key: string]: unknown }>({ include_sessions: true })),
-      }
-      const hues = storedHues()
-      const pending = pendingLooks()
-      const prefix = devPrefix()
-      for (const p of res.profiles) if (pending[p.name] && !hatching.has(p.name)) void finishLook(p, pending[p.name])
-      return res.profiles
+// The roster as it last stood, so a cold open (a tapped notification, above all)
+// shows it at once and catches up behind it. Reading it afresh means a look at
+// every agent's newest chat, and at routines' quiet runs, before anything's drawn.
+const ROSTER_KEY = scoped('murmur:roster')
+
+function keptRoster() {
+  try {
+    const kept = JSON.parse(localStorage.getItem(ROSTER_KEY) ?? 'null') as Agent[] | null
+    return Array.isArray(kept) && kept.length ? kept : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function keepRoster(agents: Agent[]) {
+  try {
+    localStorage.setItem(ROSTER_KEY, JSON.stringify(agents))
+  } catch {
+    // No storage here: the next open waits for Hermes.
+  }
+  return agents
+}
+
+export const rosterQuery = {
+  queryKey: agentsKey,
+  initialData: keptRoster,
+  // Stale from the start: shown now, and asked for now.
+  initialDataUpdatedAt: 0,
+  queryFn: async () => {
+    const res = {
+      profiles: await placeLastChats(await listProfiles<Profile & { [key: string]: unknown }>({ include_sessions: true })),
+    }
+    const hues = storedHues()
+    const pending = pendingLooks()
+    const prefix = devPrefix()
+    for (const p of res.profiles) if (pending[p.name] && !hatching.has(p.name)) void finishLook(p, pending[p.name])
+    return keepRoster(
+      res.profiles
         .filter((p) => !import.meta.env.DEV || !p.name.startsWith(TEST_PREFIX) || (prefix && p.name.startsWith(prefix)))
         .filter((p) => !hatching.has(p.name))
         .map((p) => toAgent(p, hues, pending))
-        .sort(byRank)
-    },
-    staleTime: 30_000,
-  })
+        .sort(byRank),
+    )
+  },
+  staleTime: 30_000,
+}
+
+export function useAgents() {
+  return useQuery(rosterQuery)
 }
 
 export function useAgent(id: string | undefined) {

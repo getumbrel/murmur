@@ -168,7 +168,8 @@ function Gate({ children }: { children: ReactNode }) {
     const t = setTimeout(() => setGroupsLate(true), 1500)
     return () => clearTimeout(t)
   }, [agents.isPending])
-  const roster = agents.isPending || (groups.isPending && !groupsLate)
+  // Opened straight into a chat, as a tapped notification is: that's what they came for.
+  const roster = agents.isPending || (groups.isPending && !groupsLate && !location.startsWith('/chat/'))
   // Someone this browser has welcomed goes in without waiting on the model
   // check, which still runs: a model that's gone since still sends them to set up.
   const welcomed = useWelcomed()
