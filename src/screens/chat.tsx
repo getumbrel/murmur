@@ -96,6 +96,7 @@ import {
 import {
   speakerOf,
   useAgentChats,
+  useAgentGone,
   useAgents,
   type Agent,
 } from '@/state/agents'
@@ -111,6 +112,7 @@ const NONE: ChatItem[] = []
 export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: string }) {
   const agents = useAgents()
   const agent = agents.data?.find((a) => a.id === agentId)
+  const gone = useAgentGone(agentId)
   const [, navigate] = useLocation()
   const wide = useIsWide()
   const fine = useFinePointer()
@@ -620,7 +622,7 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
       : [],
   )
 
-  if (agents.isSuccess && !agent)
+  if (gone)
     return (
       <div className="grid h-dvh place-items-center bg-bg">
         <NotFound

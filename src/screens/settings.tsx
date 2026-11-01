@@ -9,7 +9,7 @@ import { ByUmbrel, MurmurMark, SOURCE_URL, UmbrelIcon } from '@/ui/brand'
 import { useIsWide } from '@/lib/use-media'
 import { api } from '@/hermes/rest'
 import { useConnection } from '@/hermes/gateway'
-import { useAgents, type Agent } from '@/state/agents'
+import { useAgents, useAgentsAsTheyAre, type Agent } from '@/state/agents'
 import { modelName, useModels } from '@/state/models'
 import { Page, Tile } from '@/features/settings/page'
 import { Bone } from '@/features/home/bone'
@@ -59,7 +59,7 @@ export function SettingsScreen({ section }: { section?: string }) {
   const wide = useIsWide()
   const top = section && section in SECTIONS ? (section as Section) : null
   // Agents made elsewhere get the same picture setting as the main agent.
-  usePicturesSync(useAgents().data?.map((a) => a.id))
+  usePicturesSync(useAgentsAsTheyAre()?.map((a) => a.id))
 
   return (
     <>

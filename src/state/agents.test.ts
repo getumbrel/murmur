@@ -12,7 +12,7 @@ vi.mock('./umbrel-context', () => ({ ensureUmbrelContext: vi.fn(async () => {}) 
 vi.mock('./umbrel-mcp', () => ({ ensureUmbrelMcp: vi.fn(async () => {}) }))
 vi.mock('./mail', () => ({ forgetInheritedMail: vi.fn(async () => {}) }))
 
-const { agentsKey, createAgent, revealAgent, rosterQuery } = await import('./agents')
+const { agentsKey, asTheyAre, createAgent, revealAgent, rosterQuery, saysGone } = await import('./agents')
 const { rpc } = (await import('@/hermes/gateway')) as unknown as { rpc: ReturnType<typeof vi.fn> }
 const { listProfiles } = (await import('@/hermes/compat')) as unknown as { listProfiles: ReturnType<typeof vi.fn> }
 
@@ -102,7 +102,10 @@ describe('a new agent', () => {
 describe('the roster kept on this device', () => {
   let kept: Map<string, string>
   const KEY = 'murmur:roster'
+  const keep = (...agents: Agent[]) => kept.set(KEY, JSON.stringify({ version: __MURMUR_VERSION__, agents }))
+  const keptIds = () => (JSON.parse(kept.get(KEY)!) as { agents: Agent[] }).agents.map((a) => a.id)
   const open = () => new QueryObserver(new QueryClient(), rosterQuery)
+  const hermes = agent('default', { name: 'Hermes', isDefault: true })
 
   beforeEach(() => {
     kept = new Map()
@@ -117,14 +120,14 @@ describe('the roster kept on this device', () => {
   })
 
   it('is shown at once on a later open, and Hermes is read all the same', async () => {
-    kept.set(KEY, JSON.stringify([agent('default', { name: 'Hermes', isDefault: true })]))
+    keep(hermes)
     const observer = open()
     expect(observer.getCurrentResult()).toMatchObject({ isPending: false, data: [{ id: 'default' }] })
 
     const off = observer.subscribe(() => {})
     await vi.waitFor(() => expect(observer.getCurrentResult().data?.map((a) => a.id)).toEqual(['default', 'zed']))
     expect(listProfiles).toHaveBeenCalled()
-    expect((JSON.parse(kept.get(KEY)!) as Agent[]).map((a) => a.id)).toEqual(['default', 'zed'])
+    expect(keptIds()).toEqual(['default', 'zed'])
     off()
   })
 
@@ -135,7 +138,50 @@ describe('the roster kept on this device', () => {
   it('is ignored when it can’t be read, or is empty', () => {
     kept.set(KEY, 'not json')
     expect(open().getCurrentResult().isPending).toBe(true)
-    kept.set(KEY, '[]')
+    keep()
     expect(open().getCurrentResult().isPending).toBe(true)
+  })
+
+  it('is ignored when another version of Murmur kept it, as its agents may lack what this one needs', () => {
+    kept.set(KEY, JSON.stringify({ version: '0.0.1', agents: [hermes] }))
+    expect(open().getCurrentResult().isPending).toBe(true)
+    // As the first kept rosters were, with no version at all.
+    kept.set(KEY, JSON.stringify([hermes]))
+    expect(open().getCurrentResult().isPending).toBe(true)
+  })
+
+  it('says no agent is gone, and names none to write to, till Hermes has answered', async () => {
+    // Kept before Zed was made, and while Old was still there.
+    keep(hermes, agent('old'))
+    const observer = open()
+    const before = observer.getCurrentResult()
+    expect(saysGone(before, 'zed')).toBe(false)
+    expect(asTheyAre(before)).toBeUndefined()
+
+    const off = observer.subscribe(() => {})
+    await vi.waitFor(() => expect(asTheyAre(observer.getCurrentResult())?.map((a) => a.id)).toEqual(['default', 'zed']))
+    const after = observer.getCurrentResult()
+    expect(saysGone(after, 'zed')).toBe(false)
+    expect(saysGone(after, 'old')).toBe(true)
+    off()
+  })
+
+  it('names the agents to write to once Hermes has answered, on a first open too', async () => {
+    const observer = open()
+    expect(asTheyAre(observer.getCurrentResult())).toBeUndefined()
+    expect(saysGone(observer.getCurrentResult(), 'zed')).toBe(false)
+    const off = observer.subscribe(() => {})
+    await vi.waitFor(() => expect(asTheyAre(observer.getCurrentResult())?.map((a) => a.id)).toEqual(['default', 'zed']))
+    off()
+  })
+
+  it('takes a change made before Hermes answers, so it still shows and lands (state/records.ts)', () => {
+    keep(hermes, agent('zed', { name: 'Zed' }))
+    const qc = new QueryClient()
+    const observer = new QueryObserver(qc, rosterQuery)
+    const off = observer.subscribe(() => {})
+    qc.setQueryData<Agent[]>(agentsKey, (list) => list?.map((a) => (a.id === 'zed' ? { ...a, name: 'Zed 2' } : a)))
+    expect(observer.getCurrentResult().data?.map((a) => a.name)).toEqual(['Hermes', 'Zed 2'])
+    off()
   })
 })

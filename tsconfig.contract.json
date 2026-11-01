@@ -16,5 +16,5 @@
     "types": ["node", "vite/client"],
     "paths": { "@/*": ["./src/*"], "@shared/*": ["./shared/*"] }
   },
-  "include": ["test/contract"]
+  "include": ["test/contract", "src/env.d.ts"]
 }

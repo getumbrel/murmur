@@ -7,7 +7,7 @@ import { Button, IconButton } from '@/ui/button'
 import { useIsWide } from '@/lib/use-media'
 import { cn } from '@/lib/cn'
 import { useUpFrom } from '@/lib/transitions'
-import { speakerOf, useAgents } from '@/state/agents'
+import { speakerOf, useAgentGone, useAgents } from '@/state/agents'
 import { useAgentStatus } from '@/state/status'
 import { createChat, send } from '@/state/chats'
 import type { VaultKind } from '@/state/vault'
@@ -39,6 +39,7 @@ type Sheet = 'model' | 'routines' | 'memory' | 'apps' | 'passwords' | 'telegram'
 export function AgentScreen({ agentId }: { agentId: string }) {
   const agents = useAgents()
   const agent = agents.data?.find((a) => a.id === agentId)
+  const gone = useAgentGone(agentId)
   const [location, navigate] = useLocation()
   const wide = useIsWide()
   const status = useAgentStatus(agentId)
@@ -57,7 +58,7 @@ export function AgentScreen({ agentId }: { agentId: string }) {
   const [perk, setPerk] = useState(false)
   const up = useUpFrom(location)
 
-  if (agents.isSuccess && !agent)
+  if (gone)
     return (
       <div className="grid h-dvh place-items-center bg-bg">
         <NotFound

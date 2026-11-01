@@ -6,7 +6,7 @@ import { IconButton } from '@/ui/button'
 import { Orb } from '@/ui/orb'
 import { useIsWide } from '@/lib/use-media'
 import { cn } from '@/lib/cn'
-import { useAgents } from '@/state/agents'
+import { useAgentGone, useAgents } from '@/state/agents'
 import { useAgentStatus } from '@/state/status'
 import { NotFound } from '@/features/chat-screen/not-found'
 import { ChatList } from '@/features/agent-page/chat-list'
@@ -22,6 +22,7 @@ import { useAgentChatList } from '@/features/agent-page/chats'
 export function ChatsScreen({ agentId }: { agentId: string }) {
   const agents = useAgents()
   const agent = agents.data?.find((a) => a.id === agentId)
+  const gone = useAgentGone(agentId)
   const [, navigate] = useLocation()
   const wide = useIsWide()
   const status = useAgentStatus(agentId)
@@ -32,7 +33,7 @@ export function ChatsScreen({ agentId }: { agentId: string }) {
     if (wide) navigate(`/agent/${agentId}`, { replace: true })
   }, [wide, agentId, navigate])
 
-  if (agents.isSuccess && !agent)
+  if (gone)
     return (
       <div className="grid h-dvh place-items-center bg-bg">
         <NotFound

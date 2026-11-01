@@ -306,12 +306,25 @@ const hatching = new Map<string, Agent>()
 // The roster as it last stood, so a cold open (a tapped notification, above all)
 // shows it at once and catches up behind it. Reading it afresh means a look at
 // every agent's newest chat, and at routines' quiet runs, before anything's drawn.
+//
+// It's in the cache from the start, so a change made before Hermes answers
+// still lands (state/records.ts), but it has no time (dataUpdatedAt 0) till
+// Hermes answers or a change here gives it one. Till then nothing says an
+// agent's gone on its word, as it may be older than the agent, and nothing
+// that writes to each agent acts on it, as it may name one that's gone
+// (asTheyAre). Kept with the version that wrote it, as an Agent from an older
+// Murmur may lack what this one needs. Signing out forgets it
+// (state/connection.ts): it has names and chat titles in it.
 const ROSTER_KEY = scoped('murmur:roster')
+
+type Kept = { version: string; agents: Agent[] }
+/** The Murmur keeping it (vite.config.ts; the contract suite builds without one). */
+const VERSION = typeof __MURMUR_VERSION__ === 'string' ? __MURMUR_VERSION__ : ''
 
 function keptRoster() {
   try {
-    const kept = JSON.parse(localStorage.getItem(ROSTER_KEY) ?? 'null') as Agent[] | null
-    return Array.isArray(kept) && kept.length ? kept : undefined
+    const kept = JSON.parse(localStorage.getItem(ROSTER_KEY) ?? 'null') as Partial<Kept> | null
+    return kept?.version === VERSION && Array.isArray(kept.agents) && kept.agents.length ? kept.agents : undefined
   } catch {
     return undefined
   }
@@ -319,7 +332,7 @@ function keptRoster() {
 
 function keepRoster(agents: Agent[]) {
   try {
-    localStorage.setItem(ROSTER_KEY, JSON.stringify(agents))
+    localStorage.setItem(ROSTER_KEY, JSON.stringify({ version: VERSION, agents } satisfies Kept))
   } catch {
     // No storage here: the next open waits for Hermes.
   }
@@ -329,7 +342,7 @@ function keepRoster(agents: Agent[]) {
 export const rosterQuery = {
   queryKey: agentsKey,
   initialData: keptRoster,
-  // Stale from the start: shown now, and asked for now.
+  // Stale from the start: shown now, and asked for now. Timeless till Hermes answers (above).
   initialDataUpdatedAt: 0,
   queryFn: async () => {
     const res = {
@@ -352,6 +365,24 @@ export const rosterQuery = {
 
 export function useAgents() {
   return useQuery(rosterQuery)
+}
+
+type Roster = { isSuccess: boolean; dataUpdatedAt: number; data: Agent[] | undefined }
+
+/** The roster once Hermes has answered, for anything that writes to each agent: undefined while it's only the kept one. */
+export const asTheyAre = (roster: Roster) => (roster.dataUpdatedAt > 0 ? roster.data : undefined)
+
+/** Whether Hermes has said `agentId` isn't among its agents (the kept roster can't: see above). */
+export const saysGone = (roster: Roster, agentId: string) =>
+  roster.isSuccess && roster.dataUpdatedAt > 0 && !roster.data?.some((a) => a.id === agentId)
+
+export function useAgentsAsTheyAre() {
+  return asTheyAre(useAgents())
+}
+
+/** For an agent's pages: it's been deleted, Hermes says. */
+export function useAgentGone(agentId: string) {
+  return saysGone(useAgents(), agentId)
 }
 
 export function useAgent(id: string | undefined) {

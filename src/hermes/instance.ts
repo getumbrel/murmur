@@ -60,6 +60,17 @@ export function adoptHermes(id: string) {
   return true
 }
 
+/** Forget what this browser kept under `key` ('murmur:…') for every Hermes, as signing out of Murmur locks them all. */
+export function forgetForEveryHermes(key: string) {
+  const name = key.replace(/^murmur:/, '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const filed = new RegExp(`^murmur(@[A-Za-z0-9]+)?:${name}$`)
+  try {
+    for (const stored of Object.keys(localStorage)) if (filed.test(stored)) localStorage.removeItem(stored)
+  } catch {
+    // Private mode: nothing was kept.
+  }
+}
+
 /** Forget what this browser kept for a removed Hermes. */
 export function forgetHermesStorage(id: string) {
   const scope = scopeOf(id)

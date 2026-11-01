@@ -11,7 +11,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { create } from 'zustand'
 import { hermesHeaders, SESSION_CHECK } from '@/hermes/rest'
 import { stopGateway } from '@/hermes/gateway'
-import { adoptHermes, browserHermes, forgetHermesStorage, HERMES_GONE, scoped, tabHermes } from '@/hermes/instance'
+import { adoptHermes, browserHermes, forgetForEveryHermes, forgetHermesStorage, HERMES_GONE, tabHermes } from '@/hermes/instance'
 
 export type ConnectionMode = 'token' | 'password' | 'unknown'
 export type ConnectionStatus = 'connected' | 'unreachable' | 'needs-login' | 'bad-login'
@@ -316,12 +316,8 @@ export function useMurmurSession() {
 
   const signOut = useCallback(async () => {
     await fetch('/murmur/logout', { method: 'POST' }).catch(() => {})
-    // The roster kept for a quick open (state/agents.ts) has names and chat titles in it.
-    try {
-      localStorage.removeItem(scoped('murmur:roster'))
-    } catch {
-      // No storage here, so nothing was kept.
-    }
+    // The roster kept for a quick open (state/agents.ts) has names and chat titles in it, for each Hermes.
+    forgetForEveryHermes('murmur:roster')
     location.reload()
   }, [])
 

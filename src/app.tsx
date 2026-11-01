@@ -10,7 +10,7 @@ import { wireChats } from '@/state/chats'
 import { wireSessionLists } from '@/state/sync'
 import { wireChatConnects } from '@/state/hosted-apps-chat'
 import { markWelcomed, useReadiness, useWelcomed } from '@/state/readiness'
-import { useAgents, useFreshAgents } from '@/state/agents'
+import { useAgents, useAgentsAsTheyAre, useFreshAgents } from '@/state/agents'
 import { usePicturesSync } from '@/state/pictures'
 import { useUmbrelContextSync } from '@/state/umbrel-context'
 import { useDesktopToolsSync } from '@/state/toolsets'
@@ -261,7 +261,8 @@ function Overlays() {
 
 /** Upkeep that runs on every screen once we're in. */
 function Background() {
-  const agents = useAgents().data
+  // Not the roster kept from last time: these write to each agent, and it may name one that's gone.
+  const agents = useAgentsAsTheyAre()
   useFreshAgents()
   // New agents (here or from other apps) get "Let agents make pictures" too.
   usePicturesSync(agents?.map((a) => a.id))
