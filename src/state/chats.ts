@@ -18,6 +18,7 @@ import { explainError } from '@/features/chat/errors'
 import type { ApprovalChoice, ChatItem, ChatStatus, ClarifyQuestion, Reaction, SecretAsk, Speaker } from '@/features/chat/types'
 import { fileRef, parseUserMessage, rememberUpload, type UserAttachment } from '@/features/media/parse'
 import { toolMedia } from '@/features/media/tool-media'
+import { foundIn, pendingIn } from '@/features/umbrel/finds'
 import { scoped } from '@/hermes/instance'
 import { held, hold, release, type Held } from '@/state/outbox'
 import {
@@ -189,6 +190,7 @@ const mailSubjects = new Map<string, Map<string, string>>()
 function rowsToItems(rows: Row[], speaker?: Speaker, errands: Map<string, Errand> = errandsOf(rows)): ChatItem[] {
   const items: ChatItem[] = []
   const tools = new Map<string, Extract<ChatItem, { kind: 'tool' }>[]>()
+  const argsOf = new Map<Extract<ChatItem, { kind: 'tool' }>, unknown>()
   const plans = new Set<string>()
   // What the agent's email searches found, so a read says which email.
   const subjects = new Map<string, string>()
@@ -271,6 +273,7 @@ function rowsToItems(rows: Row[], speaker?: Speaker, errands: Map<string, Errand
             startedAt: at,
             speaker,
           }
+          argsOf.set(tool, args)
           return tool
         })
         items.push(...steps)
@@ -296,6 +299,8 @@ function rowsToItems(rows: Row[], speaker?: Speaker, errands: Map<string, Errand
         for (const [id, subject] of foundSubjects(tool.name, row.content)) subjects.set(id, subject)
         const media = toolMedia(tool.name, row.content)
         if (media.length) tool.media = media
+        const found = tool.status === 'done' ? foundIn(tool.name, argsOf.get(tool), row.content) : undefined
+        if (found) tool.found = found
       }
     }
   }
@@ -808,6 +813,12 @@ type SendOptions = {
   attachments?: UserAttachment[]
   /** What the bubble says, when it differs from what's sent (a command's message). */
   shown?: string
+  /**
+   * Said out loud on a call: Hermes answers it as a voice turn (fast, brief,
+   * speakable), with the recent spoken exchange for context and whether you
+   * cut the last answer off.
+   */
+  voice?: { interrupted?: boolean; context?: string }
 }
 
 /**
@@ -838,7 +849,7 @@ export async function send(id: string, text: string, files: File[] = [], opts: S
   patch(id, (c) => ({ items: [...c.items, item], status: now ?? c.status }))
   unsent.set(itemId, { text, files })
   hold(id, { id: itemId, text: shown, ...(files.length ? { files: files.map((f) => f.name) } : {}), after })
-  await deliver(id, itemId, busy)
+  await deliver(id, itemId, busy, opts.voice)
 }
 
 /**
@@ -861,7 +872,7 @@ export function heldBack(id: string): Held[] {
  * once more by where it is (still queued if Hermes kept the chat, gone if it
  * didn't: once either way).
  */
-async function deliver(id: string, itemId: string, steer = false) {
+async function deliver(id: string, itemId: string, steer = false, voice?: SendOptions['voice']) {
   const chat = getChat(id)
   const message = unsent.get(itemId)
   if (!chat || !message) return
@@ -912,7 +923,17 @@ async function deliver(id: string, itemId: string, steer = false) {
     const steered =
       steer && !files.length && (await onChat(id, 'session.steer', { text: prompt }).then(() => true, () => false))
     if (!steered) {
-      const res = await onChat<SubmitResult>(id, 'prompt.submit', { text: prompt, profile: chat.profile })
+      const spoken = voice
+        ? {
+            voice_turn: true,
+            surface: 'voice-live',
+            // What you said, for Hermes's titler, which would otherwise see mostly its note for the model.
+            title_preview: text,
+            ...(voice.context ? { voice_context: voice.context } : {}),
+            ...(voice.interrupted ? { interrupted: true } : {}),
+          }
+        : {}
+      const res = await onChat<SubmitResult>(id, 'prompt.submit', { text: prompt, profile: chat.profile, ...spoken })
       if (res.user_row_id != null) setRowId(id, itemId, res.user_row_id)
     }
     unsent.delete(itemId)
@@ -925,6 +946,28 @@ async function deliver(id: string, itemId: string, steer = false) {
       items: [...c.items, { kind: 'error', id: uid('e'), message: attachError(e), retryable: true }],
     }))
   }
+}
+
+/**
+ * An exchange the live voice answered by itself, into the chat as ordinary messages. It only ever
+ * reached OpenAI, so Hermes files it through the image's plugin. Throws while a turn is running
+ * (409): Hermes's history can't change under one.
+ */
+export async function keepSpoken(id: string, you: string, voice: string, itemId: string) {
+  const chat = getChat(id)
+  if (!chat) return
+  const { rows } = await api.post<{ rows: [number, number] }>(
+    `/api/plugins/murmur-voice/spoken?profile=${encodeURIComponent(chat.profile)}`,
+    { chat: id, you, voice },
+  )
+  const at = Date.now()
+  patch(id, (c) => ({
+    items: [
+      ...c.items,
+      { kind: 'user', id: itemId, text: you, at, rowId: rows[0] },
+      { kind: 'assistant', id: uid('a'), text: voice, streaming: false, at, speaker: c.speaker, rowId: rows[1] },
+    ],
+  }))
 }
 
 /** Hermes has the message, or answered it with an error: it's waiting on nothing now. */
@@ -1718,6 +1761,7 @@ function onEvent(ev: GatewayEvent) {
           status: 'running',
           startedAt: Date.now(),
           speaker: c.speaker,
+          looking: pendingIn(name, payload.args),
         }
         // Its approval got here first: the step goes above the card, and the card learns what it's about.
         const asked = c.items.findIndex(
@@ -1749,10 +1793,11 @@ function onEvent(ev: GatewayEvent) {
       const failed = Boolean(
         result && (result.status === 'blocked' || result.exit_code === -1 || (result.error && result.error !== null)),
       )
-      const media = failed ? [] : toolMedia(String(payload.name ?? ''), payload.result)
       const name = String(payload.name ?? '')
-      const found = foundSubjects(name, payload.result)
-      if (found.length) mailSubjects.set(id, new Map([...(mailSubjects.get(id) ?? []), ...found]))
+      const media = failed ? [] : toolMedia(name, payload.result)
+      const found = failed ? undefined : foundIn(name, payload.args, payload.result)
+      const subjects = foundSubjects(name, payload.result)
+      if (subjects.length) mailSubjects.set(id, new Map([...(mailSubjects.get(id) ?? []), ...subjects]))
       const read = failed ? undefined : resultLabel(name, payload.result)
       return patch(id, (c) => {
         // Helpers sent off to work in the background stay live after this turn,
@@ -1768,6 +1813,7 @@ function onEvent(ev: GatewayEvent) {
                 status: failed ? 'error' : 'done',
                 endedAt: Date.now(),
                 media: media.length ? media : i.media,
+                found: found ?? i.found,
               },
             ]
           // Answered somewhere else (another window, Telegram): the step says how it went, so the card goes.

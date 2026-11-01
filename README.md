@@ -95,7 +95,7 @@ Every agent is a **Buddy**, a little character in its own colour that shows what
   <img src="docs/readme/work-light.png" alt="Basil working through a plan for next week's dinners with three helpers, and on a phone, the finished shopping list with hearts on both sides" width="100%">
 </picture>
 
-Answers stream in as they're written. For bigger jobs, the agent writes a plan and ticks it off as it goes, and sends helpers off to work side by side, each with a line on what it's doing. When it's done, it all folds away. Searches, pages and commands show up in plain words, and you can open any step. Stop it, steer it mid-answer, or have the answer read aloud. Tap a heart on a reply, and your agents react to you, too.
+Answers stream in as they're written. For bigger jobs, the agent writes a plan and ticks it off as it goes, and sends helpers off to work side by side, each with a line on what it's doing. When it's done, it all folds away. Searches, pages and commands show up in plain words, and you can open any step. Stop it, steer it mid-answer, or have the answer read aloud. Or call your agent and have the whole conversation out loud: your agent answers in its own voice, and the photos and pages it finds show up as it speaks. Tap a heart on a reply, and your agents react to you, too.
 
 ### Connect your apps
 

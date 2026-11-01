@@ -38,6 +38,22 @@ import { useAppsPlusItem } from '@/features/apps/plus-item'
 import { VaultSheet } from '@/features/vault'
 import { useVaultPlusItems } from '@/features/vault/plus-items'
 import { stopSpeaking, useSpeech } from '@/features/voice/speech'
+import { TalkCall } from '@/features/talk/call'
+import { endCall, setMinimized, startCall, switchVoice, useTalk, type CallPlan } from '@/features/talk/talk'
+import { micSupported } from '@/features/talk/mic'
+import { SecureSheet } from '@/features/talk/secure-sheet'
+import { CallButton } from '@/features/talk/call-button'
+import { VoiceSheet } from '@/features/talk/voice-sheet'
+import {
+  agentLanguage,
+  chooseVoice,
+  engineOf,
+  pickVoice,
+  useVoice,
+  useVoiceRefresh,
+  type AutoVoice,
+  type Voice,
+} from '@/features/talk/voice-setup'
 import { useConnection } from '@/hermes/gateway'
 import { useChatUsage } from '@/state/insights'
 import { useRunOf } from '@/state/routines'
@@ -89,6 +105,9 @@ const NONE: ChatItem[] = []
 // One agent, one conversation. /chat/:agent opens the latest chat (or a new
 // one), /chat/:agent/new is a blank chat that Hermes only creates on the first
 // message, and /chat/:agent/:id is a stored chat.
+
+/** What a call says it's moving to. */
+const VOICE_NAMES = { local: 'Local', chatgpt: 'ChatGPT', openai: 'OpenAI', elevenlabs: 'ElevenLabs' }
 
 export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: string }) {
   const agents = useAgents()
@@ -456,6 +475,105 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
   }, [])
 
   const newChat = () => navigate(`/chat/${agentId}/new`)
+
+  // A call with the agent, over this chat. Every turn lands in the thread.
+  // (A call started in a blank chat carries on into the chat its first turn makes.)
+  const ours = (s: { chatId?: string; profile?: string }) =>
+    s.profile === agentId &&
+    (s.chatId ? s.chatId === id || s.chatId === born.current : isDraft || (!!id && id === born.current))
+  const talkOpen = useTalk((s) => s.open && !s.minimized && ours(s))
+  const inCall = useTalk((s) => s.open && ours(s))
+  const [secure, setSecure] = useState(false)
+  const talkVoice = useVoice(agent ? agentId : undefined)
+  const [voiceSheet, setVoiceSheet] = useState<'start' | 'change' | null>(null)
+  const refreshVoice = useVoiceRefresh()
+  /** How a call with this voice listens and speaks; null when a voice someone chose can't speak. */
+  const planFor = (v: Voice): CallPlan | null => {
+    // Nobody has picked a voice (or Murmur did): the best this Hermes already has, saved as it connects.
+    if (v.unset || v.auto) {
+      const [choice, ...rest] = pickVoice(v, agent?.provider)
+      // Nothing here can talk yet: the sheet says what's missing.
+      if (!choice) return null
+      const save = async (c: AutoVoice) => {
+        if (c === 'own') return
+        await chooseVoice(agentId, c, { auto: true, language: agentLanguage(v) }).catch(() => {})
+        void refreshVoice(agentId)
+      }
+      // (Already this voice: nothing to save.)
+      const setup = choice === v.choice && v.ready ? Promise.resolve() : save(choice)
+      return {
+        engine: engineOf(choice),
+        stream: choice === 'local' && !!v.plugin,
+        fallbackStream: !!v.plugin,
+        keeps: !!v.plugin,
+        fallbacks: rest.map(engineOf),
+        // After the first choice's own save, so the fallback is the one Hermes keeps.
+        onFallback: (engine) => setup.then(() => save(rest.find((c) => engineOf(c) === engine)!)),
+        setup,
+      }
+    }
+    return v.ready ? { engine: engineOf(v.choice), stream: v.choice === 'local' && !!v.plugin, keeps: !!v.plugin } : null
+  }
+  const onCall = (from: { x: number; y: number }) => {
+    if (!agent) return
+    // Browsers only lend the microphone to secure pages.
+    if (!micSupported()) return setSecure(true)
+    const v = talkVoice.data
+    // Hermes hasn't said yet how this agent talks (it's slow just after it starts): the call opens
+    // now, since the tap is what lets it make sound, and finds its voice when the answer's in.
+    if (!v)
+      return call(
+        from,
+        talkVoice.refetch().then(({ data }) => {
+          const plan = data ? planFor(data) : null
+          if (!plan) setVoiceSheet('start')
+          return plan
+        }),
+      )
+    const plan = planFor(v)
+    // A voice someone chose that can't speak asks for another.
+    if (!plan) return setVoiceSheet('start')
+    call(from, plan)
+  }
+  const call = (from: { x: number; y: number }, plan: CallPlan | Promise<CallPlan | null>) => {
+    if (!agent) return
+    startCall({
+      ...(plan instanceof Promise ? { plan } : plan),
+      chatId: id,
+      profile: agentId,
+      origin: from,
+      name: agent.name,
+      newChat: id
+        ? undefined
+        : async () => {
+            const newId = await createChat(agentId, { speaker: speakerOf(agent), ...draftPick, reasoning: draftEffort })
+            born.current = newId
+            navigate(`/chat/${agentId}/${newId}`, { replace: true })
+            return newId
+          },
+    })
+  }
+  // Leaving the chat hangs up (and lets go of the microphone).
+  const mine = useRef(ours)
+  mine.current = ours
+  useEffect(
+    () => () => {
+      const s = useTalk.getState()
+      if (s.open && mine.current(s)) endCall()
+    },
+    [agentId],
+  )
+  useEffect(() => {
+    const s = useTalk.getState()
+    if (s.open && s.chatId && s.chatId !== id && s.chatId !== born.current) endCall()
+  }, [id])
+  // Reopened over HTTPS from the sheet: one tap from the call.
+  const [resumed, setResumed] = useState(false)
+  useEffect(() => {
+    if (window.location.hash !== '#talk' || !agent) return
+    history.replaceState(null, '', window.location.pathname + window.location.search)
+    if (micSupported()) setResumed(true)
+  }, [agent])
   // The agent's own page holds its other chats, routines, memory and settings.
   const openAgent = () => navigate(`/agent/${agentId}`)
   const goal = chat?.goal
@@ -515,7 +633,8 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
     <MotionConfig reducedMotion="user">
       <div
         ref={root}
-        className="hue-scope relative flex h-dvh flex-col overflow-hidden bg-bg"
+        className="hue-scope relative flex h-dvh flex-col overflow-hidden bg-bg talk-under"
+        data-talk={talkOpen || undefined}
         style={{ '--hue': agent?.hue ?? 278, height: inset ? `calc(100dvh - ${inset}px)` : undefined } as CSSProperties}
       >
         {/* The agent's colour, barely there, behind the header. */}
@@ -541,6 +660,7 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
           backBadge={<BackBadge unread={elsewhere.unread} waiting={elsewhere.waiting} />}
           backHint={backHint(elsewhere.unread, elsewhere.waiting)}
           menu={wide && hasMessages && <ChatMenuButton menu={menu} />}
+          call={agent && <CallButton name={agent.name} live={inCall} disabled={openError} onCall={onCall} />}
           titleProps={hasMessages ? menu.hold : undefined}
         />
 
@@ -680,6 +800,53 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
           />
         )}
         {agent && <VaultSheet agent={agent} open={vaultSheet} onOpenChange={setVaultSheet} adding={adding} />}
+
+        {agent && inCall && (
+          <TalkCall
+            name={agent.name}
+            hue={agent.hue}
+            seed={agent.id}
+            media={media}
+            onType={() => {
+              setMinimized(true)
+              composer.current?.focus()
+            }}
+            local={talkVoice.data?.local}
+            onSetup={() => {
+              setMinimized(true)
+              setVoiceSheet('change')
+            }}
+          />
+        )}
+        {agent && (
+          <VoiceSheet
+            open={!!voiceSheet}
+            onOpenChange={(open) => !open && setVoiceSheet(null)}
+            profile={agentId}
+            name={agent.name}
+            hue={agent.hue}
+            provider={agent.provider}
+            onChosen={
+              inCall
+                ? (choice) => {
+                    const plugin = !!talkVoice.data?.plugin
+                    switchVoice({ engine: engineOf(choice), stream: choice === 'local' && plugin, fallbackStream: plugin, keeps: plugin }, VOICE_NAMES[choice])
+                  }
+                : undefined
+            }
+            onStart={voiceSheet === 'start' ? (from, choice) => call(from, { engine: engineOf(choice), stream: choice === 'local' && !!talkVoice.data?.plugin, keeps: !!talkVoice.data?.plugin }) : undefined}
+          />
+        )}
+        <SecureSheet
+          open={secure || resumed}
+          ready={resumed}
+          onOpenChange={(open) => (setSecure(open), !open && setResumed(false))}
+          name={agent?.name ?? 'your agent'}
+          onStart={(from) => {
+            setResumed(false)
+            onCall(from)
+          }}
+        />
 
         <DropZone
           disabled={!agent || !!starting}

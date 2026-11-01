@@ -19,6 +19,18 @@ export const umbrelApp = ios && /\bUmbrelApp\//.test(navigator.userAgent)
 /** An address as a link iOS opens in Safari, the one way out of another app's browser. */
 export const safariLink = (url: string) => url.replace(/^https?:/, 'x-safari-https:')
 
+/**
+ * Where a link out of Murmur goes: a new tab, which the iPhone app shows in place or in Safari's
+ * sheet, and that's right for an app on the Umbrel or any other site. umbrelOS itself is the
+ * exception (openUmbrelPage says why): the app only changes it behind Murmur's page, so there it's
+ * Safari, by a link tapped in the same window. umbrelOS is the address Murmur's on, with no port.
+ */
+export function linkOut(url: string, app = umbrelApp, page: Pick<Location, 'href' | 'hostname'> = location) {
+  const to = URL.canParse(url, page.href) ? new URL(url, page.href) : undefined
+  const umbrelOS = to && /^https?:$/.test(to.protocol) && to.hostname === page.hostname && !to.port
+  return app && umbrelOS ? { href: safariLink(to.href) } : { href: url, target: '_blank', rel: 'noopener noreferrer' }
+}
+
 // Safari 26 on an iPhone starts with its compact tab bar, where Share sits in
 // the ⋯ menu. (Its user agent keeps saying iOS 18; Version/ is Safari's own.)
 export const compactSafari =

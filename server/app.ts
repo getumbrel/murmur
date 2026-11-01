@@ -16,6 +16,8 @@ import { createProxy, refuse } from './proxy.ts'
 import { handleSetup, setupSettled, startSetup } from './setup.ts'
 import { handleSiteIcon } from './site-icons.ts'
 import { handleTelegram, startTelegram, stopTelegram } from './telegram.ts'
+import { handleUmbrel } from './umbrel.ts'
+import { handleVoiceKey } from './voice-keys.ts'
 
 // Model servers commonly installed alongside Hermes on umbrelOS.
 const localCandidates = memo(() =>
@@ -246,6 +248,8 @@ export function startServer(options: ServerOptions = {}): Promise<RunningServer>
       if (await handleConnection(req, res, path)) return
       if (await handleTelegram(req, res, path)) return
       if (await handleNotifications(req, res, path)) return
+      if (await handleUmbrel(req, res, url)) return
+      if (await handleVoiceKey(req, res, url)) return
       if (await handleSiteIcon(req, res, url)) return
       if (path === '/murmur/local') return sendJson(res, 200, { servers: await discoverLocal() })
       sendJson(res, 404, { error: 'not_found' })

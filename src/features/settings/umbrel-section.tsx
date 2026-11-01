@@ -5,7 +5,7 @@ import { motion } from 'motion/react'
 import { ArrowUpRight, Check, KeyRound, X } from 'lucide-react'
 import { Button } from '@/ui/button'
 import { Orb, OrbStack } from '@/ui/orb'
-import { TextArea, Label } from '@/ui/field'
+import { TextArea, TextField, Label } from '@/ui/field'
 import { ListGroup, ListRow } from '@/ui/list'
 import { Spinner } from '@/ui/spinner'
 import { UmbrelIcon } from '@/ui/brand'
@@ -14,8 +14,16 @@ import { umbrelApp } from '@/lib/device'
 import { PastSafariWarning } from '@/features/home/install-tip'
 import { useAgents, type Agent } from '@/state/agents'
 import {
+  connectOtherUmbrel,
   connectUmbrel,
+  disconnectOtherUmbrel,
   disconnectUmbrel,
+  otherLabel,
+  otherUmbrelName,
+  otherUmbrelUrl,
+  UmbrelUnreachableError,
+  useOtherUmbrels,
+  type OtherUmbrel,
   findUmbrelKey,
   maskKey,
   clearHandoffKey,
@@ -32,6 +40,8 @@ import { ask } from './ask'
 // you paste whatever it shows here and Murmur adds it to each agent itself
 // (umbrel-mcp.ts), so no chat or model provider ever sees it. It's "this
 // Umbrel" when Murmur runs there too, and "your Umbrel" from anywhere else.
+// Other Umbrels (reached over Tailscale, say) connect the same way, at the
+// address you give.
 
 export function UmbrelSection() {
   const qc = useQueryClient()
@@ -125,6 +135,192 @@ export function UmbrelSection() {
           {progress && <AgentList agents={agents} has={(id) => progress.includes(id)} working />}
         </>
       )}
+
+      {!status.isPending && !progress && <OtherUmbrels ids={ids} />}
+    </div>
+  )
+}
+
+/** Umbrels other than this one, each at its own address, and a way to add one. */
+function OtherUmbrels({ ids }: { ids: string[] }) {
+  const qc = useQueryClient()
+  const others = useOtherUmbrels()
+  const [adding, setAdding] = useState(false)
+  const refresh = () => qc.invalidateQueries({ queryKey: ['other-umbrels'] })
+
+  const disconnect = async (umbrel: OtherUmbrel) => {
+    const yes = await ask({
+      title: `Disconnect ${umbrel.label}?`,
+      body: 'Your agents won’t be able to use it until you connect it again. To retire the key too, remove it in that Umbrel’s umbrelOS.',
+      action: 'Disconnect',
+      destructive: true,
+    })
+    if (!yes) return
+    try {
+      await disconnectOtherUmbrel(umbrel.name, ids)
+      toast.success('Disconnected')
+    } catch {
+      toast.error('Couldn’t reach Hermes. Check that it’s running, then try again.')
+    } finally {
+      void refresh()
+    }
+  }
+
+  return adding ? (
+    <OtherForm
+      ids={ids}
+      taken={(others.data ?? []).map((u) => u.name)}
+      onDone={(label) => {
+        setAdding(false)
+        void refresh()
+        if (label) toast.success(`Your agents can use ${label} now`)
+      }}
+    />
+  ) : (
+    <ListGroup title="Other Umbrels" footer="Another Umbrel your agents can use, like one reached over Tailscale.">
+      {(others.data ?? []).map((u) => (
+        <ListRow
+          key={u.name}
+          icon={<UmbrelIcon size={29} />}
+          title={u.label}
+          subtitle={new URL(u.url).host}
+          detail="Disconnect"
+          onClick={() => void disconnect(u)}
+        />
+      ))}
+      <ListRow title="Connect another Umbrel" chevron onClick={() => setAdding(true)} />
+    </ListGroup>
+  )
+}
+
+/** Where it is, then its key: checked by Hermes reaching it before any agent changes. */
+function OtherForm({ ids, taken, onDone }: { ids: string[]; taken: string[]; onDone: (label?: string) => void }) {
+  const [address, setAddress] = useState('')
+  const [name, setName] = useState('')
+  const [text, setText] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [problem, setProblem] = useState<string | null>(null)
+  const url = otherUmbrelUrl(address)
+  const key = findUmbrelKey(text)
+  const server = url ? otherUmbrelName(url, name) : undefined
+  const clash = !!server && taken.includes(server)
+  const host = url ? new URL(url).host : ''
+
+  const submit = async () => {
+    if (!url || !key || !server || clash) return
+    setBusy(true)
+    setProblem(null)
+    try {
+      await connectOtherUmbrel(url, key, ids, server)
+      onDone(otherLabel(server))
+    } catch (e) {
+      setProblem(
+        e instanceof UmbrelUnreachableError
+          ? `Hermes couldn’t reach ${host}. Check the address, and that both this Hermes and that Umbrel are on your Tailscale network.`
+          : e instanceof UmbrelKeyError
+            ? 'That Umbrel didn’t accept the key. Make a new one in its umbrelOS and paste it again.'
+            : 'Couldn’t reach Hermes. Check that it’s running, then try again.',
+      )
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="px-4">
+        <h3 className="text-body font-semibold tracking-[-0.015em]">Connect another Umbrel</h3>
+        <p className="mt-0.5 text-subhead text-ink-2">Your agents use it the same way, at its own address.</p>
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor="other-umbrel-address">Where it is</Label>
+        <TextField
+          id="other-umbrel-address"
+          value={address}
+          onChange={(e) => {
+            setAddress(e.target.value)
+            setProblem(null)
+          }}
+          placeholder="Its Tailscale address, like 100.64.0.5"
+          inputMode="url"
+          autoComplete="off"
+          autoCapitalize="off"
+          spellCheck={false}
+          disabled={busy}
+        />
+        <p className="px-4 text-footnote text-ink-3">
+          Hermes connects to it from here, so use an address this Hermes can reach. A .local name only works on the same network.
+        </p>
+      </div>
+
+      {url && (
+        <ListGroup footer="Turn it on, choose what agents can use, then copy what it shows.">
+          <ListRow
+            icon={<UmbrelIcon size={29} />}
+            title="Open AI agents on that Umbrel"
+            subtitle={host}
+            onClick={() => window.open(`${new URL(url).origin}/settings/mcp`, '_blank', 'noopener')}
+            trailing={<ArrowUpRight size={18} className="-mr-1 flex-none text-ink-3" />}
+          />
+        </ListGroup>
+      )}
+
+      <div className="space-y-2">
+        <Label htmlFor="other-umbrel-key">Its key</Label>
+        {key ? (
+          <div className="flex items-center gap-3 rounded-xl bg-fill-1 py-3 pr-2 pl-4">
+            <span className="grid size-8 flex-none place-items-center rounded-full bg-success/15 text-success" aria-hidden>
+              <KeyRound size={16} strokeWidth={2.25} />
+            </span>
+            <span className="min-w-0 flex-1 truncate font-mono text-footnote text-ink-3">{maskKey(key)}</span>
+            <Button variant="ghost" size="sm" className="text-ink-2" disabled={busy} onClick={() => setText('')}>
+              Clear
+            </Button>
+          </div>
+        ) : (
+          <TextArea
+            id="other-umbrel-key"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder="The message from that Umbrel’s umbrelOS, or just its key"
+            spellCheck={false}
+            autoComplete="off"
+            autoCapitalize="off"
+            className="min-h-24 text-subhead"
+            disabled={busy}
+          />
+        )}
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="other-umbrel-name" hint="Optional">
+          What to call it
+        </Label>
+        <TextField
+          id="other-umbrel-name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder={url ? otherLabel(otherUmbrelName(url)) : 'Umbrel Office'}
+          autoComplete="off"
+          disabled={busy}
+        />
+        {clash && <p className="px-4 text-footnote text-danger">You already have an Umbrel called that. Give this one another name.</p>}
+      </div>
+
+      {problem && (
+        <p role="alert" className="px-4 text-footnote text-danger">
+          {problem}
+        </p>
+      )}
+
+      <div className="grid gap-2">
+        <Button variant="accent" size="lg" disabled={!url || !key || clash} loading={busy} onClick={() => void submit()}>
+          Connect
+        </Button>
+        <Button variant="ghost" size="lg" className="text-ink-2" onClick={() => onDone()} disabled={busy}>
+          Cancel
+        </Button>
+      </div>
     </div>
   )
 }

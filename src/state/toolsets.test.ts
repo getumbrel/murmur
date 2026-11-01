@@ -51,6 +51,9 @@ describe('desktop tips, tours and reactions', () => {
 
   it('leave an agent that was set not to react', () => {
     expect(murmurDisplay({ in_app_tips: false, in_app_tours: false, message_reactions: false })).toBeNull()
+    // Steps have to reach Murmur as they happen.
+    expect(murmurDisplay({ in_app_tips: false, in_app_tours: false, message_reactions: true, tool_progress: 'off' })).toEqual({ tool_progress: 'all' })
+    expect(murmurDisplay({ in_app_tips: false, in_app_tours: false, message_reactions: true, tool_progress: 'new' })).toBeNull()
   })
 })
 

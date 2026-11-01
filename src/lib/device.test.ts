@@ -46,3 +46,32 @@ describe('a link to Safari', () => {
     expect(safariLink('http://192.168.1.20/settings/mcp')).toBe('x-safari-https://192.168.1.20/settings/mcp')
   })
 })
+
+describe('a link out of Murmur', () => {
+  const page = { href: 'https://umbrel.local:8484/chat/main', hostname: 'umbrel.local' }
+  const newTab = (href: string) => ({ href, target: '_blank', rel: 'noopener noreferrer' })
+  const from = async (ua: string, url: string) => (await on(ua)).linkOut(url, ua === UMBREL_APP, page)
+
+  it('leaves the iPhone app for Safari when it goes to umbrelOS, by a link in the same window', async () => {
+    for (const path of ['/photos?q=Luke', '/files/Home/Documents', '/app-store/immich', '/settings/mcp']) {
+      expect(await from(UMBREL_APP, `https://umbrel.local${path}`)).toEqual({ href: `x-safari-https://umbrel.local${path}` })
+    }
+    expect(await from(UMBREL_APP, 'http://umbrel.local/photos')).toEqual({ href: 'x-safari-https://umbrel.local/photos' })
+  })
+
+  it('stays a new tab for what the app shows by itself', async () => {
+    for (const url of [
+      'https://umbrel.local:2283/', // An app on the Umbrel, which it opens in place.
+      'https://100.64.0.2/photos', // Another Umbrel, in Safari's sheet.
+      'https://huggingface.co/kyutai/pocket-tts',
+      'https://auth.openai.com/codex/device',
+      'mailto:hello@umbrel.com',
+    ])
+      expect(await from(UMBREL_APP, url)).toEqual(newTab(url))
+  })
+
+  it('is always a new tab everywhere else', async () => {
+    expect(await from(SAFARI_26, 'https://umbrel.local/photos')).toEqual(newTab('https://umbrel.local/photos'))
+    expect(await from(CHROME, 'https://umbrel.local/photos')).toEqual(newTab('https://umbrel.local/photos'))
+  })
+})

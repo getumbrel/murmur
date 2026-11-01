@@ -17,9 +17,11 @@
 // and GET /_requests returns them, so a test can see what Hermes asked.
 //
 // It also plays a connected app that turns Hermes away: /mcp/unauthorized
-// answers 401 and /mcp/missing 404, as an MCP server would. And a server that
-// wants a key: everything under /keyed/ is the same, but answers 401 without
-// `Bearer ${MODEL_KEY}`.
+// answers 401 and /mcp/missing 404, as an MCP server would. /mcp/umbrel is a
+// small umbrelOS: its search and get_photo tools, answering in umbrelOS's
+// shapes (src/features/umbrel/finds.ts), with no sessions, as umbrelOS keeps none.
+// And a server that wants a key: everything under /keyed/ is the same, but
+// answers 401 without `Bearer ${MODEL_KEY}`.
 
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
@@ -77,6 +79,63 @@ export function decide(body: Body): Reply {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
+export const UMBREL_KEY = `umbrelmcp_${'c'.repeat(32)}_${'d'.repeat(64)}`
+export const UMBREL_PHOTO = 'e'.repeat(64)
+/** A 1×1 PNG, for the picture get_photo hands back. */
+const PIXEL = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
+
+type Rpc = { jsonrpc?: string; id?: number | string; method?: string; params?: { name?: string; arguments?: Record<string, unknown> } }
+
+/** One JSON-RPC message to the fake umbrelOS: its answer, or null for a notification. */
+function umbrel(message: Rpc): unknown {
+  const answer = (result: unknown) => ({ jsonrpc: '2.0', id: message.id, result })
+  const text = (value: unknown) => ({ type: 'text', text: JSON.stringify(value, null, 2) })
+  const readOnly = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+  switch (message.method) {
+    case 'initialize':
+      return answer({ protocolVersion: '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'umbrelOS', version: 'contract' } })
+    case 'ping':
+      return answer({})
+    case 'tools/list':
+      return answer({
+        tools: [
+          {
+            name: 'search',
+            description: "Search the owner's files and Photos library.",
+            inputSchema: { type: 'object', properties: { query: { type: 'string' }, scope: { type: 'string', enum: ['everything', 'files', 'photos'] } }, required: ['query'] },
+            annotations: readOnly,
+          },
+          {
+            name: 'get_photo',
+            description: 'Get a Photos item and the picture itself.',
+            inputSchema: { type: 'object', properties: { id: { type: 'string' }, image: { type: 'boolean' } }, required: ['id'] },
+            annotations: readOnly,
+          },
+        ],
+      })
+    case 'tools/call': {
+      const { name } = message.params ?? {}
+      if (name === 'search')
+        return answer({
+          content: [
+            text({
+              status: { available: true },
+              understood: { filters: [{ type: 'place', label: 'Big Sur' }], text: 'beach' },
+              results: [
+                { path: '/Home/Photos/IMG_1.HEIC', name: 'IMG_1.HEIC', type: 'image/heic', kind: 'photo', match: 'visual', score: 0.9, photo: { id: UMBREL_PHOTO, takenAt: '2025-06-14T09:00:00-07:00' } },
+                { path: '/Home/Documents/Rental.pdf', name: 'Rental.pdf', type: 'application/pdf', kind: 'document', match: 'text', score: 0.7, snippet: 'private beach access', page: 3 },
+              ],
+            }),
+          ],
+        })
+      if (name === 'get_photo')
+        return answer({ content: [text({ id: UMBREL_PHOTO, kind: 'image', takenAt: '2025-06-14T09:00:00-07:00' }), { type: 'image', data: PIXEL, mimeType: 'image/png' }] })
+      return answer({ content: [{ type: 'text', text: `No tool ${name}` }], isError: true })
+    }
+  }
+  return message.id === undefined ? null : { jsonrpc: '2.0', id: message.id, error: { code: -32601, message: 'Method not found' } }
+}
+
 export async function startFakeModel(port = 0) {
   const requests: { path: string; body: Body; auth?: string }[] = []
   let calls = 0
@@ -98,6 +157,14 @@ export async function startFakeModel(port = 0) {
 
       if (req.method === 'GET' && path === '/_requests') return send(200, requests)
       if (path === '/mcp/unauthorized') return send(401, { error: 'Unauthorized' })
+      if (path === '/mcp/umbrel') {
+        if (auth !== `Bearer ${UMBREL_KEY}`) return send(401, { error: 'Unauthorized' })
+        if (req.method !== 'POST') return send(405, { error: 'Method not allowed' })
+        const messages = (Array.isArray(body) ? body : [body]) as Rpc[]
+        const answers = messages.map(umbrel).filter((a) => a !== null)
+        if (!answers.length) return void res.writeHead(202).end()
+        return send(200, Array.isArray(body) ? answers : answers[0])
+      }
       if (path === '/mcp/missing') return send(404, { error: 'Not Found' })
       if (path.startsWith('/keyed/')) {
         if (auth !== `Bearer ${MODEL_KEY}`) return send(401, { error: { message: 'Invalid API key', type: 'invalid_request_error' } })

@@ -1,0 +1,348 @@
+/* What an agent found on its Umbrel (cards.tsx). */
+
+.found {
+  width: min(100%, 440px);
+  padding: 12px;
+  border-radius: var(--radius-xl);
+  background: var(--fill-1);
+  box-shadow: inset 0 0 0 0.5px var(--line);
+}
+.found-one {
+  padding: 14px;
+}
+
+.found-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 2px 4px 10px;
+}
+.found-link {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  height: 28px;
+  padding: 0 10px 0 12px;
+  border-radius: 999px;
+  background: var(--fill-1);
+  color: var(--accent);
+  font-size: var(--text-footnote);
+  font-weight: 500;
+}
+.found-link:hover {
+  background: var(--fill-2);
+}
+
+/* Photos: the one it's talking about large, the rest beside and beneath it. */
+.found-mosaic {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 3px;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+}
+.found-mosaic[data-count='1'] {
+  grid-template-columns: 1fr;
+}
+.found-mosaic[data-count='2'] {
+  grid-template-columns: repeat(2, 1fr);
+}
+.found-mosaic:is([data-count='3'], [data-count='6']) > :first-child {
+  grid-row: span 2;
+  grid-column: span 2;
+}
+
+.found-tile {
+  position: relative;
+  aspect-ratio: 1;
+  overflow: hidden;
+  background: var(--fill-1);
+  cursor: zoom-in;
+  transition: scale 160ms var(--ease-out);
+}
+.found-mosaic[data-count='1'] > .found-tile {
+  aspect-ratio: 4 / 3;
+}
+.found-tile:active {
+  scale: 0.985;
+}
+.found-tile img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  filter: blur(8px);
+  scale: 1.04;
+  transition:
+    opacity 360ms var(--ease-out),
+    filter 480ms var(--ease-out),
+    scale 600ms var(--ease-out);
+}
+.found-tile img[data-loaded] {
+  opacity: 1;
+  filter: none;
+  scale: 1;
+}
+.found-badge {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgb(0 0 0 / 0.45);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  backdrop-filter: blur(8px);
+}
+.found-more {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgb(0 0 0 / 0.38);
+  color: #fff;
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  backdrop-filter: blur(2px);
+}
+
+/* Files: what each is, and the words that matched. */
+.found-files {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.found-mosaic + .found-files {
+  margin-top: 10px;
+}
+.found-file {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 8px;
+  border-radius: var(--radius-md);
+  text-align: left;
+}
+a.found-file:hover {
+  background: var(--fill-1);
+}
+.found-snippet {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  color: var(--ink-2);
+  font-size: var(--text-footnote);
+  line-height: var(--text-footnote--line-height);
+}
+
+/* Apps: icons the way a home screen shows them. */
+.found-apps {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  gap: 12px 6px;
+  padding: 2px 0 4px;
+}
+.found-app {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.found-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  overflow: hidden;
+  background: var(--bg-elevated);
+  box-shadow:
+    inset 0 0 0 0.5px var(--line-strong),
+    0 1px 2px rgb(0 0 0 / 0.06);
+  color: var(--ink-2);
+  transition: filter 300ms var(--ease-out), opacity 300ms var(--ease-out);
+}
+.found-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.found-icon[data-dim] {
+  opacity: 0.55;
+  filter: grayscale(1);
+}
+.found-update {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--bg);
+}
+.found-pill {
+  flex: none;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--fill-1);
+  color: var(--ink-3);
+  font-size: var(--text-caption);
+  font-weight: 500;
+}
+.found-open {
+  flex: none;
+  height: 32px;
+  padding: 0 16px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: var(--text-footnote);
+  font-weight: 600;
+  line-height: 32px;
+}
+.found-progress {
+  height: 4px;
+  margin-top: 14px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--fill-2);
+}
+.found-progress > i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+.found-progress[data-sweep] > i {
+  width: 32%;
+  animation: found-sweep 1.4s var(--ease-out) infinite;
+}
+@keyframes found-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(320%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .found-progress[data-sweep] > i {
+    width: 100%;
+    opacity: 0.4;
+    animation: none;
+  }
+}
+
+/* The Umbrel's health: one ring each. */
+.found-rings {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  padding: 4px 0 2px;
+}
+.found-ring {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  text-align: center;
+}
+.found-ring svg {
+  rotate: -90deg;
+}
+.found-ring-track {
+  fill: none;
+  stroke: var(--fill-2);
+  stroke-width: 6;
+}
+.found-ring-fill {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 6;
+  stroke-linecap: round;
+}
+.found-ring[data-high] .found-ring-fill {
+  stroke: var(--warning);
+}
+.found-ring-value {
+  position: absolute;
+  top: 0;
+  display: grid;
+  width: 64px;
+  height: 64px;
+  place-items: center;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .found-tile img {
+    filter: none;
+    scale: 1;
+    transition: opacity 200ms linear;
+  }
+}
+
+/* Found nothing: one quiet line. */
+.found-none {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+}
+.found-none-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-md);
+  color: var(--ink-3);
+  background: var(--fill-2);
+}
+
+/* What's coming, while it looks. */
+.found-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 8px 6px;
+}
+.found-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.found-row-icon {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-md);
+  animation-delay: inherit;
+}
+.found-row-line {
+  height: 12px;
+  width: 62%;
+  border-radius: 6px;
+  animation-delay: inherit;
+}
+.found-row:nth-child(2) .found-row-line {
+  width: 48%;
+}
+.found-row:nth-child(3) .found-row-line {
+  width: 56%;
+}

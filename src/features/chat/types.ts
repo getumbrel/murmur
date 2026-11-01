@@ -1,6 +1,7 @@
 // View model for a conversation. The Hermes event stream is folded into this
 // shape by the chat store; components render it and never see wire types.
 
+import type { Found } from '@/features/umbrel/finds'
 import type { SendApproval } from '@/state/mail-chat'
 
 export type Speaker = { id: string; name: string; hue: number }
@@ -86,6 +87,10 @@ export type ChatItem =
       speaker?: Speaker
       /** Images the tool produced (paths on the Hermes host, or URLs). */
       media?: string[]
+      /** What it turned up on the agent's Umbrel (photos, files, apps), to show. */
+      found?: Found
+      /** While it runs: what it's about to turn up there (a search's query), for a call to show at once. */
+      looking?: Found
       /** Hermes's id for the call, so a live result finds a step loaded from history. */
       callId?: string
       /** The mark of the app the step uses (an app through Nous), drawn in place of its kind's icon. */

@@ -209,6 +209,22 @@ export async function disconnect(service: Service) {
   if (service.current) await adoptAnother(service.slug)
 }
 
+/**
+ * Ends the ChatGPT sign-in an agent is using: one of its own if it has one, and the main agent's,
+ * which every agent shares. A main agent thinking on it moves to another service first thing, the
+ * way disconnecting it in Settings does.
+ */
+export async function signOutChatGPT(profile: string) {
+  const { provider } = await api.get<Options>('/api/model/options')
+  // Nothing to clear in that store: an agent's own is usually empty.
+  const cleared = (e: unknown) => {
+    if (!(e instanceof HermesError && e.status === 409)) throw e
+  }
+  await api.delete(`${CODEX}?profile=${encodeURIComponent(profile)}`).catch(cleared)
+  await api.delete(CODEX).catch(cleared)
+  if (provider === 'openai-codex') await adoptAnother('openai-codex')
+}
+
 /** Everything that depends on which model is connected. */
 export function useRefreshModels() {
   const qc = useQueryClient()

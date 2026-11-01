@@ -6,19 +6,21 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
-import { createPortal } from 'react-dom'
+import { createPortal, flushSync } from 'react-dom'
 import { AnimatePresence, animate, motion, useMotionValue, useTransform, type MotionValue } from 'motion/react'
-import { Download, Share, X } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Download, Share, X } from 'lucide-react'
 import { usePrefersReducedMotion } from '@/lib/use-media'
 import { cn } from '@/lib/cn'
 
 // A photo, full screen, the way Photos does it: it grows out of the thumbnail
-// you tapped, pinches and double-taps to zoom, pans when zoomed, and flicks
-// down to shrink back into place.
+// you tapped, pinches and double-taps to zoom, pans when zoomed, flicks down to
+// shrink back into place, and swipes on to the next one in an album.
 //
 // Everything visual is driven by motion values (no React renders while you
 // drag): `p` runs 0 (sitting on the thumbnail) → 1 (fitted on screen), and the
 // gesture values layer on top of that.
+
+export type AlbumPhoto = { src: string; name?: string; size?: Size }
 
 export type LightboxProps = {
   src: string
@@ -28,16 +30,26 @@ export type LightboxProps = {
   origin: HTMLElement
   /** The thumbnail's corner radius, so the morph starts from its exact shape. */
   radius?: number
+  /** Photos to swipe through, this one among them, starting at `start`. */
+  album?: AlbumPhoto[]
+  start?: number
+  /** How many there are, when the album holds only some. */
+  total?: number
+  /** Where a photo in the album sits on the page, to close back into it. */
+  thumbnail?: (index: number) => HTMLElement | undefined
   onClose: () => void
   onDownload?: () => void
   onShare?: () => void
 }
 
+type Size = { w: number; h: number }
 type Rect = { x: number; y: number; w: number; h: number }
 
 const open = { type: 'spring', duration: 0.44, bounce: 0.12 } as const
 const settle = { type: 'spring', duration: 0.38, bounce: 0 } as const
 const MAX_ZOOM = 5
+/** Between one photo and the next as they slide. */
+const PAGE_GAP = 24
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
 
@@ -51,7 +63,7 @@ function viewport() {
 }
 
 /** The image fitted to the screen (never blown up past 2× its real size). */
-function fit(natural: { w: number; h: number }) {
+function fit(natural: Size) {
   const vp = viewport()
   // Phones go edge to edge; big screens leave room for the controls.
   const mx = vp.w >= 640 ? 72 : 0
@@ -66,11 +78,18 @@ export function Lightbox(props: LightboxProps) {
   return createPortal(<Viewer {...props} />, document.body)
 }
 
-function Viewer({ src, alt = '', name, origin, radius = 12, onClose, onDownload, onShare }: LightboxProps) {
+function Viewer({ src, alt = '', name, origin, radius = 12, album, start = 0, total, thumbnail, onClose, onDownload, onShare }: LightboxProps) {
   const reduced = usePrefersReducedMotion()
   const img = origin instanceof HTMLImageElement ? origin : origin.querySelector('img')
-  const natural = useRef({ w: img?.naturalWidth || 1200, h: img?.naturalHeight || 900 })
-  const [frame, setFrame] = useState<Rect>(() => fit(natural.current))
+  const photos = album ?? [{ src, name }]
+  const [at, setAt] = useState(start)
+  const here = photos[at]
+  const [sizes, setSizes] = useState<Record<string, Size>>({ [src]: { w: img?.naturalWidth || 1200, h: img?.naturalHeight || 900 } })
+  const sizeOf = (p: AlbumPhoto) => sizes[p.src] ?? p.size ?? { w: 1200, h: 900 }
+  const [, resized] = useState(0)
+  const frame = fit(sizeOf(here))
+  // What it closes back into: the thumbnail of the photo you're on, if it has one showing.
+  const home = at === start ? origin : thumbnail?.(at)
   const from = useRef<Rect>(rectOf(origin))
   const closing = useRef(false)
   const [chrome, setChrome] = useState(true)
@@ -86,22 +105,24 @@ function Viewer({ src, alt = '', name, origin, radius = 12, onClose, onDownload,
 
   // The thumbnail steps aside while its big self is out.
   useLayoutEffect(() => {
-    origin.style.visibility = 'hidden'
+    if (!home) return
+    home.style.visibility = 'hidden'
     return () => {
-      origin.style.visibility = ''
+      home.style.visibility = ''
     }
-  }, [origin])
+  }, [home])
 
   useEffect(() => {
     if (reduced) animate(fade, 1, { duration: 0.15 })
     else animate(p, 1, open)
-    closeButton.current?.focus({ preventScroll: true })
+    // For a keyboard to start from; a finger doesn't need the ring.
+    closeButton.current?.focus({ preventScroll: true, focusVisible: false })
     const prev = document.activeElement as HTMLElement | null
     return () => prev?.focus?.({ preventScroll: true })
   }, [p, fade, reduced])
 
   useEffect(() => {
-    const onResize = () => setFrame(fit(natural.current))
+    const onResize = () => resized((n) => n + 1)
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
   }, [])
@@ -122,15 +143,6 @@ function Viewer({ src, alt = '', name, origin, radius = 12, onClose, onDownload,
     return { scale, x, y, clip: `inset(${iy}px ${ix}px ${iy}px ${ix}px round ${r}px)` }
   }
   const inputs: MotionValue<number>[] = [p, dragX, dragY, zoom, panX, panY]
-  const transform = useTransform(inputs, (v) => {
-    const [pv, dx, dy, z, px, py] = v as number[]
-    const g = geometry(pv, dx, dy, z, px, py)
-    return `translate3d(${g.x}px, ${g.y}px, 0) scale(${g.scale})`
-  })
-  const clipPath = useTransform(inputs, (v) => {
-    const [pv, dx, dy, z, px, py] = v as number[]
-    return geometry(pv, dx, dy, z, px, py).clip
-  })
   const backdrop = useTransform([p, dragY, fade], ([pv, dy, fv]: number[]) => {
     return pv * fv * (1 - clamp(Math.abs(dy) / (viewport().h * 0.35), 0, 1) * 0.9)
   })
@@ -151,7 +163,7 @@ function Viewer({ src, alt = '', name, origin, radius = 12, onClose, onDownload,
         animate(fade, 0, { duration: 0.12 }).then(done)
         return
       }
-      const r = origin.isConnected ? rectOf(origin) : null
+      const r = home?.isConnected ? rectOf(home) : null
       const vp = viewport()
       const visible = r && r.w > 0 && r.y + r.h > 0 && r.y < vp.h
       if (!visible) {
@@ -168,7 +180,26 @@ function Viewer({ src, alt = '', name, origin, radius = 12, onClose, onDownload,
       animate(dragY, 0, { ...settle, velocity: velocityY })
       animate(p, 0, springBack).then(done)
     },
-    [dragX, dragY, fade, onClose, origin, p, panX, panY, reduced, zoom],
+    [dragX, dragY, fade, home, onClose, p, panX, panY, reduced, zoom],
+  )
+
+  // ── Paging through an album ──
+  const turning = useRef(false)
+  const turn = useCallback(
+    (by: 1 | -1, velocity = 0) => {
+      const next = at + by
+      if (turning.current || closing.current || !photos[next] || zoom.get() > 1.01) {
+        animate(dragX, 0, settle)
+        return
+      }
+      turning.current = true
+      animate(dragX, -by * (viewport().w + PAGE_GAP), { ...settle, velocity }).then(() => {
+        flushSync(() => setAt(next))
+        dragX.set(0)
+        turning.current = false
+      })
+    },
+    [at, dragX, photos, zoom],
   )
 
   useEffect(() => {
@@ -177,21 +208,23 @@ function Viewer({ src, alt = '', name, origin, radius = 12, onClose, onDownload,
         e.preventDefault()
         close()
       }
+      if (e.key === 'ArrowRight') turn(1)
+      if (e.key === 'ArrowLeft') turn(-1)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [close])
+  }, [close, turn])
 
   // ── Gestures ──
   const pointers = useRef(new Map<number, { x: number; y: number }>())
   const gesture = useRef<{
-    mode: 'none' | 'pending' | 'dismiss' | 'pan' | 'pinch'
+    mode: 'none' | 'pending' | 'dismiss' | 'pan' | 'pinch' | 'page'
     start: { x: number; y: number; t: number }
     pan0: { x: number; y: number }
     zoom0: number
     dist0: number
     mid0: { x: number; y: number }
-    track: { y: number; t: number }[]
+    track: { x: number; y: number; t: number }[]
     moved: boolean
   }>({
     mode: 'none',
@@ -258,7 +291,7 @@ function Viewer({ src, alt = '', name, origin, radius = 12, onClose, onDownload,
       g.mode = 'pending'
       g.start = { x: e.clientX, y: e.clientY, t: performance.now() }
       g.pan0 = { x: panX.get(), y: panY.get() }
-      g.track = [{ y: e.clientY, t: performance.now() }]
+      g.track = [{ x: e.clientX, y: e.clientY, t: performance.now() }]
       g.moved = false
     } else if (pts.length === 2) {
       const [a, b] = pts
@@ -297,20 +330,23 @@ function Viewer({ src, alt = '', name, origin, radius = 12, onClose, onDownload,
 
     const dx = e.clientX - g.start.x
     const dy = e.clientY - g.start.y
-    g.track.push({ y: e.clientY, t: performance.now() })
+    g.track.push({ x: e.clientX, y: e.clientY, t: performance.now() })
     if (g.track.length > 6) g.track.shift()
 
     if (g.mode === 'pending') {
       if (Math.hypot(dx, dy) < 6) return
       g.moved = true
       if (zoom.get() > 1.01) g.mode = 'pan'
-      else if (Math.abs(dy) > Math.abs(dx)) g.mode = 'dismiss'
+      else if (photos.length > 1 && Math.abs(dx) > Math.abs(dy)) g.mode = 'page'
       else g.mode = 'dismiss'
     }
     if (g.mode === 'pan') {
       const b = bounds(zoom.get())
       panX.set(rubber(g.pan0.x + dx, b.x))
       panY.set(rubber(g.pan0.y + dy, b.y))
+    } else if (g.mode === 'page') {
+      // The first and last photos give a little, and no further.
+      dragX.set(photos[at - Math.sign(dx)] ? dx : dx * 0.3)
     } else if (g.mode === 'dismiss') {
       dragX.set(dx)
       dragY.set(dy)
@@ -338,6 +374,17 @@ function Viewer({ src, alt = '', name, origin, radius = 12, onClose, onDownload,
     }
     if (left > 0) return
 
+    if (g.mode === 'page') {
+      g.mode = 'none'
+      const first = g.track[0]
+      const last = g.track.at(-1)!
+      const vx = first && last.t > first.t ? ((last.x - first.x) / (last.t - first.t)) * 1000 : 0
+      const dx = dragX.get()
+      const by = dx < 0 ? 1 : -1
+      if (Math.abs(dx) > viewport().w * 0.22 || (Math.abs(vx) > 500 && Math.sign(vx) === Math.sign(dx))) turn(by, vx)
+      else animate(dragX, 0, settle)
+      return
+    }
     if (g.mode === 'dismiss') {
       g.mode = 'none'
       const first = g.track[0]
@@ -421,6 +468,7 @@ function Viewer({ src, alt = '', name, origin, radius = 12, onClose, onDownload,
       role="dialog"
       aria-modal="true"
       aria-label={alt || name || 'Photo'}
+      data-lightbox
       className="fixed inset-0 z-[60] touch-none select-none"
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
@@ -430,22 +478,22 @@ function Viewer({ src, alt = '', name, origin, radius = 12, onClose, onDownload,
     >
       <motion.div aria-hidden className="absolute inset-0 bg-bg" style={{ opacity: backdrop }} />
 
-      <motion.img
-        data-photo
-        src={src}
-        alt={alt}
-        draggable={false}
-        className="absolute max-w-none origin-center will-change-transform"
-        style={{
-          left: frame.x,
-          top: frame.y,
-          width: frame.w,
-          height: frame.h,
-          transform,
-          clipPath,
-          opacity: imageOpacity,
-        }}
-      />
+      {[at - 1, at, at + 1].map(
+        (i) =>
+          photos[i] && (
+            <Slide
+              key={photos[i].src}
+              photo={photos[i]}
+              alt={i === at ? alt : ''}
+              beside={i - at}
+              frame={fit(sizeOf(photos[i]))}
+              inputs={inputs}
+              geometry={geometry}
+              opacity={imageOpacity}
+              onSize={(size) => setSizes((all) => ({ ...all, [photos[i].src]: size }))}
+            />
+          ),
+      )}
 
       <AnimatePresence>
         {chrome && (
@@ -456,7 +504,7 @@ function Viewer({ src, alt = '', name, origin, radius = 12, onClose, onDownload,
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.18 }}
-            className="pointer-events-none absolute inset-x-0 top-0"
+            className="pointer-events-none absolute inset-0"
           >
             <motion.div
               style={{ opacity: chromeOpacity }}
@@ -473,7 +521,8 @@ function Viewer({ src, alt = '', name, origin, radius = 12, onClose, onDownload,
                 <X size={20} strokeWidth={2} />
               </button>
               <div className="min-w-0 flex-1 truncate px-2 text-center text-footnote font-medium text-ink-2">
-                {name}
+                {here.name ?? name}
+                {photos.length > 1 && <span className="text-ink-3"> · {at + 1} of {total ?? photos.length}</span>}
               </div>
               {onShare && (
                 <button
@@ -499,9 +548,76 @@ function Viewer({ src, alt = '', name, origin, radius = 12, onClose, onDownload,
               )}
               {!onShare && !onDownload && <div className="size-11" />}
             </motion.div>
+            {/* A mouse has no swipe. */}
+            {photos[at - 1] && (
+              <motion.button
+                type="button"
+                style={{ opacity: chromeOpacity }}
+                onClick={() => turn(-1)}
+                aria-label="Previous photo"
+                title="Previous photo"
+                className={cn(button, 'pointer-events-auto [@media(hover:none)]:hidden absolute left-5 top-1/2 -translate-y-1/2')}
+              >
+                <ChevronLeft size={22} strokeWidth={2} />
+              </motion.button>
+            )}
+            {photos[at + 1] && (
+              <motion.button
+                type="button"
+                style={{ opacity: chromeOpacity }}
+                onClick={() => turn(1)}
+                aria-label="Next photo"
+                title="Next photo"
+                className={cn(button, 'pointer-events-auto [@media(hover:none)]:hidden absolute right-5 top-1/2 -translate-y-1/2')}
+              >
+                <ChevronRight size={22} strokeWidth={2} />
+              </motion.button>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
     </div>
+  )
+}
+
+type Geometry = (p: number, dx: number, dy: number, z: number, px: number, py: number) => { scale: number; x: number; y: number; clip: string }
+
+type SlideProps = {
+  photo: AlbumPhoto
+  alt: string
+  /** 0 for the photo you're on; -1 and 1 wait either side of it. */
+  beside: number
+  frame: Rect
+  inputs: MotionValue<number>[]
+  geometry: Geometry
+  opacity?: MotionValue<number>
+  onSize: (size: Size) => void
+}
+
+/** One photo of the album. The same element carries it from waiting at the side to centre stage. */
+function Slide({ photo, alt, beside, frame, inputs, geometry, opacity, onSize }: SlideProps) {
+  const transform = useTransform(inputs, (v) => {
+    const [pv, dx, dy, z, px, py] = v as number[]
+    if (beside) return `translate3d(${dx + beside * (viewport().w + PAGE_GAP)}px, 0, 0)`
+    const g = geometry(pv, dx, dy, z, px, py)
+    return `translate3d(${g.x}px, ${g.y}px, 0) scale(${g.scale})`
+  })
+  const clipPath = useTransform(inputs, (v) => {
+    const [pv, dx, dy, z, px, py] = v as number[]
+    return beside ? 'none' : geometry(pv, dx, dy, z, px, py).clip
+  })
+  return (
+    <motion.img
+      data-photo
+      src={photo.src}
+      alt={alt}
+      draggable={false}
+      onLoad={(e) => {
+        const { naturalWidth: w, naturalHeight: h } = e.currentTarget
+        if (w && h) onSize({ w, h })
+      }}
+      className="absolute max-w-none origin-center will-change-transform"
+      style={{ left: frame.x, top: frame.y, width: frame.w, height: frame.h, transform, clipPath, opacity }}
+    />
   )
 }

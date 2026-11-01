@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useLocation } from 'wouter'
 import { ArrowUpRight, ChevronRight } from 'lucide-react'
@@ -28,6 +29,9 @@ import { useHermesConnection, useMurmurSession } from '@/state/connection'
 import { useTheme, type ThemePref } from '@/features/settings/theme'
 import { NotificationsSetting } from '@/features/notifications/notify'
 import { AgentsIcon, ImportIcon, ModelsIcon, ServerIcon, SignOutIcon } from '@/ui/icons'
+import { Waveform } from '@/features/talk/call-button'
+import { VoiceSheet } from '@/features/talk/voice-sheet'
+import { useVoice, voiceName } from '@/features/talk/voice-setup'
 
 // Settings, the Apple way: a short list of sections, each its own page.
 
@@ -85,6 +89,8 @@ function Root() {
   const { data: agents, isPending } = useAgents()
   const models = useModels().data
   const main = agents?.find((a) => a.isDefault)
+  const voice = useVoice(main?.id).data
+  const [voiceOpen, setVoiceOpen] = useState(false)
   const connection = useHermesConnection().connection
   const session = useMurmurSession()
   // Only where Hermes runs on an Umbrel: that's where umbrelOS's MCP server is.
@@ -129,6 +135,19 @@ function Root() {
           chevron
           onClick={() => navigate('/settings/models')}
         />
+        {main && (
+          <ListRow
+            icon={
+              <Tile>
+                <Waveform size={19} />
+              </Tile>
+            }
+            title="Voice"
+            detail={voice ? voiceName(voice) : undefined}
+            chevron
+            onClick={() => setVoiceOpen(true)}
+          />
+        )}
         <ListRow
           icon={
             <Tile>
@@ -168,6 +187,8 @@ function Root() {
         )}
         <ListRow icon={<AppIcon size={29} />} title="About" chevron onClick={() => navigate('/settings/about')} />
       </ListGroup>
+
+      {main && <VoiceSheet open={voiceOpen} onOpenChange={setVoiceOpen} profile={main.id} name={main.name} hue={main.hue} provider={main.provider} />}
 
       <Appearance />
 
@@ -326,6 +347,7 @@ function AboutSection() {
       >
         <LinkRow href={HELP_URL} title="Get help" />
         <LinkRow href={SOURCE_URL} title="Open source" detail="MIT" />
+        <LinkRow href="https://huggingface.co/kyutai/pocket-tts" title="Pocket TTS by Kyutai" detail="CC BY 4.0" />
       </ListGroup>
       <Signature />
     </>

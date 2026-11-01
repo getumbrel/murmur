@@ -16,7 +16,10 @@
 // every desktop chat), but its two chattiest tools follow the agent's own
 // display settings: tips and tours point at Hermes Desktop's screen, which
 // Murmur doesn't have, so they're switched off. Reactions are switched on:
-// Murmur shows them (src/features/chat/reactions.tsx).
+// Murmur shows them (src/features/chat/reactions.tsx). And the agent's steps
+// must reach Murmur as they happen: with `tool_progress: off` (a terminal
+// setting) Hermes sends none, so a chat shows no steps and nothing found
+// until it's reloaded.
 
 import { useEffect } from 'react'
 import { api } from '@/hermes/rest'
@@ -28,7 +31,7 @@ export const HIDDEN_TOOLSETS = ['catalog', 'project']
 /** Hermes's manage_connections: off until the person agrees to apps through Nous. */
 export const HOSTED_TOOLSET = 'connections'
 
-type Display = { in_app_tips?: unknown; in_app_tours?: unknown; message_reactions?: unknown }
+type Display = { in_app_tips?: unknown; in_app_tours?: unknown; message_reactions?: unknown; tool_progress?: unknown }
 
 /**
  * What to change in the agent's display settings for Murmur, or null when
@@ -40,6 +43,7 @@ export function murmurDisplay(current: Display | undefined): Display | null {
   if (current?.in_app_tips !== false) next.in_app_tips = false
   if (current?.in_app_tours !== false) next.in_app_tours = false
   if (current?.message_reactions === undefined) next.message_reactions = true
+  if (current?.tool_progress === 'off' || current?.tool_progress === false) next.tool_progress = 'all'
   return Object.keys(next).length ? next : null
 }
 
@@ -83,8 +87,8 @@ export async function hideDesktopToolsets(profile: string, hosted?: boolean) {
 // Agents known to be in step, remembered across reloads (for a day) so most
 // page loads have nothing to do. One list for each answer about apps through
 // Nous, so agreeing puts every agent through again.
-const syncedOff = rememberedSet(scoped('murmur:desktop-tools:2'))
-const syncedOn = rememberedSet(scoped('murmur:desktop-tools:hosted'))
+const syncedOff = rememberedSet(scoped('murmur:desktop-tools:3'))
+const syncedOn = rememberedSet(scoped('murmur:desktop-tools:hosted:3'))
 const synced = (hosted: boolean) => (hosted ? syncedOn : syncedOff)
 
 /**

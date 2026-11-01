@@ -2,6 +2,8 @@
 // Mirrors Hermes Desktop: generated images come from `host_image` / `image`;
 // other tools may name one in `image_url`, `image_path`, `path` or `url`.
 
+import { umbrelTool, unwrap } from '@/features/umbrel/finds'
+
 const IMAGE_PATH = /^(?:~\/|\/|file:)[^\n]*\.(?:png|jpe?g|gif|webp|avif|bmp|svg)$/i
 const IMAGE_URL = /^https?:\/\/\S+\.(?:png|jpe?g|gif|webp|avif)(?:[?#]\S*)?$/i
 
@@ -19,6 +21,13 @@ function parse(result: unknown): Record<string, unknown> | null {
 }
 
 export function toolMedia(name: string, result: unknown): string[] {
+  // MCP servers hand pictures back through Hermes, which keeps each one and
+  // names it on a MEDIA: line (a machine's screen, a page a browser took).
+  // A photo the agent looked at shows in its Photos card instead (umbrel/finds.ts).
+  if (name.startsWith('mcp__')) {
+    if (umbrelTool(name)?.tool === 'get_photo') return []
+    return (unwrap(result)?.media ?? []).filter((p) => IMAGE_PATH.test(p)).slice(0, 4)
+  }
   // Tools that only look at an image (vision) don't produce one.
   if (/vision|analy[sz]e|browser_|read_file|search/i.test(name)) return []
   const r = parse(result)

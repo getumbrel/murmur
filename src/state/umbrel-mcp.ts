@@ -9,6 +9,10 @@
 // Only offered where Hermes runs on an Umbrel, which its main agent's Umbrel
 // context says (umbrel-context.ts). Agents made later get it from the main
 // agent's copy of the key.
+//
+// Other Umbrels (one at the office, reached over Tailscale) connect the same
+// way, at the address you give, each as a server of its own ("umbrel_office"),
+// so its tools, cards and links say which Umbrel they're from.
 
 import { useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -106,11 +110,65 @@ export const useUmbrel = () => umbrelOf(useHermesConnection().connection?.url)
 
 const q = (profile: string) => `profile=${encodeURIComponent(profile)}`
 
-type Server = { name: string; enabled?: boolean; source?: string }
+type Server = { name: string; enabled?: boolean; source?: string; url?: string | null }
+
+const serversOf = async (profile: string) => (await api.get<{ servers: Server[] }>(`/api/mcp/servers?${q(profile)}`)).servers
 
 async function hasUmbrel(profile: string) {
-  const { servers } = await api.get<{ servers: Server[] }>(`/api/mcp/servers?${q(profile)}`)
-  return servers.some((s) => s.name === UMBREL_SERVER && s.enabled !== false)
+  return (await serversOf(profile)).some((s) => s.name === UMBREL_SERVER && s.enabled !== false)
+}
+
+// ── Other Umbrels ───────────────────────────────────────────────────────────
+
+/** Another Umbrel the agents use, by its server's name ("umbrel_office") and address. */
+export type OtherUmbrel = { name: string; label: string; url: string; origin: string }
+
+const OTHER = /^umbrel_[a-z0-9_]+$/
+export const isOtherUmbrel = (name: string) => OTHER.test(name)
+
+/** "umbrel_office" → "Umbrel Office". */
+export const otherLabel = (name: string) =>
+  `Umbrel ${name.replace(/^umbrel_/, '').replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())}`
+
+/**
+ * What you typed, as umbrelOS's MCP address: "100.64.0.5", "umbrel-pro.local",
+ * or a full URL. Null when it isn't an address at all.
+ */
+export function otherUmbrelUrl(input: string): string | null {
+  const text = input.trim()
+  if (!text) return null
+  try {
+    const url = new URL(/^[a-z]+:\/\//i.test(text) ? text : `http://${text}`)
+    if (!/^https?:$/.test(url.protocol) || !url.hostname) return null
+    if (url.pathname === '/' || !url.pathname) url.pathname = '/mcp'
+    return url.toString().replace(/\/$/, '')
+  } catch {
+    return null
+  }
+}
+
+/** A server name for an Umbrel at that address, unless you name it: "umbrel-pro.local" → "umbrel_pro". */
+export function otherUmbrelName(url: string, named?: string) {
+  const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
+  const host = new URL(url).hostname
+  // An IP says nothing about which Umbrel it is.
+  const fromHost = /^[\d.]+$|:/.test(host) ? 'other' : slug(host.replace(/\.(local|ts\.net|lan|home)$/i, '').split('.')[0])
+  const base = named?.trim() ? slug(named) : fromHost
+  const rest = base.replace(/^umbrel(_|$)/, '')
+  return `umbrel_${rest || 'other'}`
+}
+
+/** The other Umbrels, from the main agent's servers. */
+export function useOtherUmbrels(enabled = true) {
+  return useQuery({
+    queryKey: ['other-umbrels'],
+    enabled,
+    queryFn: async (): Promise<OtherUmbrel[]> =>
+      (await serversOf(MAIN)).flatMap((s) =>
+        isOtherUmbrel(s.name) && s.url ? [{ name: s.name, label: otherLabel(s.name), url: s.url, origin: new URL(s.url).origin }] : [],
+      ),
+    staleTime: 60_000,
+  })
 }
 
 /** Whether this Hermes runs on an Umbrel: its main agent has the Umbrel context. */
@@ -141,8 +199,8 @@ export function useUmbrelMcp(ids: readonly string[] | undefined, enabled = true)
   })
 }
 
-async function add(profile: string, key: string, name = UMBREL_SERVER) {
-  const body = { name, url: UMBREL_MCP_URL, auth: 'header', bearer_token: key, profile }
+async function add(profile: string, key: string, name = UMBREL_SERVER, url = UMBREL_MCP_URL) {
+  const body = { name, url, auth: 'header', bearer_token: key, profile }
   try {
     await api.post(`/api/mcp/servers?${q(profile)}`, body)
   } catch (e) {
@@ -186,6 +244,38 @@ async function remove(profile: string, name = UMBREL_SERVER) {
 const reload = () => rpc('reload.mcp', { confirm: true }).catch(() => {})
 
 export class UmbrelKeyError extends Error {}
+/** Hermes couldn't reach the Umbrel at all: the address, not the key. */
+export class UmbrelUnreachableError extends Error {}
+
+/** Tries a key (at an address) under a name of its own, so a bad one never replaces a good one. */
+async function check(key: string, name: string, url: string) {
+  const trial = `${name}-check`
+  await add(MAIN, key, trial, url)
+  let probe: { ok: boolean; error?: string }
+  try {
+    probe = await api.post<{ ok: boolean; error?: string }>(`/api/mcp/servers/${trial}/test?${q(MAIN)}`, {})
+  } finally {
+    await remove(MAIN, trial).catch(() => {})
+  }
+  if (probe.ok) return
+  const why = probe.error ?? ''
+  if (/connect|resolve|unreachable|refused|timed? ?out|name or service|no route|getaddrinfo|network/i.test(why)) throw new UmbrelUnreachableError(why)
+  throw new UmbrelKeyError(why || 'umbrelOS didn’t accept that key.')
+}
+
+/** Connects every agent to another Umbrel, once Hermes has reached it with that key. */
+export async function connectOtherUmbrel(url: string, key: string, ids: readonly string[], name = otherUmbrelName(url)) {
+  await check(key, name, url)
+  for (const id of [MAIN, ...ids.filter((id) => id !== MAIN)]) await add(id, key, name, url)
+  await reload()
+  return name
+}
+
+/** Takes another Umbrel away from every agent. */
+export async function disconnectOtherUmbrel(name: string, ids: readonly string[]) {
+  for (const id of new Set([MAIN, ...ids])) await remove(id, name)
+  await reload()
+}
 
 /**
  * Checks the key against umbrelOS, then gives it to every agent. `onAgent`
@@ -193,16 +283,9 @@ export class UmbrelKeyError extends Error {}
  * down, before any agent's connection changes.
  */
 export async function connectUmbrel(key: string, ids: readonly string[], onAgent?: (id: string) => void) {
-  // Tried under a name of its own first, so a bad key never replaces a good one.
-  const trial = `${UMBREL_SERVER}-check`
-  await add(MAIN, key, trial)
-  let probe: { ok: boolean; error?: string }
-  try {
-    probe = await api.post<{ ok: boolean; error?: string }>(`/api/mcp/servers/${trial}/test?${q(MAIN)}`, {})
-  } finally {
-    await remove(MAIN, trial).catch(() => {})
-  }
-  if (!probe.ok) throw new UmbrelKeyError(probe.error || 'umbrelOS didn’t accept that key.')
+  await check(key, UMBREL_SERVER, UMBREL_MCP_URL).catch((e) => {
+    throw e instanceof UmbrelUnreachableError ? new UmbrelKeyError(e.message) : e
+  })
   const order = [MAIN, ...ids.filter((id) => id !== MAIN)]
   for (const id of order) {
     await add(id, key)
@@ -219,10 +302,11 @@ export async function disconnectUmbrel(ids: readonly string[]) {
   await reload()
 }
 
-/** The main agent's key, for agents made since. */
-async function mainKey(): Promise<string | null> {
+/** The main agent's key (for this Umbrel, or another), for agents made since. */
+async function mainKey(name = UMBREL_SERVER): Promise<string | null> {
   try {
-    const { value } = await api.post<{ value?: string }>(`/api/env/reveal?${q(MAIN)}`, { key: KEY_ENV, profile: MAIN })
+    const env = name === UMBREL_SERVER ? KEY_ENV : envKeyOf(name)
+    const { value } = await api.post<{ value?: string }>(`/api/env/reveal?${q(MAIN)}`, { key: env, profile: MAIN })
     return value ? findUmbrelKey(value) : null
   } catch {
     return null
@@ -252,19 +336,19 @@ async function catchUp(ids: string[]) {
   await unmarkAll(ids)
   const missing = ids.filter((id) => id !== MAIN && !synced.has(id))
   if (!missing.length) return
-  if (!(await hasUmbrel(MAIN))) {
-    // Nothing to share; look again once it's connected.
-    return
-  }
-  let key: string | null | undefined
+  // This Umbrel and any others the main agent has.
+  const shared = (await serversOf(MAIN)).filter((s) => (s.name === UMBREL_SERVER || isOtherUmbrel(s.name)) && s.enabled !== false && s.url)
+  // Nothing to share; look again once it's connected.
+  if (!shared.length) return
+  const keys = new Map<string, string | null>()
   for (const id of missing) {
-    if (await hasUmbrel(id).catch(() => true)) {
-      synced.add(id)
-      continue
+    const has = new Set((await serversOf(id).catch(() => null))?.map((s) => s.name) ?? shared.map((s) => s.name))
+    for (const server of shared) {
+      if (has.has(server.name)) continue
+      if (!keys.has(server.name)) keys.set(server.name, await mainKey(server.name))
+      const key = keys.get(server.name)
+      if (key) await add(id, key, server.name, server.url!).catch(() => {})
     }
-    key ??= await mainKey()
-    if (!key) return
-    await add(id, key).catch(() => {})
     synced.add(id)
   }
 }

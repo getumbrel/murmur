@@ -40,7 +40,7 @@ description: >-
     - **More than one Hermes** - Add a Hermes running on another computer and switch between them in a tap.
 
 
-  Voice input needs a secure connection, so the mic appears when you open Murmur over https. Reading replies aloud works everywhere.
+  Call your agents to talk out loud, with voices on your Umbrel, on your ChatGPT plan, or from OpenAI or ElevenLabs. Calls need a secure connection, so Murmur reopens itself over https when you start. Reading replies aloud works everywhere.
 releaseNotes: >-
   Agents can have their own email. Pick Gmail, iCloud, Fastmail, Yahoo or any provider in an agent's Apps and paste an app password. The agent searches, reads and drafts mail, and asks before sending.
 

@@ -389,7 +389,7 @@ function OptionCard({
 
 // ── ChatGPT device sign-in ──────────────────────────────────────────────────
 
-function ChatGPTPanel({ flow, onStart, onDone }: { flow: ChatGPTFlow; onStart: () => void; onDone?: () => void }) {
+export function ChatGPTPanel({ flow, onStart, onDone }: { flow: ChatGPTFlow; onStart: () => void; onDone?: () => void }) {
   return (
     <Measured>
       <AnimatePresence mode="popLayout" initial={false}>

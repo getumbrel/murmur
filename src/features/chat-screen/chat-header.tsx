@@ -28,6 +28,8 @@ type Props = {
   backHint?: string
   /** More things to do with the chat, before New chat (e.g. a "…" menu). */
   menu?: ReactNode
+  /** Calling the agent, right before New chat. */
+  call?: ReactNode
   /** Extra handlers for the agent's name, e.g. press and hold for that menu. */
   titleProps?: HTMLAttributes<HTMLButtonElement>
   /** Goes up each time you're sweet to the agent: hearts float out of its face. */
@@ -46,6 +48,7 @@ export function ChatHeader({
   backBadge,
   backHint = '',
   menu,
+  call,
   titleProps,
   vibes,
 }: Props) {
@@ -138,6 +141,7 @@ export function ChatHeader({
 
         <span aria-hidden className="hidden flex-1 desktop:block" />
         {menu}
+        {call}
         <IconButton size="lg" label="New chat" onClick={onNewChat} disabled={!agent}>
           <SquarePen size={20} strokeWidth={1.85} aria-hidden />
         </IconButton>

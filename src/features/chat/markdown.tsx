@@ -10,6 +10,7 @@ import { Check, Copy } from 'lucide-react'
 import { useCopy } from './use-copy'
 import { HostImage, RemoteImage } from '@/features/media/blocks'
 import { useMediaContext } from '@/features/media/context'
+import { linkOut } from '@/lib/device'
 import { Mention, useMentions } from './mention'
 import { rehypeMentions } from './rehype-mentions'
 import type { Pluggable } from 'unified'
@@ -97,11 +98,7 @@ type El = { children?: ReactNode; className?: string; node?: unknown }
 const strip = <P extends El>({ node: _node, className: _className, ...rest }: P) => rest
 
 const components: Components = {
-  a: ({ href, children }) => (
-    <a href={href} target="_blank" rel="noopener noreferrer">
-      {children}
-    </a>
-  ),
+  a: ({ href, children }) => <a {...(href ? linkOut(href) : {})}>{children}</a>,
   code: (props) => <CodeBlock className={props.className} children={props.children} />,
   inlineCode: ({ children }) => <code className="md-inline">{children}</code>,
   table: (props) => (

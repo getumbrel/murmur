@@ -164,8 +164,12 @@ const text = (v: unknown) => (typeof v === 'string' ? v.trim() : '')
  * One line a person would write: no `@file:` paths, `MEDIA:` tags or injected
  * context. Hermes titles chats from the expanded prompt, so titles need it too.
  */
+const VOICE_NOTE = '[Note: this message is a delegation'
+
 export function readable(raw: string | null | undefined, { files = true } = {}) {
-  if (!raw) return ''
+  // Hermes names a chat started on a call after the note it adds for the model, when it can't reach
+  // the model to name it properly. That's nobody's title: the chat goes by your words instead.
+  if (!raw || raw.startsWith(VOICE_NOTE)) return ''
   const { text, attachments } = parseUserMessage(raw)
   const line = text
     .replace(/MEDIA:\s*(`[^`\n]+`|"[^"\n]+"|\S+)/g, (_, path: string) => fileName(path))

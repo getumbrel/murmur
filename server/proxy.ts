@@ -9,7 +9,7 @@ import tls from 'node:tls'
 import zlib from 'node:zlib'
 import type { Hermes } from './hermes.ts'
 import { HERMES_PARAM } from './connection.ts'
-import { accepted } from './http.ts'
+import { accepted, sendJson } from './http.ts'
 import { sendReturnPage } from './oauth-return.ts'
 
 const HOP_BY_HOP = new Set(['connection', 'keep-alive', 'proxy-connection', 'transfer-encoding', 'upgrade', 'te', 'trailer'])
@@ -61,6 +61,7 @@ export function createProxy(pick: Pick) {
       for await (const chunk of req) chunks.push(chunk as Buffer)
       body = Buffer.concat(chunks)
     }
+    if (!mayReadKey(url, body)) return sendJson(res, 403, { error: 'not_for_browsers' })
     const send = async (retried: boolean) => {
       let auth: Awaited<ReturnType<Hermes['restAuth']>>
       try {
@@ -222,6 +223,27 @@ function encodingFor(req: http.IncomingMessage, up: http.IncomingMessage) {
   if (up.headers['content-encoding'] || Number(up.headers['content-length'] ?? Infinity) < 1024) return undefined
   const takes = accepted(req.headers['accept-encoding'])
   return takes('br') ? 'br' : takes('gzip') ? 'gzip' : undefined
+}
+
+/**
+ * Hermes hands the real value of any key to whoever asks through /api/env/reveal, and every request
+ * here carries Murmur's credentials. Keys stay in Hermes: all a browser may read this way is the
+ * key of a connected server, which it copies to new agents (umbrel-mcp.ts).
+ */
+export function mayReadKey(url: URL, body?: Buffer) {
+  let path: string
+  try {
+    path = decodeURIComponent(url.pathname).replace(/\/{2,}/g, '/').replace(/\/+$/, '')
+  } catch {
+    return false
+  }
+  if (path !== '/hermes/api/env/reveal') return true
+  try {
+    const { key } = JSON.parse(body?.toString() ?? '') as { key?: unknown }
+    return typeof key === 'string' && /^MCP_[A-Z0-9_]+_API_KEY$/.test(key)
+  } catch {
+    return false
+  }
 }
 
 export function refuse(socket: net.Socket, status: number, text: string) {

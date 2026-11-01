@@ -15,6 +15,8 @@
 //                          (the browser can't reach other containers directly).
 //   /murmur/site-icon    → a saved login's site icon, asked of the site itself,
 //                          never a favicon service (site-icons.ts).
+//   /murmur/voice/check-key → tries a voice's new API key on the service itself
+//                          before it replaces one that works (voice-keys.ts).
 //   everything else      → the built web app, with SPA fallback.
 //
 // No dependencies: node:http for serving, raw sockets for WebSocket upgrades.

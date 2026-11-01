@@ -23,8 +23,12 @@ import { Work, type WorkItem } from './work'
 import { RichText } from '@/features/media/rich-text'
 import { UserAttachments } from '@/features/media/attachments'
 import { ToolMedia } from '@/features/media/tool-media-view'
+import { Finds } from '@/features/umbrel/cards'
+import { placeFinds } from '@/features/umbrel/finds'
 import { MediaProvider, type MediaContext } from '@/features/media/context'
 import { mediaPathsOf, proseOf } from '@shared/message.ts'
+import { spokenIds } from '@/features/talk/spoken'
+import { Waveform } from '@/features/talk/call-button'
 import { ApprovalCard } from './approval-card'
 import { ClarifyCard } from './clarify-card'
 import { SecretCard } from './secret-card'
@@ -893,6 +897,11 @@ const UserMessage = memo(function UserMessage({
                 held && 'opacity-0',
               )}
             >
+              {spokenIds.has(item.id) && (
+                <span className="mr-1.5 inline-flex align-[-1px] text-accent" role="img" aria-label="Said out loud">
+                  <Waveform size={13} />
+                </span>
+              )}
               {/* An edit swaps the words in place. */}
               <span key={item.text} className={cn(item.was && 'animate-fade')}>
                 <MentionText text={item.text} />
@@ -1002,6 +1011,12 @@ const Turn = memo(function Turn({
   const text = texts.map(proseOf).filter(Boolean).join('\n\n')
   // Files the reply itself delivers aren't shown twice under the tool that made them.
   const delivered = new Set(texts.flatMap(mediaPathsOf))
+  // What its steps found on the Umbrel, each card under the run that last changed it.
+  const found = useMemo(() => {
+    const runs = sections.flatMap((s) => s.blocks).filter((b): b is Extract<Block, { kind: 'work' }> => b.kind === 'work')
+    const placed = placeFinds(runs.map((b) => b.items.flatMap((i) => (i.kind === 'tool' && i.found ? [i.found] : []))))
+    return new Map(runs.map((b, i) => [b.id, placed[i]]))
+  }, [sections])
   const tail = sections.at(-1)?.blocks.at(-1)
   // Between steps (or before the first one) there's still something to say.
   const needsLine =
@@ -1051,10 +1066,12 @@ const Turn = memo(function Turn({
                   const made = block.items
                     .flatMap((i) => (i.kind === 'tool' && i.media ? i.media : []))
                     .filter((m) => !delivered.has(m))
+                  const finds = found.get(block.id) ?? []
                   return (
                     <Fragment key={block.id}>
                       <Work items={block.items} live={liveBlock} hue={hue} seed={seed} />
                       {made.length > 0 && <ToolMedia items={made} />}
+                      {finds.length > 0 && <Finds finds={finds} agent={seed} />}
                     </Fragment>
                   )
                 }

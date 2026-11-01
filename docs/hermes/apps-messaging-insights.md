@@ -1,4 +1,4 @@
-# Murmur ↔ Hermes: apps, email, WhatsApp, who can message, usage, moving agents and passwords
+# Murmur ↔ Hermes: apps, email, WhatsApp, who can message, usage, moving agents, passwords and Umbrel finds
 
 Target: Hermes Agent **0.22** (`ghcr.io/getumbrel/hermes-agent-umbrel:v0.22.5-1`, the first with `murmur-mail`). Routes are in
 `hermes_cli/web_routers/*.py`, RPCs in `tui_gateway/methods*.py`. Everything here is per agent (a Hermes
@@ -306,3 +306,64 @@ so an agent reached over Telegram or a routine first can't make one either.
 - **A sign-in left half-way** (the tab or Murmur closed) isn't cleaned up: Nous lets it expire, and it lists as
   "Sign in again".
 - Murmur never loads Nous's `logo_url` at runtime; the icons ship with Murmur (`features/apps/icons/`, `features/apps/marks.ts`).
+
+## 9. What agents find on the Umbrel
+
+**Other Umbrels.** Settings › Umbrel › Connect another Umbrel adds one at an address you give (a Tailscale IP,
+`name.local`, a URL), as a server of its own named for it (`umbrel_office`, at `http://<address>/mcp`). Hermes
+connects from where it runs, so the address must be one Hermes can reach (inside a container `.local` names
+usually don't resolve). The key is checked under a trial name first (an unreachable address and a refused key say
+different things), then added to every agent; agents made later get every Umbrel the main agent has. Cards
+treat `umbrel_*` servers as Umbrels, photos come through the same route (it reads each server's own address),
+and links go to that Umbrel's address instead of the one serving Murmur.
+
+Agents reach umbrelOS through its MCP server (connected as `umbrel` by `src/state/umbrel-mcp.ts`). What its
+tools turn up is shown, not described: `src/features/umbrel/finds.ts` reads the results and
+`src/features/umbrel/cards.tsx` draws them, under the step in the chat and on a call's stage.
+`test/contract/umbrel.contract.ts` pins how Hermes hands them over.
+
+| Tool (umbrelOS 2.0, plus its newer Search and Photos tools) | Shown as |
+|---|---|
+| `search` | A Photos card: the agent's query as its title, umbrelOS's filters (place, date) under it, the photos as a mosaic, and the files that matched with the words that matched (a page, or a moment in a recording) |
+| `list_photos` | The same mosaic |
+| `get_photo` | The photo it looked at leads the mosaic (or makes its own card) |
+| `list_directory` | A folder of files |
+| `list_apps`, `search_app_store` | The apps, with their icons from the App Store gallery |
+| `install_app` and the other app operations, `get_app_status`, `get_app_details` | One card per app that follows it: installing with progress, then ready with Open |
+| `get_system_resources`, `get_system_info` | Storage, memory and processor rings |
+
+**How Hermes reports them**
+- **MCP tools are deferred.** On 0.22 the model calls them through tool search (`tool_call` with
+  `{calls: [{name: "mcp__umbrel__search", arguments}]}`); `tool.start`/`tool.complete` name the real tool, with
+  its own arguments.
+- **The result** is `{"result": "<the tool's text>"}`, where umbrelOS's text is its JSON. A picture a tool hands
+  back (`get_photo`, a machine's screenshot) is cached under `/opt/data/cache/images/` and named on a `MEDIA:` line
+  after the JSON.
+- **A picture handed to the model to look at** (`get_photo` with `image: true`, on a model that sees) makes the
+  result several parts. Live it's `{_multimodal: true, content: [{text}, {text: "The image(s) from this call are
+  attached…"}, {image_url}], text_summary}`; stored, each text part is its own untrusted block, then
+  `[screenshot]`. The tool's own text is the first part (`unwrap`). Before Murmur read this, a photo the agent
+  "opened" on a call never showed.
+- **Stored for history** (`/api/sessions/{id}/messages`), a server the agent asks about first has its results
+  wrapped as `<untrusted_tool_result source="…">…\n\n{"result": …}</untrusted_tool_result>`.
+- **A turn's cards settle** (`gather`): the newest search, each app once (an install that started before your
+  OK finishes in the run after it), and each card under the run of steps that last changed it (`placeFinds`).
+- **On a call, cards come first** (`pendingIn`): `tool.start` already has the arguments, so a search's card
+  appears, titled with its query and shimmering, the moment it starts; a photo it opens shows from its ID before
+  Hermes has it; an install's card starts at 0%. Another look keeps what's on screen while it looks, and a search
+  that finds nothing says so ("Nothing in your photos or files") only when there's nothing else to show. The chat
+  shows neither.
+
+**Pictures.** `search` and `list_photos` give Photos IDs, not pictures. Murmur's server fetches each one with
+`GET /murmur/umbrel/photo?agent=&server=&id=` (`server/umbrel.ts`): it reads the agent's own server address
+(`GET /api/mcp/servers`) and key (`POST /api/env/reveal`, `MCP_UMBREL_API_KEY`), calls umbrelOS's `get_photo`
+(512 px on the short side, what Photos shows in its grid) four at a time, and keeps 400 in memory. It names
+itself in `_meta["io.modelcontextprotocol/clientInfo"]`, so umbrelOS's list of agents shows Murmur. umbrelOS's
+server is stateless (SDK 2.0 `legacy: 'stateless'`): a bare `tools/call` works, answered in one server-sent event.
+
+**On a call** Murmur adds a line to `voice_context` saying the call has a screen: Umbrel results show on it by
+themselves, and anything else worth seeing (`MEDIA:`, `::preview` charts, tables, maps, pages) appears while it
+speaks. Hermes's own live-voice note otherwise asks for plain spoken sentences only.
+
+**Links.** On an Umbrel, cards open umbrelOS at the same address: Photos (`/photos?q=`), a file's folder in Files
+(`/files/Home/…`; umbrelOS opens a single file only from inside Files) and the App Store (`/app-store/<id>`).
