@@ -34,6 +34,21 @@ const allowIn = desktop
 
 const brave = typeof navigator !== 'undefined' && 'brave' in navigator
 
+/**
+ * The browser Murmur's in on an Android phone. Android holds its notifications
+ * while the phone sleeps, whatever Murmur sends, unless its battery use is
+ * Unrestricted.
+ */
+const androidBrowser = (() => {
+  const ua = typeof navigator !== 'undefined' ? navigator.userAgent : ''
+  if (!/Android/.test(ua)) return undefined
+  if (brave) return 'Brave'
+  if (/SamsungBrowser\//.test(ua)) return 'Samsung Internet'
+  if (/EdgA\//.test(ua)) return 'Edge'
+  if (/Firefox\//.test(ua)) return 'Firefox'
+  return 'Chrome'
+})()
+
 /** What went wrong turning them on, and what to do about it. */
 const PROBLEMS: Record<Problem, string> = {
   'no-push': brave
@@ -194,6 +209,7 @@ export function NotificationsSetting() {
   if (support === 'home-screen') return <HomeScreenFirst />
 
   const blocked = state.permission === 'denied'
+  const on = pending ?? isOn(state)
   return (
     <ListGroup
       footer={
@@ -203,7 +219,9 @@ export function NotificationsSetting() {
             ? PROBLEMS[state.problem]
             : desktop
               ? `Murmur lets you know when an agent finishes, needs you or has news from a routine. None showing up? Make sure Murmur is allowed in ${allowIn}.`
-              : 'Murmur lets you know when an agent finishes, needs you or has news from a routine, even when it’s closed.'
+              : on && androidBrowser
+                ? `Murmur lets you know when an agent finishes, needs you or has news from a routine, even when it’s closed. To get them the moment they happen, set ${androidBrowser}’s battery use to Unrestricted in Android’s settings.`
+                : 'Murmur lets you know when an agent finishes, needs you or has news from a routine, even when it’s closed.'
       }
     >
       <ListRow
@@ -212,7 +230,7 @@ export function NotificationsSetting() {
         trailing={
           <Toggle
             label="Notifications"
-            checked={pending ?? isOn(state)}
+            checked={on}
             onChange={async (next) => {
               if (pending !== null) return
               setPending(next)

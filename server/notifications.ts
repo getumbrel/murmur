@@ -8,6 +8,8 @@
 //                                             (previous: the endpoint a renewed subscription replaces)
 //                                             {native: true} → {device}: the desktop app, which shows them itself
 //   DELETE /murmur/notifications/devices/:id  → {ok}
+//   POST   /murmur/notifications/shown        {endpoint, id?} → {missed}: this browser showed note `id`;
+//                                             the others it was sent and hasn't shown (see Catching up)
 //   POST   /murmur/presence                   {tab, device?, hermes?, active, viewing?} or {tab, gone: true} → 204
 //
 // Who's told: nobody, when someone active is already looking at that chat;
@@ -16,10 +18,11 @@
 // every device then, once. Active is a tab in front, in a focused window,
 // touched in the last two minutes (the app decides, and says so as it changes).
 //
-// Devices and Murmur's push keys are kept in DATA_DIR/notifications.json.
+// Devices and Murmur's push keys are kept in DATA_DIR/notifications.json; the
+// notes a device hasn't shown yet, only in memory.
 
 import type http from 'node:http'
-import { createHash } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import type { Note } from '../shared/notes.ts'
@@ -28,7 +31,7 @@ import { hermesById, knownTargets, onDrop } from './connection.ts'
 import type { Hermes } from './hermes.ts'
 import { readJson, secure, sendJson } from './http.ts'
 import { watchHermes, type Moment } from './watch.ts'
-import { generateVapidKeys, sendPush, topicFor, validPushKey, validVapidKeys, type PushResult, type Subscription, type VapidKeys } from './web-push.ts'
+import { generateVapidKeys, sendPush, validPushKey, validVapidKeys, type PushOptions, type PushResult, type Subscription, type VapidKeys } from './web-push.ts'
 
 /** A note as the desktop app shows it, with the Hermes it's from (for where clicking goes). */
 export type NativeNote = Note & { hermes: string }
@@ -41,13 +44,15 @@ export type NotifyOptions = {
   /** Watches one Hermes (watch.ts); tests pass their own. */
   watch?: (hermes: Hermes, tell: (moment: Moment) => void) => { stop(): void }
   /** Sends one push (web-push.ts); tests pass their own. */
-  push?: (subscription: Subscription, payload: string, keys: VapidKeys, options: { ttl: number; urgency: 'high' | 'normal'; topic?: string }) => Promise<PushResult>
+  push?: (subscription: Subscription, payload: string, keys: VapidKeys, options: PushOptions) => Promise<PushResult>
 }
 
 type Device = Subscription & { id: string; /** Where its links open. */ origin: string; since: number }
 type Stored = { vapid?: VapidKeys; devices?: Device[]; native?: boolean }
 type Tab = { device?: string; hermes?: string; active: boolean; viewing?: string; at: number }
 type Ask = { note: Note; hermes: string; everyone: boolean }
+/** A note as one device was sent it. */
+type Sent = { id: string; note: Note; hermes: string; ask: boolean; at: number; until: number }
 
 export const NATIVE = 'desktop'
 /** A tab not heard from in this long has gone, or its computer is asleep (it says every 20 seconds while in front). */
@@ -57,6 +62,8 @@ const SWEEP_MS = 15_000
 const MAX_DEVICES = 24
 /** A question is worth an hour; a finished reply, a day. */
 const TTL = { ask: 60 * 60, note: 24 * 60 * 60 }
+/** The most a device catching up is shown at once. */
+const CATCH_UP = 8
 
 const deviceId = (endpoint: string) => createHash('sha256').update(endpoint).digest('base64url').slice(0, 22)
 const base64url = (value: unknown, bytes: number) => typeof value === 'string' && /^[A-Za-z0-9_-]+={0,2}$/.test(value) && Buffer.from(value, 'base64url').length === bytes
@@ -162,7 +169,7 @@ export function createNotifications(options: NotifyOptions = {}) {
     return { to: everyDevice().filter((t) => here.has(t.kind === 'native' ? NATIVE : t.device.id)), everyone: false }
   }
 
-  function send(note: Note, hermes: string, to: Target[], urgent: boolean) {
+  function send(note: Note, hermes: string, to: Target[], ask: boolean) {
     for (const target of to) {
       if (target.kind === 'native') {
         try {
@@ -173,10 +180,13 @@ export function createNotifications(options: NotifyOptions = {}) {
         continue
       }
       const { device } = target
-      void push(device, payloadFor(note, hermes, device.origin), vapid(), {
-        ttl: urgent ? TTL.ask : TTL.note,
-        urgency: urgent ? 'high' : 'normal',
-        topic: topicFor(note.tag),
+      const ttl = ask ? TTL.ask : TTL.note
+      void push(device, payloadFor(note, hermes, device.origin, keep(device.id, note, hermes, ask)), vapid(), {
+        ttl,
+        // Every note is shown, and is about something the person started: worth
+        // waking a phone for. At `normal`, Android holds it while the phone dozes.
+        // No Topic: a push service keeps only a few while a phone is away.
+        urgency: 'high',
       }).then((result) => {
         if (stopped) return
         // Turned away for Murmur's key: a subscription made for keys Murmur no longer has.
@@ -191,11 +201,51 @@ export function createNotifications(options: NotifyOptions = {}) {
   }
 
   function hear(hermes: string, moment: Moment) {
-    if (moment.kind === 'answered') return void asks.delete(`${hermes}\n${moment.key}`)
+    if (moment.kind === 'answered') {
+      const key = `${hermes}\n${moment.key}`
+      const answered = asks.get(key)
+      asks.delete(key)
+      if (answered) unsee((sent) => sent.note === answered.note)
+      return
+    }
     const ask = moment.kind === 'ask'
     const heard = audience(moment.note, hermes)
     if (ask) asks.set(`${hermes}\n${moment.key}`, { note: moment.note, hermes, everyone: heard?.everyone ?? false })
     if (heard) send(moment.note, hermes, heard.to, ask)
+  }
+
+  // ── Catching up ───────────────────────────────────────────────────────────
+  //
+  // Chrome on Android keeps one push waiting at a time (while the phone dozes,
+  // in a burst, coming back online) and drops any that land meanwhile, though
+  // the push service took them. So what each device is sent is kept until it
+  // says it's shown it, and whichever push gets through brings the rest
+  // (public/sw.js).
+
+  /** What each device was sent and hasn't shown, newest per chat or group, oldest first: by device, then tag. */
+  const unshown = new Map<string, Map<string, Sent>>()
+
+  function keep(device: string, note: Note, hermes: string, ask: boolean): Sent {
+    const now = Date.now()
+    const kept = unshown.get(device) ?? new Map<string, Sent>()
+    for (const [tag, old] of kept) if (old.until <= now || tag === note.tag) kept.delete(tag)
+    const ttl = ask ? TTL.ask : TTL.note
+    const sent = { id: randomBytes(9).toString('base64url'), note, hermes, ask, at: now, until: now + ttl * 1000 }
+    unshown.set(device, kept.set(note.tag, sent))
+    return sent
+  }
+
+  /** Notes no device needs showing any more: a question answered, a chat looked at. */
+  function unsee(done: (sent: Sent) => boolean) {
+    for (const kept of unshown.values()) for (const [tag, sent] of kept) if (done(sent)) kept.delete(tag)
+  }
+
+  /** A device showed note `id`: the others it hasn't, handed over once. */
+  function catchUp(device: string, id: string | undefined) {
+    const kept = unshown.get(device)
+    unshown.delete(device)
+    const now = Date.now()
+    return [...(kept?.values() ?? [])].filter((sent) => sent.id !== id && sent.until > now).slice(-CATCH_UP)
   }
 
   // ── Watching ──────────────────────────────────────────────────────────────
@@ -253,6 +303,7 @@ export function createNotifications(options: NotifyOptions = {}) {
     if (id === NATIVE) stored.native = false
     else stored.devices = devices().filter((d) => d.id !== id)
     refusals.delete(id)
+    unshown.delete(id)
     save()
     reconcile()
   }
@@ -269,13 +320,15 @@ export function createNotifications(options: NotifyOptions = {}) {
       if (!tab) return reply(res, 422, { error: 'Say which tab.' })
       if (body.gone === true) tabs.delete(tab)
       else {
-        tabs.set(tab, {
+        const seen: Tab = {
           device: text(body.device, 64),
           hermes: text(body.hermes, 64),
           active: body.active === true,
           viewing: text(body.viewing, 512),
           at: Date.now(),
-        })
+        }
+        tabs.set(tab, seen)
+        if (seen.active && seen.viewing) unsee((sent) => sent.note.tag === seen.viewing && (!seen.hermes || sent.hermes === seen.hermes))
       }
       settle()
       res.writeHead(204, { 'cache-control': 'no-store' }).end()
@@ -303,6 +356,15 @@ export function createNotifications(options: NotifyOptions = {}) {
       return reply(res, 200, { device: remember(subscription, origin, text(body.previous, 2048)) })
     }
 
+    if (path === '/murmur/notifications/shown' && req.method === 'POST') {
+      const body = (await readJson(req, 4096).catch(() => ({}))) as { endpoint?: unknown; id?: unknown }
+      const endpoint = text(body.endpoint, 2048)
+      if (!endpoint) return reply(res, 422, { error: 'Say which device.' })
+      const device = devices().find((d) => d.id === deviceId(endpoint))
+      const missed = device ? catchUp(device.id, text(body.id, 64)) : []
+      return reply(res, 200, { missed: missed.map((sent) => notificationFor(sent.note, sent.hermes, device!.origin, sent)) })
+    }
+
     const one = /^\/murmur\/notifications\/devices\/([A-Za-z0-9_-]{1,64})$/.exec(path)
     if (one && req.method === 'DELETE') {
       forget(one[1])
@@ -324,26 +386,34 @@ export function createNotifications(options: NotifyOptions = {}) {
 }
 
 /**
- * What a push carries: a notification in the declarative form Safari shows
- * by itself (18.4 and later), which Murmur's service worker reads elsewhere
- * (public/sw.js). Its link names the Hermes it's from, so it opens there.
+ * What a push carries: the notification, for Murmur's service worker to show
+ * (public/sw.js). Not in the declarative form Safari 18.4 and later can show
+ * by itself: one Safari shows loads its link when tapped, a fresh start even
+ * with Murmur open, where the worker's opens the chat in the window already
+ * there. Its link names the Hermes it's from, so it opens there.
  */
-export function payloadFor(note: Note, hermes: string, origin: string) {
+export function payloadFor(note: Note, hermes: string, origin: string, sent: { id: string; at: number; ask?: boolean }) {
+  return JSON.stringify({ notification: notificationFor(note, hermes, origin, sent) })
+}
+
+/**
+ * A note as a notification: what a push carries, and what a device catching
+ * up is handed. A question says so: caught up, it still buzzes, as it needs the person.
+ */
+function notificationFor(note: Note, hermes: string, origin: string, sent: { id: string; at: number; ask?: boolean }) {
   const link = new URL(note.href, origin)
   link.searchParams.set('hermes', hermes)
-  return JSON.stringify({
-    web_push: 8030,
-    notification: {
-      title: note.title,
-      body: note.body,
-      tag: note.tag,
-      renotify: true,
-      navigate: link.href,
-      icon: new URL('/icon-192.png', origin).href,
-      badge: new URL('/badge-96.png', origin).href,
-      data: { href: note.href, hermes },
-    },
-  })
+  return {
+    title: note.title,
+    body: note.body,
+    tag: note.tag,
+    renotify: true,
+    timestamp: sent.at,
+    navigate: link.href,
+    icon: new URL('/icon-192.png', origin).href,
+    badge: new URL('/badge-96.png', origin).href,
+    data: { id: sent.id, href: note.href, hermes, ...(sent.ask && { ask: true }) },
+  }
 }
 
 // ── Murmur's own ────────────────────────────────────────────────────────────

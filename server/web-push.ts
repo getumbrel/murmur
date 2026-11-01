@@ -5,7 +5,7 @@
 // request is signed with Murmur's key pair (VAPID, RFC 8292), so the push
 // service knows who's sending and only ever carries ciphertext.
 
-import { createCipheriv, createECDH, createHash, createPrivateKey, createSign, ECDH, hkdfSync, randomBytes, type KeyObject } from 'node:crypto'
+import { createCipheriv, createECDH, createPrivateKey, createSign, ECDH, hkdfSync, randomBytes, type KeyObject } from 'node:crypto'
 
 export type Subscription = { endpoint: string; keys: { p256dh: string; auth: string } }
 
@@ -17,8 +17,6 @@ export type PushOptions = {
   ttl: number
   /** `high` wakes a sleeping phone at once; `normal` may wait for a better moment. */
   urgency: 'high' | 'normal'
-  /** A newer push with the same topic replaces one still waiting to be delivered. */
-  topic?: string
 }
 
 /** What the push service said: delivered, gone for good (forget the device), or failed this time. */
@@ -111,9 +109,6 @@ export function encrypt(subscription: Subscription, payload: Buffer, fixed?: { s
   return Buffer.concat([header, sender, sealed])
 }
 
-/** A Topic header (at most 32 URL-safe characters) for any string. */
-export const topicFor = (text: string) => createHash('sha256').update(text).digest('base64url').slice(0, 32)
-
 /** Sends one push. Never throws: a device that can't be reached is a result, not an error. */
 export async function sendPush(subscription: Subscription, payload: string, keys: VapidKeys, options: PushOptions): Promise<PushResult> {
   try {
@@ -125,7 +120,6 @@ export async function sendPush(subscription: Subscription, payload: string, keys
         'content-type': 'application/octet-stream',
         ttl: String(options.ttl),
         urgency: options.urgency,
-        ...(options.topic && { topic: options.topic }),
       },
       body: encrypt(subscription, Buffer.from(payload)),
       signal: AbortSignal.timeout(15_000),

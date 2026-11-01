@@ -36,7 +36,7 @@ let base: string
 let stop: () => void
 let tell: ((moment: Moment) => void) | undefined
 let watching: number
-let pushes: { endpoint: string; payload: Record<string, any>; urgency: string; topic?: string }[]
+let pushes: { endpoint: string; payload: Record<string, any>; urgency: string; ttl: number }[]
 let shown: NativeNote[]
 let answer: (endpoint: string) => PushResult
 
@@ -55,7 +55,7 @@ async function start({ native = false } = {}) {
       }
     },
     push: async (sub, payload, _keys, options) => {
-      pushes.push({ endpoint: sub.endpoint, payload: JSON.parse(payload), urgency: options.urgency, topic: options.topic })
+      pushes.push({ endpoint: sub.endpoint, payload: JSON.parse(payload), urgency: options.urgency, ttl: options.ttl })
       return answer(sub.endpoint)
     },
   })
@@ -199,19 +199,20 @@ describe('who hears a note', () => {
     tell!({ kind: 'note', note })
     expect(to()).toEqual(['device-1', 'device-2'])
     expect(pushes[0]).toMatchObject({
-      urgency: 'normal',
-      topic: expect.stringMatching(/^[A-Za-z0-9_-]{32}$/),
       payload: {
-        web_push: 8030,
         notification: {
           title: 'Atlas',
           body: 'Booked.',
           tag: 'murmur:chat:c1',
+          timestamp: expect.any(Number),
           navigate: 'https://umbrel.local/chat/atlas/c1?hermes=env',
-          data: { href: '/chat/atlas/c1', hermes: 'env' },
+          data: { id: expect.stringMatching(/^[A-Za-z0-9_-]{12}$/), href: '/chat/atlas/c1', hermes: 'env' },
         },
       },
     })
+    expect(pushes[1].payload.notification.data.id).not.toBe(pushes[0].payload.notification.data.id)
+    // Not Safari's declarative form: one Safari shows by itself loads its link when tapped, Murmur open or not.
+    expect(pushes[0].payload).not.toHaveProperty('web_push')
   })
 
   it('only the device they’re using, while they’re using one', async () => {
@@ -252,6 +253,85 @@ describe('who hears a note', () => {
       Date.now = now
     }
     expect(to()).toEqual(['device-1'])
+  })
+})
+
+describe('each push', () => {
+  it('wakes a sleeping phone, reply or question; a question keeps for an hour, a reply for a day', async () => {
+    await start()
+    await register(1)
+    tell!({ kind: 'note', note })
+    tell!({ kind: 'ask', key: 'srq-1', note: ask })
+    expect(pushes.map((p) => [p.urgency, p.ttl])).toEqual([
+      ['high', 24 * 60 * 60],
+      ['high', 60 * 60],
+    ])
+  })
+})
+
+describe('catching up', () => {
+  const shownOn = async (n: number, id?: string) =>
+    ((await (await post('/murmur/notifications/shown', { endpoint: subscription(n).endpoint, id })).json()) as { missed: { body: string; data: { id: string } }[] }).missed
+  const idOf = (i: number) => pushes[i].payload.notification.data.id as string
+  const reply = (chat: string, body: string): Moment => ({ kind: 'note', note: { ...note, body, tag: `murmur:chat:${chat}`, href: `/chat/atlas/${chat}` } })
+
+  it('a device that shows one note is handed the others it was sent, oldest first, once', async () => {
+    await start()
+    await register(1)
+    tell!(reply('a', 'First'))
+    tell!(reply('b', 'Second'))
+    tell!(reply('c', 'Third'))
+    const missed = await shownOn(1, idOf(0))
+    expect(missed.map((m) => m.body)).toEqual(['Second', 'Third'])
+    expect(missed[0]).toMatchObject({ tag: 'murmur:chat:b', navigate: 'https://umbrel.local/chat/atlas/b?hermes=env', data: { id: idOf(1) } })
+    expect(await shownOn(1, idOf(1))).toEqual([])
+  })
+
+  it('a question says so, so it still buzzes when it comes by a catch-up', async () => {
+    await start()
+    await register(1)
+    tell!(reply('a', 'First'))
+    tell!({ kind: 'ask', key: 'srq-1', note: ask })
+    const [question] = await shownOn(1, idOf(0))
+    expect(question).toMatchObject({ body: ask.body, data: { ask: true } })
+    expect(pushes[0].payload.notification.data).not.toHaveProperty('ask')
+    expect(pushes[1].payload.notification.data).toMatchObject({ ask: true })
+  })
+
+  it('only the newest note for each chat', async () => {
+    await start()
+    await register(1)
+    tell!(reply('a', 'Working on it'))
+    tell!(reply('b', 'Other'))
+    tell!(reply('a', 'Done'))
+    expect((await shownOn(1, idOf(1))).map((m) => m.body)).toEqual(['Done'])
+  })
+
+  it('leaves out a question since answered, and a chat since looked at', async () => {
+    await start()
+    await register(1)
+    const laptop = await register(2)
+    tell!({ kind: 'ask', key: 'srq-1', note: ask })
+    tell!(reply('a', 'Seen on the laptop'))
+    tell!(reply('b', 'Still news'))
+    tell!({ kind: 'answered', key: 'srq-1' })
+    await beat('t1', { device: laptop, active: true, viewing: 'murmur:chat:a' })
+    expect((await shownOn(1)).map((m) => m.body)).toEqual(['Still news'])
+  })
+
+  it('nothing for a device Murmur doesn’t know, or one it forgot', async () => {
+    await start()
+    const phone = await register(1)
+    tell!(reply('a', 'First'))
+    tell!(reply('b', 'Second'))
+    expect(await shownOn(9)).toEqual([])
+    await fetch(`${base}/murmur/notifications/devices/${phone}`, { method: 'DELETE', headers: { origin: 'https://umbrel.local' } })
+    expect(await shownOn(1)).toEqual([])
+  })
+
+  it('says which device it is', async () => {
+    await start()
+    expect((await post('/murmur/notifications/shown', {})).status).toBe(422)
   })
 })
 

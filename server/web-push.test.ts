@@ -1,6 +1,6 @@
 import { createDecipheriv, createECDH, createPublicKey, createVerify, hkdfSync, randomBytes } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
-import { encrypt, generateVapidKeys, topicFor, validVapidKeys, vapidAuthorization, type Subscription } from './web-push.ts'
+import { encrypt, generateVapidKeys, validVapidKeys, vapidAuthorization, type Subscription } from './web-push.ts'
 
 const b = (text: string) => Buffer.from(text, 'base64url')
 
@@ -28,7 +28,7 @@ describe('encrypt', () => {
     browser.generateKeys()
     const auth = randomBytes(16)
     const subscription = { endpoint: 'https://push.example/x', keys: { p256dh: browser.getPublicKey('base64url'), auth: auth.toString('base64url') } }
-    const note = JSON.stringify({ web_push: 8030, notification: { title: 'Atlas', body: 'Done ✓' } })
+    const note = JSON.stringify({ notification: { title: 'Atlas', body: 'Done ✓' } })
     const body = encrypt(subscription, Buffer.from(note))
 
     const salt = body.subarray(0, 16)
@@ -67,14 +67,5 @@ describe('VAPID', () => {
     expect(validVapidKeys({ publicKey: one.publicKey, privateKey: two.privateKey })).toBe(false)
     expect(validVapidKeys({ publicKey: 'x', privateKey: 'y' })).toBe(false)
     expect(validVapidKeys(null)).toBe(false)
-  })
-})
-
-describe('topicFor', () => {
-  it('is short, URL-safe and the same for the same chat', () => {
-    const topic = topicFor('murmur:chat:20261014_101500_abc')
-    expect(topic).toMatch(/^[A-Za-z0-9_-]{32}$/)
-    expect(topicFor('murmur:chat:20261014_101500_abc')).toBe(topic)
-    expect(topicFor('murmur:chat:other')).not.toBe(topic)
   })
 })
