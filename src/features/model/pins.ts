@@ -56,9 +56,10 @@ export type Model = ModelGroup['models'][number]
 export type PinnedModel = Model & { provider: string; service: string }
 
 /**
- * The pinned models, in the order they were pinned, then each service's
- * others: a model is listed once. A search narrows both. `mixed`: the pins come
- * from more than one service, so each says which (two can serve one model).
+ * The pinned models, in the order they were pinned, then every service's, the
+ * pinned ones too (to compare a service's whole range). A search narrows both.
+ * `mixed`: the pins come from more than one service, so each says which (two
+ * can serve one model).
  */
 export function arrange(groups: ModelGroup[], pins: string[], query = '') {
   const q = query.trim().toLowerCase()
@@ -81,9 +82,7 @@ export function arrange(groups: ModelGroup[], pins: string[], query = '') {
     groups: groups
       .map((g) => ({
         ...g,
-        models: g.models.filter(
-          (m) => matches(m.id, g.name) && !pins.includes(pinKey({ provider: g.provider, model: m.id })),
-        ),
+        models: g.models.filter((m) => matches(m.id, g.name)),
       }))
       .filter((g) => g.models.length),
     mixed: new Set(pinned.map((m) => m.provider)).size > 1,

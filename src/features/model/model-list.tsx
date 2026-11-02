@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import { Check, Pin, PinOff } from 'lucide-react'
 import { Skeleton } from '@/ui/skeleton'
@@ -12,10 +12,11 @@ import { arrange, pinKey, usePins, useSetPinned } from './pins'
 import type { ModelPick, useModelOptions } from './use-models'
 
 // The models an agent can use, by the service each comes from, under the ones
-// you've pinned. Both model sheets list them: a chat's, and the one for what an
-// agent's new chats start with. Tap one to pick it. The pin at its end pins it
-// (or unpins it): always there on touch, where a swipe right does it too, and
-// there as a pointer passes over.
+// you've pinned (which stay in their service's list too, to compare). Both
+// model sheets list them: a chat's, and the one for what an agent's new chats
+// start with. Tap one to pick it. The pin at its end pins it (or unpins it):
+// always there on touch, where a swipe right does it too, and there as a
+// pointer passes over.
 
 type Props = {
   options: ReturnType<typeof useModelOptions>
@@ -50,26 +51,27 @@ export function ModelList({ options, query, selected, usual, busy, onPick }: Pro
     return () => document.removeEventListener('scroll', close, { capture: true })
   }, [revealed])
 
-  // A pin made far down a long list lands above what's in view: hold what's
-  // in view still as the pins grow (where the browser doesn't already), and
-  // land it without a slide no one sees.
+  // Pinned and unpinned far down a long list, the pins grow and shrink above
+  // what's in view: hold it still meanwhile (where the browser doesn't already).
   const rest = useRef<HTMLDivElement>(null)
-  const anchor = useRef<number | null>(null)
-  const [still, setStill] = useState(false)
+  const anchor = useRef<{ top: number; until: number } | null>(null)
   const pin = (pick: ModelPick, on: boolean) => {
     const top = rest.current?.getBoundingClientRect().top
     const view = rest.current?.closest('[data-sheet-body]')?.getBoundingClientRect().top
-    const above = top !== undefined && view !== undefined && top < view
-    anchor.current = above ? top : null
-    setStill(above)
+    anchor.current = top !== undefined && view !== undefined && top < view ? { top, until: Date.now() + 1500 } : null
     void setPinned(pick, on)
   }
-  useLayoutEffect(() => {
-    const body = rest.current?.closest('[data-sheet-body]')
-    if (anchor.current === null || !rest.current || !body) return
-    body.scrollTop += rest.current.getBoundingClientRect().top - anchor.current
-    anchor.current = null
-  }, [pinned.length])
+  // Each frame the pins change size, before it's drawn.
+  const holdStill = useCallback((pins: HTMLDivElement) => {
+    const hold = new ResizeObserver(() => {
+      const body = pins.closest('[data-sheet-body]')
+      const held = anchor.current
+      if (!held || Date.now() > held.until || !rest.current || !body) return
+      body.scrollTop += rest.current.getBoundingClientRect().top - held.top
+    })
+    hold.observe(pins)
+    return () => hold.disconnect()
+  }, [])
 
   if (options.isPending) {
     // The list's own shape while it loads: a group label over a few rows.
@@ -107,9 +109,11 @@ export function ModelList({ options, query, selected, usual, busy, onPick }: Pro
   const row = (
     pick: ModelPick,
     model: { resting?: Date },
-    { isPinned = false, service, quiet = false }: { isPinned?: boolean; service?: string; quiet?: boolean } = {},
+    { inPins = false, service, quiet = false }: { inPins?: boolean; service?: string; quiet?: boolean } = {},
   ) => {
     const key = pinKey(pick)
+    // Pinned ones are listed twice: each row opens on its own.
+    const place = `${inPins ? 'pins' : 'service'}/${key}`
     return (
       <ModelRow
         key={key}
@@ -121,11 +125,11 @@ export function ModelList({ options, query, selected, usual, busy, onPick }: Pro
         selected={same(selected, pick)}
         busy={same(busy, pick)}
         disabled={!!busy}
-        pinned={isPinned}
-        still={still}
+        pinned={pins.includes(key)}
+        inPins={inPins}
         hover={hover}
-        revealed={revealed === key}
-        onReveal={(on) => setRevealed(on ? key : null)}
+        revealed={revealed === place}
+        onReveal={(on) => setRevealed(on ? place : null)}
         onPick={() => onPick(pick)}
         onPin={(on) => pin(pick, on)}
       />
@@ -144,30 +148,32 @@ export function ModelList({ options, query, selected, usual, busy, onPick }: Pro
     >
       {/* A search is a new list: it shows at once, and only pins move. */}
       <div key={query}>
-        <AnimatePresence initial={false}>
-          {pinned.length > 0 && (
-            <motion.section
-              initial={still ? false : { height: 0, opacity: 0 }}
-              animate={{ height: 'auto', opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              transition={grow}
-              className="overflow-hidden"
-            >
-              <h3 className="mb-2 px-4 text-footnote font-medium text-ink-2">Pinned</h3>
-              <div role="radiogroup" aria-label="Pinned" className="overflow-hidden rounded-xl bg-fill-1">
-                <AnimatePresence initial={false}>
-                  {pinned.map((m) =>
-                    row({ model: m.id, provider: m.provider }, m, {
-                      isPinned: true,
-                      service: mixed ? m.service : undefined,
-                    }),
-                  )}
-                </AnimatePresence>
-              </div>
-              <div className="h-6" />
-            </motion.section>
-          )}
-        </AnimatePresence>
+        <div ref={holdStill}>
+          <AnimatePresence initial={false}>
+            {pinned.length > 0 && (
+              <motion.section
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={grow}
+                className="overflow-hidden"
+              >
+                <h3 className="mb-2 px-4 text-footnote font-medium text-ink-2">Pinned</h3>
+                <div role="radiogroup" aria-label="Pinned" className="overflow-hidden rounded-xl bg-fill-1">
+                  <AnimatePresence initial={false}>
+                    {pinned.map((m) =>
+                      row({ model: m.id, provider: m.provider }, m, {
+                        inPins: true,
+                        service: mixed ? m.service : undefined,
+                      }),
+                    )}
+                  </AnimatePresence>
+                </div>
+                <div className="h-6" />
+              </motion.section>
+            )}
+          </AnimatePresence>
+        </div>
         <div ref={rest} className="space-y-6">
           {groups.map((group) => (
             <section key={group.provider}>
@@ -196,7 +202,7 @@ function ModelRow({
   busy,
   disabled,
   pinned,
-  still,
+  inPins,
   hover,
   revealed,
   onReveal,
@@ -211,8 +217,8 @@ function ModelRow({
   busy: boolean
   disabled: boolean
   pinned: boolean
-  /** Arrive without growing in (it lands out of view). */
-  still: boolean
+  /** The row among the pins, rather than in its service's list. */
+  inPins: boolean
   /** A pointer that hovers: the pin shows where it's going, in the tick's place. */
   hover: boolean
   revealed: boolean
@@ -220,10 +226,10 @@ function ModelRow({
   onPick: () => void
   onPin: (on: boolean) => void
 }) {
-  // Pinning moves it to the other list, so it goes from this one the way it was pushed.
+  // Unpinned among the pins, it goes the way it was pushed. In its service's list it stays.
   const action: SwipeOption = pinned
-    ? { label: 'Unpin', icon: PinOff, tone: 'warning', removes: true, run: () => onPin(false) }
-    : { label: 'Pin', icon: Pin, tone: 'warning', removes: true, run: () => onPin(true) }
+    ? { label: 'Unpin', icon: PinOff, tone: 'warning', removes: inPins, run: () => onPin(false) }
+    : { label: 'Pin', icon: Pin, tone: 'warning', removes: false, run: () => onPin(true) }
   const { row, x, armed, dragged, run, drag } = useSwipe<HTMLDivElement>({
     leading: action,
     revealed: revealed ? 'leading' : null,
@@ -265,7 +271,7 @@ function ModelRow({
   return (
     <motion.div
       ref={row}
-      initial={still ? false : { height: 0, opacity: 0 }}
+      initial={{ height: 0, opacity: 0 }}
       animate={{ height: 'auto', opacity: 1 }}
       exit={{ height: 0, opacity: 0 }}
       transition={grow}

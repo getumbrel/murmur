@@ -25,12 +25,12 @@ describe('pinned models', () => {
     expect(pinsOf(undefined)).toEqual([])
   })
 
-  it('lists pins first, in the order they were pinned, and nowhere else', () => {
+  it('lists pins first, in the order they were pinned, and in their services too', () => {
     const { pinned, groups: rest } = arrange(groups, ['openrouter::openai/gpt-6.1-sol', 'anthropic::claude-opus-5'])
     expect(ids(pinned)).toEqual(['openai/gpt-6.1-sol', 'claude-opus-5'])
     expect(rest.map((g) => [g.name, ids(g.models)])).toEqual([
-      ['Anthropic', ['claude-fable-5.1']],
-      ['OpenRouter', ['anthropic/claude-opus-5']],
+      ['Anthropic', ['claude-fable-5.1', 'claude-opus-5']],
+      ['OpenRouter', ['anthropic/claude-opus-5', 'openai/gpt-6.1-sol']],
     ])
   })
 
@@ -51,7 +51,10 @@ describe('pinned models', () => {
       mixed,
     } = arrange(groups, ['anthropic::claude-opus-5', 'openrouter::openai/gpt-6.1-sol'], 'opus')
     expect(ids(pinned)).toEqual(['claude-opus-5'])
-    expect(rest.map((g) => [g.name, ids(g.models)])).toEqual([['OpenRouter', ['anthropic/claude-opus-5']]])
+    expect(rest.map((g) => [g.name, ids(g.models)])).toEqual([
+      ['Anthropic', ['claude-opus-5']],
+      ['OpenRouter', ['anthropic/claude-opus-5']],
+    ])
     // Still says which service: the other pin is only hidden by the search.
     expect(mixed).toBe(true)
     expect(ids(arrange(groups, [], 'openrouter').groups.flatMap((g) => g.models))).toHaveLength(2)
