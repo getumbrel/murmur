@@ -56,7 +56,7 @@ const buddyFor = (phase: Phase, working: boolean): BuddyState =>
       ? 'speaking'
       : phase === 'waiting'
         ? 'waiting'
-        : phase === 'connecting'
+        : phase === 'connecting' || phase === 'ended'
           ? 'idle'
           : working
             ? 'working'
@@ -68,6 +68,8 @@ const labelFor = (phase: Phase, activity?: string, switching?: string) =>
     ? `Switching to ${switching}`
     : phase === 'connecting'
       ? 'Connecting'
+      : phase === 'ended'
+        ? 'Call ended'
       : phase === 'listening' || phase === 'hearing'
         ? 'Listening'
         : phase === 'transcribing'
@@ -205,6 +207,17 @@ function Surface({ name, hue, seed, local, voice, onType, onSetup, style }: Prop
                   >
                     {switching ? `Switching to ${switching}` : 'Connecting…'}
                   </motion.span>
+                ) : phase === 'ended' ? (
+                  // It said goodbye and hung up.
+                  <motion.span
+                    key="ended"
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.2 }}
+                    className="text-ink-2"
+                  >
+                    Call ended
+                  </motion.span>
                 ) : (
                   (phase === 'thinking' || phase === 'transcribing') && (
                     <motion.span
@@ -301,7 +314,7 @@ export function Bars({ phase }: { phase: Phase }) {
     })
   }, [listening])
   return (
-    <span ref={box} className="talk-bars" data-state={listening ? 'listening' : phase === 'speaking' ? 'speaking' : 'thinking'} aria-hidden>
+    <span ref={box} className="talk-bars" data-state={listening ? 'listening' : phase === 'speaking' || phase === 'ended' ? phase : 'thinking'} aria-hidden>
       {[0, 1, 2, 3, 4].map((i) => (
         <i key={i} style={listening ? undefined : { transform: '' }} />
       ))}
@@ -606,8 +619,10 @@ function StepsCard({ steps }: { steps: Step[] }) {
 
 function Controls({ onType }: { onType: () => void }) {
   const muted = useTalk((s) => s.muted)
+  // Hung up: the buttons quietly step back, and there's nothing left to press.
+  const ended = useTalk((s) => s.phase === 'ended')
   return (
-    <div className="talk-controls">
+    <div className="talk-controls" data-ended={ended || undefined} inert={ended}>
       <button
         type="button"
         className="talk-btn pressable"
@@ -631,11 +646,13 @@ function Controls({ onType }: { onType: () => void }) {
 
 export function Clock({ className }: { className?: string }) {
   const startedAt = useTalk((s) => s.startedAt)
+  // Hung up, it stops where the call ended.
+  const endedAt = useTalk((s) => s.endedAt)
   const [now, setNow] = useState(Date.now())
   useEffect(() => {
     const t = window.setInterval(() => setNow(Date.now()), 1000)
     return () => window.clearInterval(t)
   }, [])
-  const s = Math.max(0, Math.floor((now - startedAt) / 1000))
+  const s = Math.max(0, Math.floor(((endedAt ?? now) - startedAt) / 1000))
   return <span className={className}>{`${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`}</span>
 }

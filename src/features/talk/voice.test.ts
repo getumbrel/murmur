@@ -27,6 +27,11 @@ describe('speakable', () => {
     expect(said).toBe('Here are three photos from Lisbon: Want an album?')
   })
 
+  it('doesn’t say the hang-up', () => {
+    expect(speakable('Bye, talk soon!\n::hangup').trim()).toBe('Bye, talk soon!')
+    expect(new Sentences().take('Bye, talk soon! ::hangup', true)).toEqual(['Bye, talk soon!'])
+  })
+
   it('says links as "the link"', () => {
     expect(speakable('See https://umbrel.com/support for more.')).toBe('See the link for more.')
   })

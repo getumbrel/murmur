@@ -5,12 +5,14 @@
 // plan, OpenAI's live voice does the listening and speaking instead and hands
 // each request over (live.ts). Either way a spoken turn is a normal
 // prompt.submit with voice_turn, so the agent answers briefly and fast.
+// When you say goodbye, the agent decides the call is over (in any language):
+// it ends its goodbye with ::hangup and puts the phone down once that's said.
 // Murmur keeps nothing of its own beyond the call itself.
 
 import { create } from 'zustand'
 import { api, HermesError } from '@/hermes/rest'
 import { getChat, keepSpoken, send, stop as stopReply, useChats } from '@/state/chats'
-import { splitMessage } from '@shared/message.ts'
+import { hangsUp, splitMessage, withoutHangup } from '@shared/message.ts'
 import { gather, umbrelTool, type Find, type Found } from '@/features/umbrel/finds'
 import { isMachineTool, placeScreens, type Screen, type Shot } from '@/features/machine/shots'
 import { ASK_TOOL, OPENS_PAGES, pastLabel, serverName, toolCategory } from '@/features/chat/tool-labels'
@@ -28,7 +30,7 @@ import { isIOS } from './ios'
 import { spokenIds } from './spoken'
 import { closeSounds, loopSound, playSound, unlockSounds } from './sounds'
 
-export type Phase = 'connecting' | 'listening' | 'hearing' | 'transcribing' | 'thinking' | 'speaking' | 'waiting'
+export type Phase = 'connecting' | 'listening' | 'hearing' | 'transcribing' | 'thinking' | 'speaking' | 'waiting' | 'ended'
 
 /** Who listens and speaks: Hermes's own voice settings, or OpenAI's live voice on a ChatGPT plan or an OpenAI key. */
 export type Engine = 'chained' | 'chatgpt' | 'openai'
@@ -66,6 +68,8 @@ type Talk = {
   /** Folded into the chat's call button while you look at the chat. */
   minimized: boolean
   startedAt: number
+  /** It hung up: the clock stops here. */
+  endedAt?: number
   /** What you're saying, word by word as the live voice hears it. */
   hearing?: string
   /** What you said last, once it's been heard. */
@@ -141,6 +145,17 @@ let holding: ReturnType<typeof setTimeout> | undefined
 /** Exchanges go into the chat one at a time, in the order they were said. */
 let keeps: Promise<unknown> = Promise.resolve()
 const HOLD_MS = 1500
+/** It said goodbye (::hangup): once that's said it hangs up, unless you say something first. */
+let leaving = false
+/** The live voice has said something of its own since the last request (its own "Take care."). */
+let chimed = false
+let parting: ReturnType<typeof setTimeout> | undefined
+/** Longer than a goodbye: the live voice says it as it comes, rather than once it's whole. */
+const HELD_CHARS = 160
+/** A beat after its goodbye before the line goes, for "oh, one more thing". */
+const PARTING_MS = 1200
+/** "Call ended", then the call folds away. */
+const ENDED_MS = 1400
 /** How long a request waits for the words you said, which are usually a moment behind it. */
 const WORDS_WAIT_MS = 1500
 /** About two minutes of waiting for the agent to finish. */
@@ -193,12 +208,14 @@ export function startCall(opts: Partial<CallPlan> & {
   stopSpeaking()
   unlockSounds()
   dropped = false
+  stay()
   connecting?.()
   connecting = loopSound('recording')
   interrupted = false
   replyDone = true
   lastHeard = undefined
   handedOver = false
+  chimed = false
   delegation = undefined
   set({
     open: true,
@@ -210,6 +227,7 @@ export function startCall(opts: Partial<CallPlan> & {
     muted: false,
     minimized: false,
     startedAt: Date.now(),
+    endedAt: undefined,
     hearing: undefined,
     you: undefined,
     spoken: undefined,
@@ -257,10 +275,15 @@ function startChained(profile: string, mine: number, setup?: Promise<unknown>) {
   listenTo(voice, mine)
   const events: MicEvents = {
     level: (level) => get().open && set({ level }),
-    speechStart: () => set({ phase: 'hearing', hearing: undefined, you: undefined, error: undefined }),
+    speechStart: () => {
+      // Saying something after its goodbye holds the line, until it's clear what it was.
+      clearTimeout(parting)
+      set({ phase: 'hearing', hearing: undefined, you: undefined, error: undefined })
+    },
     turn: (wav) => void heard(wav, mine),
     barge: () => {
-      // You talked over it: it stops at once and listens.
+      // You talked over it: it stops at once and listens. (Over its goodbye too: the call goes on.)
+      stay()
       voice?.stop()
       const id = get().chatId
       if (id && busy(id)) void stopReply(id)
@@ -270,6 +293,7 @@ function startChained(profile: string, mine: number, setup?: Promise<unknown>) {
     nothing: () => {
       if (get().phase !== 'hearing') return
       set({ phase: 'listening' })
+      if (leaving) return part()
       // It stopped talking for you, so it doesn't just sit there.
       if (interrupted) {
         mic?.setMode('barge')
@@ -336,6 +360,8 @@ function startLive(profile: string, name: string | undefined, mine: number, way:
       if (!now()) return
       // A new turn: what you said last isn't what any request from here on is about.
       lastHeard = undefined
+      // The voice answers some things itself: whatever you say after its goodbye, the call goes on.
+      stay()
       set({ phase: 'hearing', hearing: words, you: undefined, spoken: undefined, error: undefined })
     },
     heard: (text) => {
@@ -355,6 +381,7 @@ function startLive(profile: string, name: string | undefined, mine: number, way:
     request: (id, text) => void requested(id, text, mine),
     saying: (text) => {
       if (!now()) return
+      chimed = true
       // Saying the agent's answer, or filling in while it works: that isn't its own.
       if (replyDone) exchange.saying = text
       set({ spoken: liveLine(text, !get().spoken), phase: 'speaking' })
@@ -428,6 +455,7 @@ function pickedUp() {
 
 /** The live voice asked the agent for something: a voice turn, as if you'd typed it. */
 async function requested(id: string, text: string, mine: number) {
+  chimed = false
   // These words went to the agent, which saves them itself.
   clearTimeout(holding)
   holding = undefined
@@ -549,6 +577,7 @@ function cutOver() {
 }
 
 export function endCall() {
+  stay()
   keepExchange()
   if (get().open && !dropped) playSound('disconnect')
   stopConnecting()
@@ -576,6 +605,38 @@ export function endCall() {
   void awake?.release().catch(() => {})
   awake = undefined
   set({ open: false, minimized: false, level: 0, spoken: undefined, activity: undefined, switching: undefined })
+}
+
+/** Its goodbye is said: a moment for one more thing, then it hangs up. */
+function part() {
+  watch?.()
+  watch = undefined
+  mic?.setMode('listen')
+  set({ phase: 'listening', activity: undefined, spoken: undefined, hearing: undefined, you: undefined })
+  clearTimeout(parting)
+  const mine = run
+  // Still saying it (the live voice can finish its own words first): once it's quiet, this starts again.
+  parting = setTimeout(() => mine === run && !voice?.busy && !live?.busy && hangUp(), PARTING_MS)
+}
+
+/** The call goes on. */
+function stay() {
+  leaving = false
+  clearTimeout(parting)
+  parting = undefined
+}
+
+/** It puts the phone down: the line goes quiet at once, and the call shows it ended before it folds away. */
+function hangUp() {
+  stay()
+  keepExchange()
+  mic?.setMode('off')
+  live?.setMuted(true)
+  if (!dropped) playSound('disconnect')
+  dropped = true
+  set({ phase: 'ended', endedAt: Date.now(), level: 0, spoken: undefined, hearing: undefined, you: undefined, activity: undefined, error: undefined })
+  const mine = run
+  setTimeout(() => mine === run && endCall(), get().minimized ? 0 : ENDED_MS)
 }
 
 export function setMuted(muted: boolean) {
@@ -623,7 +684,7 @@ async function heard(wav: Blob, mine: number) {
     // Nothing worth sending (a cough, the TV): keep listening.
     mic?.setMode('listen')
     set({ phase: 'listening' })
-    return cutOver()
+    return leaving ? part() : cutOver()
   }
   const chatId = await chatFor(mine)
   if (chatId && mine === run) ask(chatId, text, mine)
@@ -650,6 +711,7 @@ async function chatFor(mine: number) {
 }
 
 function ask(chatId: string, text: string, mine: number) {
+  stay()
   const itemId = `talk-${Date.now()}-${++turn}`
   spokenIds.add(itemId)
   // What's on the stage stays for the next turn ("open that one"), until this one brings something.
@@ -670,14 +732,19 @@ const SCREEN =
   'Anything else worth seeing, add the way you would in the app (MEDIA: lines, ::preview widgets for charts, tables, maps or pages) and it appears while you speak. ' +
   'Show rather than describe.)'
 
+/** The agent decides when the call is over, in whatever language it's in: no phrases to match. */
+const HANGUP_NOTE =
+  '(When the person is ending the call (saying goodbye, or that is all for now), answer with a short goodbye in their language and ' +
+  'put ::hangup alone on the last line: the call ends once your goodbye is said. Use it only then, never to end a call they want to go on with.)'
+
 /** The last few spoken exchanges, so a short reply ("yes, Thursday") makes sense to the agent. */
 function recent(chatId: string) {
   const items = getChat(chatId)?.items ?? []
   const lines = items
     .filter((i) => i.kind === 'user' || i.kind === 'assistant')
     .slice(-6)
-    .map((i) => `${i.kind === 'user' ? 'User' : 'Assistant'}: ${(i as { text: string }).text.slice(0, 400)}`)
-  return [SCREEN, ...lines].join('\n')
+    .map((i) => `${i.kind === 'user' ? 'User' : 'Assistant'}: ${withoutHangup((i as { text: string }).text).slice(0, 400)}`)
+  return [SCREEN, HANGUP_NOTE, ...lines].join('\n')
 }
 
 /** Follows the reply to your turn: speaks it as it's written and puts what it brings on the stage. */
@@ -701,12 +768,26 @@ function follow(chatId: string, itemId: string, mine: number) {
     shown.set(item.key, item)
   }
   replyDone = false
+  // Its goodbye ends with ::hangup: once that's said, it hangs up (unless you talk over it).
+  let bye = false
   // Said out loud: by Hermes's voice, or handed to the live voice as its answer.
   const answer = delegation
   let answering = false
-  const speak = (sentence: string) => {
+  const say = (sentence: string) => {
     answering = true
     return live ? answer && live.say(answer, sentence) : voice?.say(sentence)
+  }
+  // The live voice has already said something of its own: a short reply waits until it's whole, so
+  // a goodbye it has said already isn't said twice. A longer one isn't a goodbye: it's said as it comes.
+  let held: string[] | undefined
+  const speak = (sentence: string) => {
+    if (live && chimed && !answering) held ??= []
+    if (!held) return say(sentence)
+    held.push(sentence)
+    if (held.length <= 2 && held.join(' ').length <= HELD_CHARS) return
+    const rest = held
+    held = undefined
+    rest.forEach(say)
   }
   // The voice says something each time it's told what the agent is doing, so it's told rarely:
   // each thing once, a while apart, and never once the answer has started.
@@ -769,6 +850,7 @@ function follow(chatId: string, itemId: string, mine: number) {
         if (seg.kind === 'media') show({ key: `m:${seg.path}`, kind: 'media', path: seg.path })
         if (seg.kind === 'preview') show({ key: `p:${seg.file}`, kind: 'preview', file: seg.file })
       }
+      if (!bye && hangsUp(item.text)) bye = leaving = true
       let reader = readers.get(item.id)
       if (!reader) readers.set(item.id, (reader = new Sentences()))
       for (const s of reader.take(item.text, !item.streaming)) speak(s)
@@ -822,6 +904,12 @@ function follow(chatId: string, itemId: string, mine: number) {
     // Once the reply is under way, talking over it is an interruption.
     if (after.length && mic?.mode === 'off' && !handing) mic.setMode('barge')
     replyDone = chat.status === 'idle' || chat.status === 'error'
+    if (replyDone && held) {
+      const rest = held
+      held = undefined
+      // Its goodbye: the voice has said one, so the call just ends once it's quiet.
+      if (!bye) rest.forEach(say)
+    }
     if (replyDone) settle()
   }
   watch = useChats.subscribe(update)
@@ -899,7 +987,8 @@ function stepOf(item: ToolStep): Step | undefined {
 function settle() {
   if (!get().open || voice?.busy || live?.busy || !replyDone) return
   const phase = get().phase
-  if (phase === 'hearing' || phase === 'transcribing') return
+  if (phase === 'hearing' || phase === 'transcribing' || phase === 'ended') return
+  if (leaving) return part()
   watch?.()
   watch = undefined
   mic?.setMode('listen')

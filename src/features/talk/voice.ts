@@ -6,6 +6,7 @@
 
 import { isIOS } from './ios'
 import { api } from '@/hermes/rest'
+import { withoutHangup } from '@shared/message.ts'
 
 /** A blip of silence: playing it inside the tap unlocks audio on phones. */
 export const SILENCE = 'data:audio/wav;base64,UklGRiwAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQgAAACAgICAgICAgA=='
@@ -126,7 +127,7 @@ export function speakError(raw: string) {
 /** What a reply sounds like: no files, widgets, code, tables, links or markdown marks. */
 export function speakable(text: string) {
   return (
-    text
+    withoutHangup(text)
       // Fenced code: said as nothing (it's on screen).
       .replace(/```[\s\S]*?(```|$)/g, ' ')
       .replace(/^\s*(MEDIA:\S+|::preview\{[^}]*\}).*$/gm, ' ')

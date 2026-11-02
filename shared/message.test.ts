@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { plainLine, splitMessage } from './message.ts'
+import { hangsUp, plainLine, splitMessage } from './message.ts'
 
 const kinds = (text: string) =>
   splitMessage(text).map((s) => (s.kind === 'media' ? `media:${s.path}` : s.kind))
@@ -28,5 +28,26 @@ describe('plainLine', () => {
   it('leaves the marks that belong to words', () => {
     expect(plainLine('Edited __init__.py and snake_case_name in #3')).toBe('Edited __init__.py and snake_case_name in #3')
     expect(plainLine('2 * 3 * 4 = 24, and __bold__.')).toBe('2 * 3 * 4 = 24, and bold.')
+  })
+})
+
+describe('::hangup', () => {
+  it('ends a call once its goodbye is said, and is never shown', () => {
+    for (const reply of ['Bye, talk soon!\n::hangup', 'Au revoir ! ::hangup', 'अलविदा!\n\n::hangup{}\n']) {
+      expect(hangsUp(reply)).toBe(true)
+      expect(splitMessage(reply)).toEqual([{ kind: 'md', text: reply.split(/\s*::hangup/)[0] }])
+    }
+    expect(plainLine('Bye, talk soon!\n::hangup')).toBe('Bye, talk soon!')
+  })
+
+  it('doesn’t flash while it’s being written', () => {
+    expect(splitMessage('Bye, talk soon!\n::han', true)).toEqual([{ kind: 'md', text: 'Bye, talk soon!' }])
+    expect(splitMessage('Bye, talk soon! ::hang', true)).toEqual([{ kind: 'md', text: 'Bye, talk soon!' }])
+  })
+
+  it('leaves replies that don’t hang up alone', () => {
+    expect(hangsUp('Use ::preview{file="a.html"} for widgets.')).toBe(false)
+    expect(hangsUp('Bye for now, and call back when you’re ready.')).toBe(false)
+    expect(splitMessage('a::hangup_later')).toEqual([{ kind: 'md', text: 'a::hangup_later' }])
   })
 })

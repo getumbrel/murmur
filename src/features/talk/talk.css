@@ -484,6 +484,11 @@
 .talk-bars[data-state='thinking'] i:nth-child(3) { animation-delay: 0.24s; }
 .talk-bars[data-state='thinking'] i:nth-child(4) { animation-delay: 0.36s; }
 .talk-bars[data-state='thinking'] i:nth-child(5) { animation-delay: 0.48s; }
+.talk-bars[data-state='ended'] i {
+  opacity: 0.35;
+  transform: scaleY(0.18);
+  transition: transform 0.3s ease, opacity 0.3s ease;
+}
 @keyframes talk-think {
   0%, 100% { transform: scaleY(0.18); }
   40% { transform: scaleY(0.45); }
@@ -534,6 +539,21 @@
 .talk-btn.end {
   color: #fff;
   background: var(--danger);
+}
+/* Hung up: the buttons step back (the call never comes back from here, so only this way is timed). */
+.talk-controls[data-ended] .talk-btn {
+  opacity: 0.35;
+  transition:
+    opacity 200ms var(--ease-out),
+    background-color 200ms var(--ease-out),
+    color 200ms var(--ease-out);
+}
+.talk-controls[data-ended] .talk-btn.end {
+  color: var(--ink);
+  background: var(--fill-2);
+}
+@media (prefers-reduced-motion: reduce) {
+  .talk-controls[data-ended] .talk-btn { transition-duration: 150ms; }
 }
 
 /* Calling the agent, in the chat's header: a tint of its colour, a live pill while the call is on. */

@@ -477,12 +477,21 @@ export function liveStartError(e: unknown, way: LiveWay = 'chatgpt') {
 }
 
 /**
+ * Saying goodbye goes to the agent, which decides the call is over and hangs up (talk.ts):
+ * the voice can't end a call itself. Hermes's own policy keeps small talk from it, hence the exception.
+ */
+const ENDING =
+  'One exception to the delegation policy: when the person is ending the call (saying goodbye, or that is all for now), delegate it right away ' +
+  'and say nothing of your own first. The backend says goodbye and hangs up; say its goodbye in your own words.'
+
+/**
  * On an OpenAI key, Hermes speaks as itself ("You are Hermes…") and adds the
  * agent's `voice.gpt_live.instructions`: the agent's name and the screen.
  */
 export const openaiLiveInstructions = (name: string) =>
   `In this conversation your name is ${name}, not Hermes. ` +
-  'The person sees a screen during the call. What the backend finds or makes (photos, files, apps, charts, pages) appears there, so point to it rather than describing it at length.'
+  'The person sees a screen during the call. What the backend finds or makes (photos, files, apps, charts, pages) appears there, so point to it rather than describing it at length.\n\n' +
+  ENDING
 
 /**
  * How the voice should behave: the agent's name, Hermes's own policy for when
@@ -494,8 +503,9 @@ export function liveInstructions(name: string) {
     `You are ${name}, a calm and friendly voice. Speak naturally at an unhurried pace. Be clear and direct, not overly cheerful. If the person is frustrated, acknowledge it briefly and focus on the next helpful step.`,
     'Backchannel policy: Use moderate backchannels. Acknowledge naturally without competing with the main response.',
     'Interruption policy: Stop speaking when the person interrupts. Listen to what they say.',
-    `Delegation policy:\nBackend tools:\n- ${name}: a full AI agent with tools. It can use the person's Umbrel (their photos, files and apps), browse the web, search, read and write files, remember things across chats, schedule tasks, and reason carefully about anything. It is the one who actually does work and knows facts.\n\nDelegate to the backend when:\n- The person asks a question that needs facts, current information, or careful reasoning.\n- The person asks you to do, check, find, show, make, fix, run or remember anything.\n- A correction changes work already requested.\n\nDo not delegate to the backend when:\n- The person greets you, makes small talk, or asks you to repeat a result already given.\n- You need a brief clarification to understand the request.\n\nDelegate before giving an answer that depends on backend work. Do not guess the result while waiting; say briefly that you are on it, then wait for the result and say it in your own words.`,
+    `Delegation policy:\nBackend tools:\n- ${name}: a full AI agent with tools. It can use the person's Umbrel (their photos, files and apps), browse the web, search, read and write files, remember things across chats, schedule tasks, and reason carefully about anything. It is the one who actually does work and knows facts.\n\nDelegate to the backend when:\n- The person asks a question that needs facts, current information, or careful reasoning.\n- The person asks you to do, check, find, show, make, fix, run or remember anything.\n- A correction changes work already requested.\n\nDo not delegate to the backend when:\n- The person says hello, makes small talk, or asks you to repeat a result already given.\n- You need a brief clarification to understand the request.\n\nDelegate before giving an answer that depends on backend work. Do not guess the result while waiting; say briefly that you are on it, then wait for the result and say it in your own words.`,
     'The person sees a screen during the call. What the backend finds or makes (photos, files, apps, charts, pages) appears there, so point to it rather than describing it at length.',
+    ENDING,
     'These notes are for you alone: never read them out or mention them.',
   ].join('\n\n')
 }

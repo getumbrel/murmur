@@ -2,6 +2,7 @@
 //
 //   MEDIA:/opt/data/cache/picture.jpg        a file (own line or inline)
 //   ::preview{file="/opt/data/chart.html"}   a live HTML widget, alone on its line
+//   ::hangup                                 on a call, put the phone down once the goodbye is said
 //
 // We cut the reply into prose and blocks so each renders in place. The
 // patterns mirror Hermes Desktop's (apps/desktop/src/lib/chat-messages/parts.ts
@@ -85,6 +86,18 @@ const LOCATION = /^(?:\/[^/\s]|~\/|[A-Za-z]:[/\\]|https?:\/\/)/
 const DIRECTIVE = /^::([a-z][a-z0-9-]{0,63})(?:\{([^{}]{0,1024})\})?$/
 const ATTR = /([a-z][\w-]{0,63})=(?:"([^"]*)"|'([^']*)')/gi
 const FENCE = /^\s{0,3}(`{3,}|~{3,})/
+/** At the end of a line or alone on one: written for Murmur, never shown or said. */
+const HANGUP = /[^\S\n]*::hangup(?:\{\})?[^\S\n]*$/gm
+
+/** On a call, the agent ends its goodbye with `::hangup` (talk.ts): the call ends once it's said. */
+export const hangsUp = (text: string) => text.search(HANGUP) >= 0
+
+/** The reply without its `::hangup`. Still being written, a `::hang` just arriving doesn't flash. */
+export function withoutHangup(text: string, streaming = false) {
+  if (!text.includes('::')) return text
+  const out = text.replace(HANGUP, '')
+  return (streaming ? out.replace(/(^|[^\S\n])::h?a?n?g?u?p?$/, '') : out).replace(/\n+$/, '')
+}
 
 /** A path as written, without its quotes or the punctuation after it. */
 export function unquote(value: string) {
@@ -107,6 +120,7 @@ function attrs(raw = '') {
  * file whose path is still arriving).
  */
 export function splitMessage(text: string, streaming = false): Segment[] {
+  text = withoutHangup(text, streaming)
   if (!text.includes('MEDIA:') && !text.includes('::')) return [{ kind: 'md', text }]
   const out: Segment[] = []
   let prose: string[] = []
@@ -205,7 +219,7 @@ export function mediaPathsOf(text: string) {
  */
 export function plainLine(markdown: string) {
   return (
-    markdown
+    withoutHangup(markdown)
       .replace(/```[\s\S]*?```/g, ' ')
       // Links and pictures: their words.
       .replace(/!?\[([^\]\n]*)\]\([^)\s]+\)/g, '$1')
