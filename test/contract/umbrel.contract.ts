@@ -8,7 +8,8 @@
 import { afterAll, beforeAll, describe, expect, it, inject } from 'vitest'
 import { startGateway, stopGateway } from '@/hermes/gateway'
 import { foundIn } from '@/features/umbrel/finds'
-import { UMBREL_KEY, UMBREL_PHOTO } from './fake-model'
+import { shotOf } from '@/features/machine/shots'
+import { UMBREL_KEY, UMBREL_MACHINE, UMBREL_PHOTO } from './fake-model'
 import { api, connect, newChat, q, turn, type Socket } from './client'
 
 let socket: Socket
@@ -68,5 +69,34 @@ describe('umbrelOS results', () => {
     const found = foundIn(live!.name!, live!.args, live!.result)
     expect(found?.piece).toMatchObject({ kind: 'look', photo: { id: UMBREL_PHOTO, media: expect.stringMatching(/^\/opt\/data\/.+\.png$/) } })
     expect(foundIn('mcp__umbrel__get_photo', {}, stored)?.piece).toEqual(found?.piece)
+  })
+})
+
+describe('a machine’s screen', () => {
+  // As Murmur connects umbrelOS today (stopAskingFirst): driving a machine is a tap per key otherwise.
+  beforeAll(async () => {
+    await api.put(`/api/config?${p}`, { config: { mcp_servers: { [server]: { trust: 'full' } } } })
+    await socket.request('reload.mcp', { confirm: true })
+  })
+
+  it('keeps the screenshot each step at the machine hands back, live and in history alike', async () => {
+    const args = { machineId: UMBREL_MACHINE, action: 'left_click', coordinate: [640, 400] }
+    const { live, stored } = await call('control_machine', args)
+    expect(live?.name).toBe('mcp__umbrel__control_machine')
+    const shot = shotOf(live!.name!, live!.args, live!.result)
+    expect(shot).toEqual({
+      key: `umbrel/${UMBREL_MACHINE}`,
+      machine: UMBREL_MACHINE,
+      path: expect.stringMatching(/^\/opt\/data\/.+\.jpe?g$/),
+      w: 1280,
+      h: 800,
+      at: [640, 400],
+    })
+    expect(shotOf('mcp__umbrel__control_machine', args, stored)).toEqual(shot)
+  })
+
+  it('keeps the one a look hands back', async () => {
+    const { live } = await call('get_machine_screenshot', { machineId: UMBREL_MACHINE })
+    expect(shotOf(live!.name!, live!.args, live!.result)).toMatchObject({ machine: UMBREL_MACHINE, w: 1280 })
   })
 })

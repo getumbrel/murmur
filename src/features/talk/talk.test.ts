@@ -304,6 +304,16 @@ describe('its browser on a call', () => {
     vi.useRealTimers()
   })
 
+  it('shows a machine it drives as one screen, its latest picture', async () => {
+    const shot = (n: number) => ({ key: 'umbrel/ubuntu', machine: 'ubuntu', path: `/opt/data/${n}.jpg`, w: 1280, h: 800 })
+    const step = (n: number) => ({ ...tool('mcp__umbrel__control_machine', '', 'done'), id: `m${n}`, shot: shot(n) })
+    await asked(step(1), step(2), step(3))
+    const screens = useTalk.getState().stage.filter((i) => i.kind === 'machine')
+    expect(screens).toHaveLength(1)
+    expect(screens[0]).toMatchObject({ key: 'machine:umbrel/ubuntu', screen: { machine: 'ubuntu', shots: [shot(1), shot(2), shot(3)] } })
+    expect(useTalk.getState().stage.some((i) => i.kind === 'media' || i.kind === 'steps')).toBe(false)
+  })
+
   it('shows its browser while it works there, with the site', async () => {
     await asked(tool('browser_exec', 'hearthandbean.com'))
     expect(browser()).toMatchObject({ kind: 'browser', site: 'hearthandbean.com', ask: undefined })

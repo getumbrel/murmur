@@ -161,3 +161,25 @@ describe('the browser', () => {
     expect(tookFor('browser_exec', { handed_back: true, seconds: 1 })).toBeUndefined()
   })
 })
+
+describe('a machine’s keyboard and mouse', () => {
+  const drive = (args: Record<string, unknown>) => toolLabel('mcp__umbrel__control_machine', { machineId: 'ubuntu-desktop', ...args })
+
+  it('says what the agent does there (its screen, below, says which machine)', () => {
+    expect(drive({ action: 'left_click', coordinate: [1, 2] })).toEqual({ label: 'Clicking', category: 'machine' })
+    expect(drive({ action: 'type', text: 'sudo apt install firefox' }).label).toBe('Typing ‘sudo apt install firefox’')
+    expect(drive({ action: 'key', text: 'ctrl+alt+Delete' }).label).toBe('Pressing Ctrl+Alt+Delete')
+    expect(drive({ action: 'key', text: 'Return' }).label).toBe('Pressing Return')
+    expect(drive({ action: 'scroll', scrollDirection: 'down' }).label).toBe('Scrolling down')
+    expect(drive({ action: 'double_click' }).label).toBe('Double-clicking')
+    expect(toolLabel('mcp__umbrel__get_machine_screenshot', { machineId: 'win-11' }).label).toBe('Looking at the screen')
+  })
+
+  it('reads in the past once done, and sums up as using a machine', () => {
+    expect(pastLabel('Double-clicking')).toBe('Double-clicked')
+    expect(pastLabel('Typing ‘hi’')).toBe('Typed ‘hi’')
+    expect(pastLabel('Looking at the screen')).toBe('Looked at the screen')
+    expect(didSummary(['mcp__umbrel__get_machine_screenshot', 'mcp__umbrel__control_machine'])).toBe('Used a machine')
+    expect(didSummary(['mcp__umbrel__start_machine'])).toBe('Used your Umbrel')
+  })
+})

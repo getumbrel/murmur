@@ -1,0 +1,86 @@
+/* A machine's next picture settles over the last. */
+.machine-frame-in {
+  animation: machine-frame-in 240ms var(--ease-out) both;
+}
+
+@keyframes machine-frame-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/*
+ * Where the agent pressed: a ring in its colour that opens out and fades,
+ * over whatever the screen shows, with a dot that lingers a beat longer.
+ */
+.machine-press {
+  position: absolute;
+  width: 36px;
+  height: 36px;
+  margin: -18px 0 0 -18px;
+  pointer-events: none;
+}
+
+.machine-press::before,
+.machine-press::after {
+  content: '';
+  position: absolute;
+  border-radius: 9999px;
+}
+
+.machine-press::before {
+  inset: 0;
+  box-shadow:
+    0 0 0 2px var(--accent),
+    0 0 10px 1px oklch(0 0 0 / 0.25);
+  animation: machine-press-ring 760ms var(--ease-out) both;
+}
+
+.machine-press::after {
+  inset: 13px;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px oklch(1 0 0 / 0.85);
+  animation: machine-press-dot 1100ms var(--ease-out) both;
+}
+
+@keyframes machine-press-ring {
+  from {
+    transform: scale(0.45);
+    opacity: 1;
+  }
+  to {
+    transform: scale(1.35);
+    opacity: 0;
+  }
+}
+
+@keyframes machine-press-dot {
+  0%,
+  55% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .machine-frame-in {
+    animation-duration: 150ms;
+  }
+  .machine-press::before {
+    animation: none;
+    opacity: 0;
+  }
+  .machine-press::after {
+    animation: machine-press-fade 900ms ease both;
+  }
+}
+
+@keyframes machine-press-fade {
+  to {
+    opacity: 0;
+  }
+}

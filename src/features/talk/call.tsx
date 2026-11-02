@@ -10,7 +10,8 @@ import { baseName, fileUrl } from '@/features/media/files'
 import { FindCard } from '@/features/umbrel/cards'
 import { count } from '@/features/umbrel/finds'
 import { ApprovalCard } from '@/features/chat/approval-card'
-import { answerApproval } from '@/state/chats'
+import { answerApproval, useChats } from '@/state/chats'
+import { MachineScreen } from '@/features/machine/machine-screen'
 import { useScreen } from '@/state/screen'
 import { HandCard, Peek } from '@/features/screen'
 import { reelShift } from './spoken'
@@ -478,6 +479,7 @@ function Stage({ items, name, hue, seed }: { items: StageItem[]; name: string; h
   const chatId = useTalk((s) => s.chatId)
   const profile = useTalk((s) => s.profile)
   const [picked, setPicked] = useState<string>()
+  const working = useChats((s) => !!chatId && s.chats[chatId]?.status === 'working')
   // What it's asking you comes first, until you've answered.
   const asking = all.findLast((g) => asks(g.items[0]))
   const front = asking ?? all.find((g) => g.key === picked) ?? all.at(-1)!
@@ -509,7 +511,7 @@ function Stage({ items, name, hue, seed }: { items: StageItem[]; name: string; h
               (front.items[0]?.kind === 'find' || front.items[0]?.kind === 'steps') && 'talk-found',
               front.items[0]?.kind === 'approval' && 'talk-asks',
               front.items[0]?.kind === 'preview' && 'talk-widget',
-              front.items[0]?.kind === 'browser' && 'talk-browser',
+              (front.items[0]?.kind === 'browser' || front.items[0]?.kind === 'machine') && 'talk-browser',
             )}
             initial={{ opacity: 0, y: 16, scale: 0.96, filter: 'blur(6px)' }}
             animate={{ opacity: 1, y: 0, scale: 1, filter: 'blur(0px)' }}
@@ -534,6 +536,8 @@ function Stage({ items, name, hue, seed }: { items: StageItem[]; name: string; h
                     seed={seed}
                     onApprove={(requestId, choice) => chatId && answerApproval(chatId, requestId, choice)}
                   />
+                ) : it.kind === 'machine' ? (
+                  <MachineScreen key={it.key} screen={it.screen} live={working} />
                 ) : it.kind === 'browser' ? (
                   profile &&
                   (it.ask ? (

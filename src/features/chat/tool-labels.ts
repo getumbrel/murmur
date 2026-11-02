@@ -23,6 +23,7 @@ export type ToolCategory =
   | 'history'
   | 'mail'
   | 'app'
+  | 'machine'
   | 'other'
 
 /** `app`: the mark (a MARKS key) of the app the step uses, drawn in place of the category's icon. */
@@ -169,9 +170,49 @@ export function serverName(server: string) {
   return /^umbrel(os)?$/i.test(server) ? 'your Umbrel' : humanize(server)
 }
 
+/** Keys as a keyboard prints them: "ctrl+alt+Delete" → "Ctrl+Alt+Delete", "Return" → "Return". */
+const keysOf = (combo: string) =>
+  combo
+    .split(/\s+/)
+    .map((keys) => keys.split('+').map((k) => (k.length > 1 ? k[0].toUpperCase() + k.slice(1) : k.toUpperCase())).join('+'))
+    .join(', ')
+
+/**
+ * umbrelOS's machine tools (umbrel/…/mcp/tools/machines.ts): what the agent does at a machine's
+ * keyboard and mouse, as a person would say it. The machine's screen, just below, names it.
+ */
+function machineLabel(tool: string, a: Args): ToolLabel | undefined {
+  const at = (label: string): ToolLabel => ({ label, category: 'machine' })
+  if (tool === 'get_machine_screenshot') return at('Looking at the screen')
+  if (tool !== 'control_machine') return undefined
+  const text = str(a.text)
+  switch (a.action) {
+    case 'type':
+      return at(text ? `Typing ‘${clip(text, 32)}’` : 'Typing')
+    case 'key':
+      return at(text ? `Pressing ${clip(keysOf(text), 32)}` : 'Pressing a key')
+    case 'double_click':
+      return at('Double-clicking')
+    case 'right_click':
+      return at('Right-clicking')
+    case 'left_click_drag':
+      return at('Dragging')
+    case 'mouse_move':
+      return at('Pointing')
+    case 'scroll':
+      return at(typeof a.scrollDirection === 'string' ? `Scrolling ${a.scrollDirection}` : 'Scrolling')
+    case 'wait':
+      return at('Waiting')
+    default:
+      return at('Clicking')
+  }
+}
+
 function connected(name: string, args: Args): ToolLabel | undefined {
   const m = MCP.exec(name)
   if (!m) return undefined
+  const machine = machineLabel(m[2], args)
+  if (machine) return machine
   const [verb, ...rest] = humanize(m[2]).toLowerCase().split(' ')
   const known = VERBS[verb]
   const label = known ? [known[0], ...rest].join(' ') : humanize(m[2])
@@ -433,6 +474,11 @@ const PAST: Record<string, string> = {
   Drafting: 'Drafted',
   Connecting: 'Connected',
   Finding: 'Found',
+  'Double-clicking': 'Double-clicked',
+  'Right-clicking': 'Right-clicked',
+  Dragging: 'Dragged',
+  Pointing: 'Pointed',
+  Waiting: 'Waited',
 }
 
 /** "Searching the web" → "Searched the web". Labels it doesn't know stay as they are. */
@@ -484,6 +530,8 @@ const DONE_PREFIXES: [string, Done][] = [
   ['web_', { key: 'search', one: 'Searched the web' }],
 ]
 
+const MACHINE: Done = { key: 'machine', one: 'Used a machine' }
+
 const OTHER: Done = { key: 'other', one: 'Used a tool', many: (n) => `Used ${n} tools` }
 
 /**
@@ -496,8 +544,10 @@ export function didSummary(names: string[]): string | undefined {
   for (const name of names) {
     const server = MCP.exec(name)?.[1]
     const viaNous = connectorTool(name)?.app
+    const machine = /^mcp__.+?__(get_machine_screenshot|control_machine)$/.test(name)
     const done =
       (viaNous && { key: `nous:${viaNous.slug}`, one: `Used ${viaNous.name}` }) ??
+      (machine ? MACHINE : undefined) ??
       DONE[name] ??
       DONE_PREFIXES.find(([p]) => name.startsWith(p))?.[1] ??
       (server ? { key: `mcp:${server}`, one: `Used ${serverName(server)}` } : OTHER)

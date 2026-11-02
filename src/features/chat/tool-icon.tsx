@@ -14,6 +14,7 @@ import {
   ListChecks,
   Mail,
   MessageCircleQuestion,
+  Monitor,
   Send,
   SquareTerminal,
   Users,
@@ -41,6 +42,7 @@ const ICONS: Record<ToolCategory, LucideIcon> = {
   history: History,
   mail: Mail,
   app: Blocks,
+  machine: Monitor,
   other: Wrench,
 }
 

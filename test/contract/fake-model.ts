@@ -22,8 +22,9 @@
 //
 // It also plays a connected app that turns Hermes away: /mcp/unauthorized
 // answers 401 and /mcp/missing 404, as an MCP server would. /mcp/umbrel is a
-// small umbrelOS: its search and get_photo tools, answering in umbrelOS's
-// shapes (src/features/umbrel/finds.ts), with no sessions, as umbrelOS keeps none.
+// small umbrelOS: its search and get_photo tools, and a machine's screenshot
+// and controls, answering in umbrelOS's shapes (src/features/umbrel/finds.ts,
+// src/features/machine/shots.ts), with no sessions, as umbrelOS keeps none.
 // And a server that wants a key: everything under /keyed/ is the same, but
 // answers 401 without `Bearer ${MODEL_KEY}`.
 
@@ -99,6 +100,10 @@ export const UMBREL_KEY = `umbrelmcp_${'c'.repeat(32)}_${'d'.repeat(64)}`
 export const UMBREL_PHOTO = 'e'.repeat(64)
 /** A 1×1 PNG, for the picture get_photo hands back. */
 const PIXEL = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
+/** A 1×1 JPEG: a machine's screen, as umbrelOS sends it. */
+const SCREEN =
+  '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAA0JCgsKCA0LCgsODg0PEyAVExISEyccHhcgLikxMC4pLSwzOko+MzZGNywtQFdBRkxOUlNSMj5aYVpQYEpRUk//2wBDAQ4ODhMREyYVFSZPNS01T09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT0//wAARCAABAAEDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDi6KKKsk//2Q=='
+export const UMBREL_MACHINE = 'ubuntu-desktop'
 
 type Rpc = { jsonrpc?: string; id?: number | string; method?: string; params?: { name?: string; arguments?: Record<string, unknown> } }
 
@@ -127,6 +132,22 @@ function umbrel(message: Rpc): unknown {
             inputSchema: { type: 'object', properties: { id: { type: 'string' }, image: { type: 'boolean' } }, required: ['id'] },
             annotations: readOnly,
           },
+          {
+            name: 'get_machine_screenshot',
+            description: 'Capture the screen of a running granted machine as a JPEG.',
+            inputSchema: { type: 'object', properties: { machineId: { type: 'string' } }, required: ['machineId'] },
+            annotations: readOnly,
+          },
+          {
+            name: 'control_machine',
+            description: 'Use the keyboard and mouse of a running granted machine. Every call returns a screenshot.',
+            inputSchema: {
+              type: 'object',
+              properties: { machineId: { type: 'string' }, action: { type: 'string' }, coordinate: { type: 'array', items: { type: 'integer' } }, text: { type: 'string' } },
+              required: ['machineId', 'action'],
+            },
+            annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+          },
         ],
       })
     case 'tools/call': {
@@ -146,6 +167,11 @@ function umbrel(message: Rpc): unknown {
         })
       if (name === 'get_photo')
         return answer({ content: [text({ id: UMBREL_PHOTO, kind: 'image', takenAt: '2025-06-14T09:00:00-07:00' }), { type: 'image', data: PIXEL, mimeType: 'image/png' }] })
+      if (name === 'get_machine_screenshot' || name === 'control_machine') {
+        const { machineId, action } = message.params?.arguments ?? {}
+        const screenshot = { width: 1280, height: 800, mimeType: 'image/jpeg' }
+        return answer({ content: [text({ machineId, ...(action ? { action } : {}), screenshot }), { type: 'image', data: SCREEN, mimeType: 'image/jpeg' }] })
+      }
       return answer({ content: [{ type: 'text', text: `No tool ${name}` }], isError: true })
     }
   }

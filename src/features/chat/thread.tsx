@@ -26,6 +26,8 @@ import { UserAttachments } from '@/features/media/attachments'
 import { ToolMedia } from '@/features/media/tool-media-view'
 import { Finds } from '@/features/umbrel/cards'
 import { placeFinds } from '@/features/umbrel/finds'
+import { MachineScreen } from '@/features/machine/machine-screen'
+import { placeScreens } from '@/features/machine/shots'
 import { MediaProvider, type MediaContext } from '@/features/media/context'
 import { mediaPathsOf, proseOf } from '@shared/message.ts'
 import { spokenIds } from '@/features/talk/spoken'
@@ -175,6 +177,26 @@ function toRows(items: ChatItem[], busy: boolean, live: Set<string>): Row[] {
   if (busy && !turn) rows.push({ kind: 'turn', id: `turn-${prev}`, sections: [] })
   rows.push(...aside)
   return rows
+}
+
+/**
+ * The machines each reply shows that a later reply shows too, by reply: those
+ * fold to a line, so the chat has one screen per machine, in its latest reply.
+ * Joined into one string, so a reply re-renders only when its own changes.
+ */
+function foldedScreens(rows: Row[]) {
+  const later = new Set<string>()
+  const folded = new Map<string, string>()
+  for (const row of [...rows].reverse()) {
+    if (row.kind !== 'turn') continue
+    const keys = new Set(
+      row.sections.flatMap((s) => s.blocks).flatMap((b) => (b.kind === 'work' ? b.items : [])).flatMap((i) => (i.kind === 'tool' && i.shot ? [i.shot.key] : [])),
+    )
+    const mine = [...keys].filter((k) => later.has(k))
+    if (mine.length) folded.set(row.id, mine.join('\n'))
+    for (const k of keys) later.add(k)
+  }
+  return folded
 }
 
 /** The row a message is in: its own, or the reply it's part of. */
@@ -408,6 +430,7 @@ export function Thread({
   const watched = useRef(new Set<string>())
   for (const i of items) if (i.kind === 'approval' && i.status === 'pending') watched.current.add(i.id)
   const rows = useMemo(() => toRows(items, busy, watched.current), [items, busy])
+  const folded = useMemo(() => foldedScreens(rows), [rows])
   // A long chat paints its newest rows, and older ones join as you scroll up
   // to them: rendering every saved message up front made opening one slow.
   // Held by the oldest row shown, so another conversation starts afresh.
@@ -730,6 +753,7 @@ export function Thread({
                               agent={agent}
                               voice={voice}
                               isNew={isNew(row.id)}
+                              folded={folded.get(row.id)}
                               onApprove={stable.onApprove}
                               onAnswer={stable.onAnswer}
                               onSecret={handlers.onSecret ? stable.onSecret : undefined}
@@ -975,6 +999,8 @@ type TurnProps = Handlers & {
   /** Which agent's voice reads it aloud (falls back to whoever spoke last). */
   voice?: string
   isNew: boolean
+  /** The machines whose screens a later reply shows, one per line: here they fold to a line. */
+  folded?: string
   className?: string
 }
 
@@ -1010,6 +1036,7 @@ const Turn = memo(function Turn({
   agent,
   voice,
   isNew,
+  folded,
   className,
   onApprove,
   onAnswer,
@@ -1031,6 +1058,13 @@ const Turn = memo(function Turn({
     const placed = placeFinds(runs.map((b) => b.items.flatMap((i) => (i.kind === 'tool' && i.found ? [i.found] : []))))
     return new Map(runs.map((b, i) => [b.id, placed[i]]))
   }, [sections])
+  // The machines it drove: each one's screen under the run that last showed it.
+  const screens = useMemo(() => {
+    const runs = sections.flatMap((s) => s.blocks).filter((b): b is Extract<Block, { kind: 'work' }> => b.kind === 'work')
+    const placed = placeScreens(runs.map((b) => b.items.flatMap((i) => (i.kind === 'tool' && i.shot ? [i.shot] : []))))
+    return new Map(runs.map((b, i) => [b.id, placed[i]]))
+  }, [sections])
+  const foldedKeys = new Set(folded?.split('\n'))
   const tail = sections.at(-1)?.blocks.at(-1)
   // Between steps (or before the first one) there's still something to say.
   const needsLine =
@@ -1106,6 +1140,9 @@ const Turn = memo(function Turn({
                         )}
                       </AnimatePresence>
                       {made.length > 0 && <ToolMedia items={made} />}
+                      {screens.get(block.id)?.map((screen) => (
+                        <MachineScreen key={screen.key} screen={screen} live={live} folded={foldedKeys.has(screen.key)} />
+                      ))}
                       {finds.length > 0 && <Finds finds={finds} agent={seed} />}
                     </Fragment>
                   )

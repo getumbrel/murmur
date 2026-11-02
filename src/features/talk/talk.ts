@@ -12,6 +12,7 @@ import { api, HermesError } from '@/hermes/rest'
 import { getChat, keepSpoken, send, stop as stopReply, useChats } from '@/state/chats'
 import { splitMessage } from '@shared/message.ts'
 import { gather, umbrelTool, type Find, type Found } from '@/features/umbrel/finds'
+import { isMachineTool, placeScreens, type Screen, type Shot } from '@/features/machine/shots'
 import { ASK_TOOL, OPENS_PAGES, pastLabel, serverName, toolCategory } from '@/features/chat/tool-labels'
 import type { ChatItem } from '@/features/chat/types'
 import type { BrowserStep } from '@/features/screen/drawn'
@@ -44,6 +45,8 @@ export type StageItem =
   | { key: string; kind: 'approval'; item: Extract<ChatItem, { kind: 'approval' }> }
   /** Its browser, live while it works in it; `ask` while it waits for you to take over there. */
   | { key: string; kind: 'browser'; step: BrowserStep; site?: string; ask?: Extract<ChatItem, { kind: 'tool' }> }
+  /** A machine it drives (machine/shots.ts): one screen, its latest picture. */
+  | { key: string; kind: 'machine'; screen: Screen }
 
 /** Something the agent did with a connected app, for the stage. */
 export type Step = { id: string; label: string; detail?: string; done: boolean; failed: boolean; where?: string }
@@ -723,6 +726,7 @@ function follow(chatId: string, itemId: string, mine: number) {
     let activity: string | undefined
     const found: Found[] = []
     const steps: Step[] = []
+    const shots: Shot[] = []
     let site: string | undefined
     let ask: ToolStep | undefined
     let browsed: ToolStep | undefined
@@ -737,6 +741,12 @@ function follow(chatId: string, itemId: string, mine: number) {
           // Its first step there, which the card waits for (the chat's card goes by the same one).
           const step = { key: browsed?.id ?? itemId, done: browsed?.status !== 'running' }
           show({ key: 'browser', kind: 'browser', step, site, ask })
+          continue
+        }
+        // A machine it drives: one screen, whatever it does there.
+        if (isMachineTool(item.name)) {
+          if (item.shot) shots.push(item.shot)
+          for (const screen of placeScreens([shots])[0]) show({ key: `machine:${screen.key}`, kind: 'machine', screen })
           continue
         }
         // Shown at once, then filled in: a search's card appears as it starts looking.

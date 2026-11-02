@@ -20,6 +20,7 @@ import { holdsSummary } from '@/features/chat/compaction'
 import type { ApprovalChoice, ChatItem, ChatStatus, ClarifyQuestion, Reaction, SecretAsk, Speaker } from '@/features/chat/types'
 import { fileRef, parseUserMessage, rememberUpload, type UserAttachment } from '@/features/media/parse'
 import { toolMedia } from '@/features/media/tool-media'
+import { shotOf } from '@/features/machine/shots'
 import { foundIn, pendingIn } from '@/features/umbrel/finds'
 import { scoped } from '@/hermes/instance'
 import { held, hold, release, type Held } from '@/state/outbox'
@@ -314,6 +315,8 @@ function rowsToItems(rows: Row[], speaker?: Speaker, errands: Map<string, Errand
         for (const [id, subject] of foundSubjects(tool.name, row.content)) subjects.set(id, subject)
         const media = toolMedia(tool.name, row.content)
         if (media.length) tool.media = media
+        const shot = tool.status === 'done' ? shotOf(tool.name, argsOf.get(tool), row.content) : null
+        if (shot) tool.shot = shot
         const found = tool.status === 'done' ? foundIn(tool.name, argsOf.get(tool), row.content) : undefined
         if (found) tool.found = found
       }
@@ -1828,6 +1831,7 @@ function onEvent(ev: GatewayEvent) {
       )
       const name = String(payload.name ?? '')
       const media = failed ? [] : toolMedia(name, payload.result)
+      const shot = failed ? null : shotOf(name, payload.args, payload.result)
       const found = failed ? undefined : foundIn(name, payload.args, payload.result)
       const subjects = foundSubjects(name, payload.result)
       if (subjects.length) mailSubjects.set(id, new Map([...(mailSubjects.get(id) ?? []), ...subjects]))
@@ -1848,6 +1852,7 @@ function onEvent(ev: GatewayEvent) {
                 status: failed ? 'error' : 'done',
                 endedAt: Date.now(),
                 media: media.length ? media : i.media,
+                shot: shot ?? i.shot,
                 found: found ?? i.found,
               },
             ]

@@ -2,6 +2,7 @@
 // shape by the chat store; components render it and never see wire types.
 
 import type { Found } from '@/features/umbrel/finds'
+import type { Shot } from '@/features/machine/shots'
 import type { SendApproval } from '@/state/mail-chat'
 
 export type Speaker = { id: string; name: string; hue: number }
@@ -96,6 +97,8 @@ export type ChatItem =
       media?: string[]
       /** What it turned up on the agent's Umbrel (photos, files, apps), to show. */
       found?: Found
+      /** The screen of a machine it drove or looked at (umbrelOS's Machines), shown as one view per machine. */
+      shot?: Shot
       /** While it runs: what it's about to turn up there (a search's query), for a call to show at once. */
       looking?: Found
       /** Hermes's id for the call, so a live result finds a step loaded from history. */

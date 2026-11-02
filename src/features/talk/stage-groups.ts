@@ -1,6 +1,7 @@
 import { serverName } from '@/features/chat/tool-labels'
 import { mediaKind } from '@/features/media/files'
 import { count, findLabel, sentence } from '@/features/umbrel/finds'
+import { machineName } from '@/features/machine/shots'
 import type { StageItem, Step } from './talk'
 
 export type Group = { key: string; label: string; items: StageItem[]; gallery: boolean }
@@ -56,7 +57,9 @@ export function groups(items: StageItem[]): Group[] {
               ? it.ask
                 ? 'Needs a hand'
                 : (it.site ?? 'Browser')
-              : 'View'
+              : it.kind === 'machine'
+                ? machineName(it.screen.machine)
+                : 'View'
     out.push({ key: it.key, label, items: [it], gallery: false })
   }
   return out
