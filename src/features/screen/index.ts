@@ -2,4 +2,5 @@
 // a person can do, hand it back (data in src/state/screen.ts).
 export { BrowserPeek, Peek } from './peek'
 export { HandCard } from './hand-card'
+export { ScreenSheets } from './screen-setup'
 export { ScreenViewer } from './viewer'

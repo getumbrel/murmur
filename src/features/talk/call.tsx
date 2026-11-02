@@ -12,7 +12,7 @@ import { count } from '@/features/umbrel/finds'
 import { ApprovalCard } from '@/features/chat/approval-card'
 import { answerApproval, useChats } from '@/state/chats'
 import { MachineScreen } from '@/features/machine/machine-screen'
-import { useScreen } from '@/state/screen'
+import { useShowable } from '@/state/screen'
 import { HandCard, Peek } from '@/features/screen'
 import { reelShift } from './spoken'
 import { groups, hasPhotos, stepsTitle } from './stage-groups'
@@ -475,11 +475,11 @@ function MediaPhotos({ items }: { items: StageItem[] }) {
   return <StagePhotos photos={photos} total={photos.length} title={photos.length > 1 ? count(photos.length, 'photo') : photos[0].name} />
 }
 
-/** What's on the stage to see now: its browser only while it's on a screen, unless it's asking you there. */
+/** What's on the stage to see now: its browser only while there's a picture of it, unless it's asking you there. */
 function useStage() {
   const stage = useTalk((s) => s.stage)
-  const running = !!useScreen(useTalk((s) => s.profile))?.running
-  return useMemo(() => (running ? stage : stage.filter((i) => i.kind !== 'browser' || i.ask)), [stage, running])
+  const showable = useShowable(useTalk((s) => s.profile))
+  return useMemo(() => (showable ? stage : stage.filter((i) => i.kind !== 'browser' || i.ask)), [stage, showable])
 }
 
 /** Something it asks of you: an OK, or a hand in its browser. */

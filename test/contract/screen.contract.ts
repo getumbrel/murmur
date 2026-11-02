@@ -2,15 +2,17 @@
 // agent's browser opens for the person to watch and take over, and the
 // murmur-screen plugin in Umbrel's Hermes image (getumbrel/hermes-agent-umbrel,
 // umbrel-context/plugins/murmur-screen) that lets the agent ask for a hand.
-// Murmur's own syncScreens, showBrowsers, watch, takeOver, handBack and
-// installScreen run here against a real Hermes, and the agent browses a page
-// served inside its container, through the fake model.
+// Murmur's own syncScreens, watch, takeOver, handBack and installScreen run
+// here against a real Hermes, and the agent browses a page served inside its
+// container, through the fake model.
 //
 // Which tests run depends on the Hermes under test, as the app does:
 //  - one with the screen's packages and murmur-screen (Umbrel's image): every
 //    agent shows its browser, live, and asks for a hand when it needs one;
-//  - one without them (Nous's own image, a Hermes of someone's own on Linux):
-//    nothing changes by itself, and switching it on means a one-time install.
+//  - one with the packages and not the plugin (Nous's desktop image): the same,
+//    once Murmur has added the plugin;
+//  - one without the packages (Nous's own image, a Hermes of someone's own on
+//    Linux): nothing changes by itself; the chat offers a one-time install.
 
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -27,7 +29,6 @@ import {
   handBack,
   installScreen,
   loadScreen,
-  showBrowsers,
   syncScreens,
   takeOver,
   useInstall,
@@ -224,17 +225,13 @@ describe('a Hermes made for this (the screen and murmur-screen)', () => {
     expect((await loadScreen('default'))?.running).toBe(false)
   })
 
-  it('remembers being switched off, even before it was ever on', async (ctx) => {
+  it('shows it even where an older Murmur’s switch turned it off: there’s no switch now', async (ctx) => {
     if (!ready()) return ctx.skip()
-    await showBrowsers(false, ['default'])
-    // Murmur opened again, here or on another device.
+    // Off, as that switch left it: the plugin disabled (Hermes doesn't keep a headed: false, its default).
+    await rpc('plugins.manage', { action: 'toggle', key: SCREEN_PLUGIN, enable: false, profile: 'default' })
     await syncScreens(['default'])
-    expect((await shownFor('default')).headed).not.toBe(true)
-    expect(await pluginOn('default')).toBe(false)
-    // As it came, for the rest.
-    const { plugins } = await api.get(`/api/config?${q('default')}&include_defaults=false`)
-    const disabled = (plugins.disabled as string[]).filter((name) => name !== SCREEN_PLUGIN)
-    await api.put(`/api/config?${q('default')}`, { config: { plugins: { disabled } } })
+    expect(await shownFor('default')).toEqual({ headed: true, autoStart: true })
+    expect(await pluginOn('default')).toBe(true)
   })
 
   it('shows every agent’s browser once Murmur puts them in step', async (ctx) => {
@@ -286,7 +283,7 @@ describe('a Hermes made for this (the screen and murmur-screen)', () => {
 
   it('opens the browser on its screen, live through Murmur, as soon as the agent browses', async (ctx) => {
     if (!ready()) return ctx.skip()
-    // The screen was off a moment ago (the agent browsed where nobody sees it): switching on counts at once.
+    // The screen was off a moment ago (the agent browsed where nobody sees it): showing it counts at once.
     const { runtime } = await newChat(socket)
     await browse(runtime)
     // Murmur hears it from Hermes, without asking again.
@@ -361,26 +358,6 @@ describe('a Hermes made for this (the screen and murmur-screen)', () => {
     await api.put(`/api/config?${q(other)}`, { config: { browser: { headed: true } } })
   })
 
-  it('stops showing every agent’s browser when switched off', async (ctx) => {
-    if (!ready() || !other) return ctx.skip()
-    await showBrowsers(false, ['default', other])
-    for (const agent of ['default', other]) {
-      expect(await shownFor(agent)).toEqual({ headed: false, autoStart: false })
-      expect(await pluginOn(agent)).toBe(false)
-    }
-    // Murmur opened again: off stays off.
-    await syncScreens(['default', other])
-    expect(await pluginOn('default')).toBe(false)
-    const { runtime } = await newChat(socket)
-    await turn(socket, runtime, 'Hello')
-    const ask = await lastAsk()
-    expect(ask.offered).toBe(false)
-    expect(ask.system).not.toContain(ASK_TOOL)
-    // And on again, the way it was.
-    await showBrowsers(true, ['default', other])
-    expect(await shownFor(other)).toEqual({ headed: true, autoStart: true })
-  })
-
   it('has what murmur-screen uses from Hermes where it looks for it', async (ctx) => {
     if (!plugin) return ctx.skip()
     // The plugin looks each one up when it's used and fails soft without it; this is where a Hermes
@@ -432,10 +409,11 @@ describe('a Hermes made for this (the screen and murmur-screen)', () => {
 describe('a Hermes of someone’s own, with the screen (Nous’s desktop image)', () => {
   const own = () => !!host?.installed && !plugin
 
-  it('gets the tool to ask for a hand once its browser shows, the way it gets email', async (ctx) => {
+  it('shows its agents’ browsers by itself, and gives them the tool to ask for a hand the way it gives email', async (ctx) => {
     if (!own()) return ctx.skip()
-    await showBrowsers(true, [])
-    // Murmur doesn't hold the switch for it: this joins the install it started.
+    await syncScreens([])
+    expect(await shownFor('default')).toEqual({ headed: true, autoStart: true })
+    // Murmur doesn't wait for the plugin to clone: this joins the install it started.
     await addScreenPlugin('default')
     expect(await pluginOn('default')).toBe(true)
     // Live, with no restart.
@@ -451,19 +429,12 @@ describe('a Hermes of someone’s own, with the screen (Nous’s desktop image)'
     await seen('the screen to start', (s) => !!s?.running)
     expect(await openedForTheScreen()).toBe(true)
   })
-
-  it('takes it away again when switched off', async (ctx) => {
-    if (!own()) return ctx.skip()
-    await showBrowsers(false, [])
-    expect(await pluginOn('default')).toBe(false)
-    expect(await shownFor('default')).toEqual({ headed: false, autoStart: false })
-  })
 })
 
 describe('a Hermes without the screen (Linux, not set up for it)', () => {
   const bare = () => !host?.installed
 
-  it('leaves its agents as they are', async (ctx) => {
+  it('leaves its agents as they are until it’s set up', async (ctx) => {
     if (!bare()) return ctx.skip()
     const name = agentName('screen')
     other = await createAgent({ name, hue: 30, role: 'Shopping' })

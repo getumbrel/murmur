@@ -22,21 +22,18 @@ export function Still({
   size,
   page,
   dim,
-  loading,
   className,
 }: {
   src: string | null
   size: Size
   page?: boolean
   dim?: boolean
-  /** Its picture is on the way. */
-  loading?: boolean
   className?: string
 }) {
   const crop = page ? PAGE : CHROME
   return (
     <div
-      className={cn('relative overflow-hidden bg-sunken', loading && 'skeleton rounded-none', className)}
+      className={cn('relative overflow-hidden bg-sunken', className)}
       style={{ aspectRatio: `${size.w} / ${size.h - crop.top - crop.bottom}` }}
     >
       {src && (

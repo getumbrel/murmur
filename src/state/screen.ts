@@ -5,18 +5,17 @@
 // back. Hermes guards it: while the person has control the agent's browser
 // tools wait, and only the viewer in control can type into the screen.
 //
-// Whether agents' browsers open there is one switch for every agent (Settings
-// → Agents), kept in each agent's config (browser.headed, and
-// bot_desktop.auto_start so the screen comes up with the browser), with the
-// main agent's as the one the rest follow. Nothing here assumes an Umbrel: it
-// goes by what Hermes says its host can do.
-//  - A Hermes that comes with the murmur-screen plugin (Umbrel's image,
-//    getumbrel/hermes-agent-umbrel) was made for this: its agents show their
-//    browsers unless they were set not to, and the plugin gives them a tool to
-//    ask for a hand (ASK_TOOL).
-//  - Any other Linux Hermes: the person switches it on, after a one-time
-//    install of the screen's packages when they're missing, and Murmur adds
-//    murmur-screen the way it adds murmur-mail (Hermes's own plugin installer).
+// Every agent's browser opens there, wherever its Hermes host has the screen:
+// Murmur keeps each agent's config so (browser.headed, and
+// bot_desktop.auto_start so the screen comes up with the browser), and gives
+// each the murmur-screen plugin, its tool to ask for a hand (ASK_TOOL).
+// Nothing here assumes an Umbrel: it goes by what Hermes says its host can do.
+//  - A Hermes with the screen (Umbrel's image, which comes with murmur-screen;
+//    Nous's desktop image; any Linux Hermes with the packages): its agents'
+//    browsers show, and Murmur adds murmur-screen where it's missing, the way
+//    it adds murmur-mail (Hermes's own plugin installer).
+//  - A Linux Hermes without the screen's packages: the first time an agent
+//    browses, the chat offers the one-time install (about 200 MB).
 //  - A Hermes on a Mac or Windows has no screen to show: nothing is offered.
 
 import { useEffect, useState } from 'react'
@@ -61,9 +60,19 @@ type Store = {
   screens: Record<string, Screen>
   /** The lease this window holds, per agent, as Hermes names its holder (the viewer's hash). */
   held: Record<string, string | undefined>
+  /**
+   * Agents whose screen runs but sends no picture of itself: nothing to show
+   * in the chat until it's started again.
+   */
+  unseen: Record<string, true | undefined>
 }
 
-export const useScreens = create<Store>(() => ({ screens: {}, held: {} }))
+export const useScreens = create<Store>(() => ({ screens: {}, held: {}, unseen: {} }))
+
+function setUnseen(profile: string, unseen: boolean) {
+  if (!!useScreens.getState().unseen[profile] !== unseen)
+    useScreens.setState((s) => ({ unseen: { ...s.unseen, [profile]: unseen || undefined } }))
+}
 
 /** Hermes names a screen in its events by the agent's Hermes home; Murmur names it by the agent. */
 const agentOf = new Map<string, string>()
@@ -71,6 +80,8 @@ const agentOf = new Map<string, string>()
 function put(screen: Screen) {
   agentOf.set(screen.profile_key, screen.profile)
   useScreens.setState((s) => ({ screens: { ...s.screens, [screen.profile]: screen } }))
+  // A screen that stops is given another chance the next time it starts.
+  if (!screen.running) setUnseen(screen.profile, false)
 }
 
 function putLease(profile: string, lease: DisplayLease) {
@@ -117,6 +128,13 @@ export function useScreen(profile: string | undefined) {
     if (profile) void loadScreen(profile)
   }, [profile])
   return useScreens((s) => (profile ? s.screens[profile] : undefined))
+}
+
+/** Whether there's a picture of the agent's browser to show: its screen runs, and sends one. */
+export function useShowable(profile: string | undefined) {
+  const running = !!useScreen(profile)?.running
+  const unseen = useScreens((s) => (profile ? !!s.unseen[profile] : false))
+  return running && !unseen
 }
 
 /** Who has the agent's browser: the agent, you (in this window), or you somewhere else (another device). */
@@ -177,11 +195,15 @@ export async function handBack(profile: string) {
 
 // ── Stills ───────────────────────────────────────────────────────────────────
 
+/** Asked this many times in a row while its screen runs, and never a picture: it has none to send. */
+const MISSES = 4
+
 /**
  * A still of the agent's screen every `every` ms while `on` and the page is in
  * view: cheap enough for a chat, and nothing is fetched while nobody looks.
  * Hermes sends none while the person has control (it could show what they
- * type), so the last one stays.
+ * type), so the last one stays. A screen that runs and never sends one (a
+ * Hermes that can't take them) is marked unseen: see useShowable.
  */
 export function useStill(profile: string | undefined, on = true, every = 1500) {
   const [still, setStill] = useState<string | null>(null)
@@ -189,14 +211,25 @@ export function useStill(profile: string | undefined, on = true, every = 1500) {
     if (!profile || !on) return
     let alive = true
     let timer: ReturnType<typeof setTimeout> | undefined
+    let pictured = false
+    let misses = 0
+    const miss = () => {
+      if (!pictured && ++misses >= MISSES && useScreens.getState().screens[profile]?.running) setUnseen(profile, true)
+    }
     const tick = async () => {
       clearTimeout(timer)
       if (document.visibilityState === 'visible') {
         try {
-          const { data_url } = await rpc<DisplayThumbnailResult>('display.thumbnail', { profile }, 10_000)
-          if (alive && data_url) setStill(data_url)
+          const { data_url, suppressed } = await rpc<DisplayThumbnailResult>('display.thumbnail', { profile }, 10_000)
+          if (!alive) return
+          if (data_url) {
+            pictured = true
+            setStill(data_url)
+            setUnseen(profile, false)
+          } else if (!suppressed) miss()
         } catch {
           // The next tick tries again.
+          if (alive) miss()
         }
       }
       if (alive) timer = setTimeout(tick, every)
@@ -215,9 +248,9 @@ export function useStill(profile: string | undefined, on = true, every = 1500) {
   return still
 }
 
-// ── Whether agents' browsers open on their screens ───────────────────────────
+// ── Every agent's browser on its screen ──────────────────────────────────────
 
-/** The main agent: the one every agent's browser setting follows. */
+/** The main agent: its Hermes host's screen is what this Hermes can show at all. */
 const MAIN = 'default'
 
 const yes = (v: unknown) => v === true || (typeof v === 'string' && /^(true|1|yes|on)$/i.test(v.trim()))
@@ -251,24 +284,20 @@ async function agentState(profile: string) {
 }
 
 /**
- * Opens the agent's browser on its screen, or stops. The screen comes up with
- * the browser and stops once it's been idle a while (Hermes's own bot_desktop
- * settings). With murmur-screen here, the tool to ask for a hand comes and goes
- * with it.
+ * Opens the agent's browser on its screen from now on, with its tool to ask
+ * for a hand. The screen comes up with the browser and stops once it's been
+ * idle a while (Hermes's own bot_desktop settings).
  */
-async function setShown(profile: string, on: boolean, plugin?: Plugin) {
+async function showBrowser(profile: string, plugin: Plugin) {
   // PUT deep-merges into the agent's config file, so only these keys change. Hermes holds the screen
   // back below 1.5 GB of free memory, but the browser runs either way: the screen itself takes ~100 MB.
-  const screen = on ? { auto_start: true, min_free_memory_mb: 512 } : { auto_start: false }
   await api.put(`/api/config?profile=${encodeURIComponent(profile)}`, {
-    config: { browser: { headed: on }, bot_desktop: screen },
+    config: { browser: { headed: true }, bot_desktop: { auto_start: true, min_free_memory_mb: 512 } },
   })
-  // Off is the plugin disabled, not just not enabled: what remembers it was switched off.
-  plugin ??= await screenPlugin(profile).catch(() => undefined)
-  if (plugin && plugin.status !== (on ? 'enabled' : 'disabled'))
-    await rpc('plugins.manage', { action: 'toggle', key: plugin.key, enable: on, profile })
+  if (plugin && plugin.status !== 'enabled')
+    await rpc('plugins.manage', { action: 'toggle', key: plugin.key, enable: true, profile })
   // Not waited for: the browser shows without it, and a clone can take a while.
-  else if (!plugin && on) void addScreenPlugin(profile)
+  else if (!plugin) void addScreenPlugin(profile)
 }
 
 /**
@@ -311,76 +340,38 @@ export function addScreenPlugin(profile: string) {
   return job
 }
 
-/**
- * Whether agents' browsers show, as the main agent has it: what it was set
- * to, or on, on a Hermes made for this (one that comes with murmur-screen),
- * until someone switches it off.
- */
-async function readBrowsers() {
-  const { shown, plugin } = await agentState(MAIN)
-  return shown ?? (!!plugin && plugin.status !== 'disabled')
-}
-
-const useBrowsers = create<{ shown?: boolean }>(() => ({}))
-
-/** Whether agents' browsers show (undefined while Murmur asks). */
-export function useBrowsersShown() {
-  const shown = useBrowsers((s) => s.shown)
-  useEffect(() => {
-    if (shown === undefined)
-      readBrowsers().then(
-        (v) => useBrowsers.setState({ shown: v }),
-        () => {},
-      )
-  }, [shown])
-  return shown
-}
-
-/** Shows every agent's browser, or none: the main agent first, which the rest follow. */
-export async function showBrowsers(on: boolean, agentIds: readonly string[]) {
-  await setShown(MAIN, on)
-  useBrowsers.setState({ shown: on })
-  synced.clear()
-  for (const id of agentIds)
-    if (id !== MAIN)
-      await setShown(id, on).then(
-        () => synced.add(id),
-        () => {},
-      )
-}
-
 // Agents already in step, remembered across reloads (for a day).
-const synced = rememberedSet(scoped('murmur:screen:1'))
+const synced = rememberedSet(scoped('murmur:screen:2'))
+
+/** The agents the app knows of, for a sync once the screen is installed. */
+let known: readonly string[] = []
 
 /**
- * Puts these agents' browsers in step with the main agent's: on a Hermes made
- * for this (murmur-screen), that's every agent showing its browser unless it
- * was set not to. Never installs the screen, which is the person's call; once
- * it's on, an agent made since gets murmur-screen too.
+ * Shows every agent's browser on its screen, with its tool to ask for a hand,
+ * wherever its Hermes host has the screen. Never installs the screen itself:
+ * that's offered in the chat (src/features/screen/screen-setup.tsx).
  */
 export async function syncScreens(agentIds: readonly string[]) {
-  const [want, screen] = await Promise.all([readBrowsers(), loadScreen(MAIN)])
-  if (want && !screen?.installed) return
+  if (!(await loadScreen(MAIN))?.installed) return
   for (const id of [MAIN, ...agentIds.filter((id) => id !== MAIN)]) {
     // Its browser and its tool to ask with, each checked: one left behind (Murmur closed between the
     // two) is caught up next time.
     const { shown, plugin } = await agentState(id)
-    if ((shown ?? false) !== want || (plugin ? (plugin.status === 'enabled') !== want : want))
-      await setShown(id, want, plugin)
+    if (!shown || plugin?.status !== 'enabled') await showBrowser(id, plugin)
     synced.add(id)
   }
-  useBrowsers.setState({ shown: want })
 }
 
 /**
- * Every agent's browser follows the main agent's, agents made since in here or
- * in another app included. Quiet, like the rest of Murmur's upkeep: idle-time
- * requests, one at a time, nothing once every agent is in step.
+ * Every agent's browser shows, agents made since in here or in another app
+ * included. Quiet, like the rest of Murmur's upkeep: idle-time requests, one
+ * at a time, nothing once every agent is in step.
  */
 export function useScreenSync(agentIds: readonly string[] | undefined) {
   const key = agentIds?.join('\n') ?? ''
   useEffect(() => {
     const ids = key ? key.split('\n') : []
+    known = ids
     if (ids.every((id) => synced.has(id))) return
     void upkeep(() => syncScreens(ids)).catch(() => {})
   }, [key])
@@ -444,8 +435,12 @@ export async function installScreen(profile = MAIN) {
     const started = await rpc<DisplayInstallResult>('display.install', { profile })
     if (!started.started) return failed(started.command)
     const { code, status } = await done
-    if (code === 0 && status?.installed) set({ phase: 'idle' })
-    else if (code === NO_SUDO)
+    if (code === 0 && status?.installed) {
+      set({ phase: 'idle' })
+      // Every agent's browser on the screen it has now.
+      synced.clear()
+      await syncScreens(known).catch(() => {})
+    } else if (code === NO_SUDO)
       set({ phase: 'failed', command: status?.install_command?.replace(/^sudo /, ''), line, unprivileged: true })
     else failed(status?.install_command)
   } catch {
