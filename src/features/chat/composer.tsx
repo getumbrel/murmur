@@ -49,7 +49,6 @@ type Props = {
   placeholder?: string
   /** Sits in the toolbar next to the attach button, e.g. a model picker. */
   accessory?: ReactNode
-  autoFocus?: boolean
   /** Unsent text is kept per key (usually the chat id) across reloads. */
   draftKey?: string
   className?: string
@@ -103,7 +102,6 @@ export function Composer({
   disabled = false,
   placeholder = 'Message',
   accessory,
-  autoFocus,
   draftKey,
   className,
   files: anyFile = false,
@@ -303,7 +301,6 @@ export function Composer({
       onPaste={onPaste}
       placeholder={placeholder}
       disabled={disabled}
-      autoFocus={autoFocus}
       aria-label={editing ? 'Edit your message' : 'Message'}
       enterKeyHint={touch ? 'enter' : 'send'}
       role={commands ? 'combobox' : undefined}

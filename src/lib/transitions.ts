@@ -24,11 +24,13 @@ const supported = () => typeof document !== 'undefined' && 'startViewTransition'
 // ── The location wouter sees ──────────────────────────────────────────────────
 
 let shown = location.pathname
+// Every arrival counts, even at the page already showing: New chat from a blank chat.
+let arrivals = 0
 const subscribers = new Set<() => void>()
 const subscribe = (fn: () => void) => (subscribers.add(fn), () => void subscribers.delete(fn))
 function show(path: string) {
-  if (path === shown) return
   shown = path
+  arrivals++
   subscribers.forEach((fn) => fn())
 }
 
@@ -36,6 +38,9 @@ export const useTransitionLocation = (): [string, typeof navigate] => [
   useSyncExternalStore(subscribe, () => shown),
   navigate,
 ]
+
+/** Changes each time a page is arrived at, the one already showing included. */
+export const useArrival = () => useSyncExternalStore(subscribe, () => arrivals)
 
 // ── Pages that are gone ───────────────────────────────────────────────────────
 // A chat deleted while it's still in history (you opened its agent's page from

@@ -60,7 +60,7 @@ import { useChatUsage } from '@/state/insights'
 import { useRunOf } from '@/state/routines'
 import type { VaultKind } from '@/state/vault'
 import { useFinePointer, useIsWide } from '@/lib/use-media'
-import { useUpFrom } from '@/lib/transitions'
+import { useArrival, useUpFrom } from '@/lib/transitions'
 import {
   answerApproval,
   answerQuestion,
@@ -208,6 +208,15 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
   }
 
   const composer = useRef<ComposerHandle>(null)
+
+  // Ready to type whenever you arrive, at any window size; on a phone, the keyboard waits
+  // for a tap. Arriving is the cue, not a fresh composer: New chat from a blank chat, or
+  // from one just started (which carries on in place), keeps the composer it has.
+  const arrival = useArrival()
+  const typable = !!agent && !openError
+  useEffect(() => {
+    if (fine && typable) composer.current?.focus()
+  }, [arrival, fine, typable])
 
   // Messages still waiting on Hermes when this page last closed never got
   // there: their words come back in the box, ahead of anything typed since.
@@ -744,8 +753,6 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
               disabled={!agent || openError}
               placeholder={agent ? `Message ${clip(agent.name)}` : 'Message'}
               draftKey={id ?? `${agentId}:new`}
-              // Ready to type on arrival, at any window size; on a phone, the keyboard waits for a tap.
-              autoFocus={fine}
               commands={commands}
               extraCommands={id ? catalog.data?.commands : undefined}
               onCommand={onCommand}
