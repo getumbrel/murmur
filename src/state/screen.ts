@@ -280,8 +280,8 @@ async function setShown(profile: string, on: boolean, plugin?: Plugin) {
 export const SCREEN_PLUGIN_SOURCE = {
   repo: 'getumbrel/hermes-agent-umbrel',
   path: 'umbrel-context/plugins/murmur-screen',
-  // v0.22.5-3, its first release with murmur-screen (Hermes's installer takes only a full commit)
-  ref: '90df2daa60585f97b103be960832fdfc9bc7a21a',
+  // v0.22.5-4 (Hermes's installer takes only a full commit)
+  ref: '672de92d48ee29db32e4a8750b22408a574d8777',
 } as const
 
 const adding = new Map<string, Promise<void>>()

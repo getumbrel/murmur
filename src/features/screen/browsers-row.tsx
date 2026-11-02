@@ -69,7 +69,7 @@ export function BrowsersRow({ agentIds }: { agentIds: string[] }) {
       <ListGroup
         footer={
           'Watch an agent’s browser live in the chat while it works, and take over when it needs a hand, ' +
-          'like for a code or a check that you’re human.'
+          'like for a check that you’re human.'
         }
       >
         <ListRow

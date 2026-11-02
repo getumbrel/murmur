@@ -264,6 +264,26 @@ describe('a Hermes made for this (the screen and murmur-screen)', () => {
     expect(ask.system).toContain(`call \`${ASK_TOOL}\``)
   })
 
+  it('lets the agent type what it’s given: Hermes’s “never type a password” doesn’t reach the model', async (ctx) => {
+    if (!ready()) return ctx.skip()
+    const { runtime } = await newChat(socket)
+    await turn(socket, runtime, toolsTag([{ name: 'tool_describe', args: { names: ['browser_vault'] } }]))
+    const last = (await modelRequests()).findLast((r) => r.body.tools?.length)
+    const tools = (last?.body.tools ?? []) as { function: { name: string; description?: string } }[]
+    const typing = tools.find((t) => /^browser_(exec|type)$/.test(t.function.name))?.function.description ?? ''
+    const described = ((last?.body.messages ?? []) as { role: string; content: unknown }[])
+      .filter((m) => m.role === 'tool')
+      .map((m) => (typeof m.content === 'string' ? m.content : JSON.stringify(m.content)))
+      .join('\n')
+    // The vault is still there, and so is the way to it on the tool the agent types with…
+    expect(typing).toContain('browser_vault')
+    expect(described).toContain('save_login')
+    // …but nothing telling it not to type a password, card or code, whatever Hermes's wording.
+    const never = /\b(never|don[’']t|do not)\b[^.]*\b(type|enter|ask for)\b[^.]*\b(password|card|code)/i
+    expect(typing).not.toMatch(never)
+    expect(described).not.toMatch(never)
+  })
+
   it('opens the browser on its screen, live through Murmur, as soon as the agent browses', async (ctx) => {
     if (!ready()) return ctx.skip()
     // The screen was off a moment ago (the agent browsed where nobody sees it): switching on counts at once.
