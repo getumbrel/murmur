@@ -1,6 +1,6 @@
 import * as Popover from '@radix-ui/react-popover'
-import { AnimatePresence, motion } from 'motion/react'
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { AnimatePresence, motion, type HTMLMotionProps } from 'motion/react'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { ChevronLeft } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { menuItem, menuKeys } from './new-menu'
@@ -118,7 +118,7 @@ export function RowMenu({
               if (!at || at === document.body) restore()
             }}
           >
-            <motion.div
+            <Panel
               ref={menu}
               role="menu"
               onKeyDown={(e) => {
@@ -129,7 +129,6 @@ export function RowMenu({
                 }
                 menuKeys(e)
               }}
-              layout
               // Long lists (a dozen sections, on a phone) scroll within the screen.
               className="relative z-50 max-h-(--radix-popover-content-available-height) max-w-72 min-w-56 origin-(--radix-popover-content-transform-origin) overflow-x-hidden overflow-y-auto overscroll-contain rounded-xl bg-elevated shadow-float ring-1 ring-line"
               // Set here so the corners keep their shape as the menu grows into a submenu.
@@ -196,12 +195,28 @@ export function RowMenu({
                   ))}
                 </motion.div>
               </AnimatePresence>
-            </motion.div>
+            </Panel>
           </Popover.Content>
         </Popover.Portal>
       )}
     </AnimatePresence>
   )
+}
+
+/**
+ * The menu's box, which grows and shrinks as it steps into a submenu and back
+ * (following Radix as it moves the menu to fit). Radix first draws it off the
+ * top of the screen while it measures, saying so with `animation: none`, then
+ * moves it into place: the box only starts following once it's there, or it
+ * would fly in from the corner.
+ */
+function Panel(props: HTMLMotionProps<'div'>) {
+  const placing = props.style?.animation === 'none'
+  const [placed, setPlaced] = useState(false)
+  useLayoutEffect(() => {
+    if (!placing) setPlaced(true)
+  }, [placing])
+  return <motion.div {...props} layout layoutDependency={placed ? undefined : 'placing'} />
 }
 
 /**
