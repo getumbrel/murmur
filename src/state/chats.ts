@@ -40,6 +40,8 @@ import {
   withReactions,
 } from '@/features/chat/live'
 import { errandsOf, isYours, sentItems, wakeItems, withSeenHelpers, type Errand } from '@/features/chat/wake'
+import { along, madeRoutine, soundsScheduled, toldIn, type Carried } from '@shared/routines.ts'
+import { reportHere } from '@/state/routines'
 
 export type Chat = {
   id: string
@@ -71,6 +73,8 @@ export type Chat = {
   vibes?: number
   /** A turn begun elsewhere (a helper back, say) that this page hasn't shown yet: working, for lists. */
   starting?: boolean
+  /** The agent has been told how routines report in this chat (shared/routines.ts). */
+  told?: boolean
 }
 
 export type Goal = { title: string; status: string }
@@ -319,6 +323,8 @@ function rowsToItems(rows: Row[], speaker?: Speaker, errands: Map<string, Errand
         if (shot) tool.shot = shot
         const found = tool.status === 'done' ? foundIn(tool.name, argsOf.get(tool), row.content) : undefined
         if (found) tool.found = found
+        const made = tool.status === 'done' ? madeRoutine(tool.name, row.content) : undefined
+        if (made) tool.routineId = made
       }
     }
   }
@@ -521,6 +527,7 @@ async function readHistory(id: string, profile: string, speaker?: Speaker) {
       ready: true,
       stalled: undefined,
       older: rows.length >= PAGE,
+      told: c.told || rows.some((r) => r.role === 'user' && toldIn(r.content ?? '')),
     }))
     return true
   }
@@ -948,7 +955,13 @@ async function deliver(id: string, itemId: string, steer = false, voice?: SendOp
         }
       }
     }
-    const prompt = promptOf(refs, text)
+    // What the chat's routines reported since your last message goes along, and once, how they report here.
+    const found = reports.get(id)?.(lastAsked(getChat(id)?.items ?? [], itemId)) ?? []
+    const routines = found.length > 0 || chat.items.some((i) => i.kind === 'tool' && !!i.routineId)
+    const note = !getChat(id)?.told && (routines || soundsScheduled(text))
+    const extra = along({ found, note })
+    if (note) patch(id, () => ({ told: true }))
+    const prompt = [promptOf(refs, text), extra].filter(Boolean).join('\n\n')
     prompts.set(itemId, prompt)
     // While it's working, a new message steers the current reply instead of
     // waiting its turn — the way you'd interrupt a person mid-thought. (Before
@@ -1006,6 +1019,22 @@ export async function keepSpoken(id: string, you: string, voice: string, itemId:
 /** Hermes has the message, or answered it with an error: it's waiting on nothing now. */
 function taken(id: string, itemId: string) {
   patch(id, (c) => ({ items: c.items.map((i) => (i.id === itemId && i.kind === 'user' ? { ...i, pending: undefined } : i)) }))
+}
+
+/** Each open chat's routines' reports since a time, for a message there to take along (state/findings.ts). */
+const reports = new Map<string, (since: number) => Carried[]>()
+
+/** Hear what a chat's routines report, or stop. */
+export function hearReports(id: string, since?: (at: number) => Carried[]) {
+  if (since) reports.set(id, since)
+  else reports.delete(id)
+}
+
+/** When you last wrote in a chat, before this message. */
+function lastAsked(items: ChatItem[], itemId: string) {
+  const end = items.findIndex((i) => i.id === itemId)
+  const before = items.slice(0, end < 0 ? items.length : end)
+  return before.findLast((i): i is Extract<ChatItem, { kind: 'user' }> => i.kind === 'user')?.at ?? 0
 }
 
 /** A message's words with its files' refs ahead of them, the way it goes to Hermes. */
@@ -1837,6 +1866,10 @@ function onEvent(ev: GatewayEvent) {
       if (subjects.length) mailSubjects.set(id, new Map([...(mailSubjects.get(id) ?? []), ...subjects]))
       const read = failed ? undefined : resultLabel(name, payload.result)
       const took = failed ? undefined : tookFor(name, payload.result)
+      const made = failed ? undefined : madeRoutine(name, payload.result)
+      // A routine set up here reports here, from the moment it's made.
+      const profile = getChat(id)?.profile
+      if (made && profile) void reportHere(profile, made, id).catch(() => {})
       return patch(id, (c) => {
         // Helpers sent off to work in the background stay live after this turn,
         // and their card takes the place of the step that sent them.
@@ -1854,6 +1887,7 @@ function onEvent(ev: GatewayEvent) {
                 media: media.length ? media : i.media,
                 shot: shot ?? i.shot,
                 found: found ?? i.found,
+                routineId: made ?? i.routineId,
               },
             ]
           // Answered somewhere else (another window, Telegram): the step says how it went, so the card goes.

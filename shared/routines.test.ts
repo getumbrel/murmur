@@ -1,15 +1,28 @@
 import { describe, expect, it } from 'vitest'
 import {
+  ALONG,
+  along,
+  couldntRun,
+  failingOf,
+  failureIn,
   deliversElsewhere,
+  findingIn,
+  findingsOf,
   foldQuiet,
   isQuiet,
   isQuietExcerpt,
   isRunBrief,
   look,
+  madeRoutine,
+  reportsTo,
   resultLine,
   routineIdOf,
   runTitle,
+  soundsScheduled,
   standingResults,
+  toldIn,
+  withFindings,
+  KEPT,
   type RunRow,
 } from './routines.ts'
 
@@ -162,5 +175,177 @@ describe('routines Hermes already delivers elsewhere', () => {
     expect(deliversElsewhere('origin')).toBe(true)
     expect(deliversElsewhere('local,telegram:123')).toBe(true)
     expect(deliversElsewhere(['local'])).toBe(false)
+  })
+})
+
+describe('a routine set up in a chat', () => {
+  // What Hermes 0.22.5's scheduler answers making one (tools/cronjob_tools.py), indented as it sends it.
+  const made = JSON.stringify(
+    {
+      success: true,
+      job_id: '152b93b73ead',
+      name: 'Watch for AIS replies',
+      skill: null,
+      skills: [],
+      schedule: 'every 15m',
+      repeat: 'forever',
+      deliver: 'local',
+      next_run_at: '2026-11-05T11:49:06-08:00',
+      job: { id: '152b93b73ead' },
+      message: "Cron job 'Watch for AIS replies' created.",
+    },
+    null,
+    2,
+  )
+
+  it('is known by what making it answered, called directly or through tool search', () => {
+    expect(madeRoutine('cronjob_manage', made)).toBe('152b93b73ead')
+    expect(madeRoutine('cronjob', JSON.parse(made))).toBe('152b93b73ead')
+    expect(madeRoutine('tool_call', made)).toBe('152b93b73ead')
+    // Cut short in history, its opening still says.
+    expect(madeRoutine('cronjob', made.slice(0, 80))).toBe('152b93b73ead')
+  })
+
+  it('but not by changing, listing or running one, a failure, or another tool', () => {
+    expect(madeRoutine('cronjob', JSON.stringify({ success: true, job: { id: 'x' } }))).toBeUndefined()
+    expect(madeRoutine('cronjob', JSON.stringify({ success: true, count: 1, jobs: [{ id: 'x' }] }))).toBeUndefined()
+    expect(madeRoutine('cronjob', JSON.stringify({ success: false, error: 'schedule is required for create' }))).toBeUndefined()
+    expect(madeRoutine('cronjob', JSON.stringify({ success: true, job_id: 'x' }))).toBeUndefined()
+    expect(madeRoutine('web_search', made)).toBeUndefined()
+  })
+
+  it('reports there, unless Hermes sends what it finds elsewhere', () => {
+    expect(reportsTo({ murmur_chat: 'c1', deliver: 'local' })).toBe('c1')
+    expect(reportsTo({ murmur_chat: 'c1' })).toBe('c1')
+    expect(reportsTo({ murmur_chat: 'c1', deliver: 'telegram' })).toBeUndefined()
+    expect(reportsTo({ deliver: 'local' })).toBeUndefined()
+    expect(reportsTo({ murmur_chat: 42 })).toBeUndefined()
+  })
+
+  it('keeps each finding once, newest first, the newest few', () => {
+    const kept = withFindings([{ run: 'a', at: 1 }], [{ run: 'b', at: 3 }, { run: 'a', at: 1 }])
+    expect(kept).toEqual([{ run: 'b', at: 3 }, { run: 'a', at: 1 }])
+    const many = Array.from({ length: KEPT + 5 }, (_, i) => ({ run: `r${i}`, at: i }))
+    const capped = withFindings([], many)
+    expect(capped).toHaveLength(KEPT)
+    expect(capped[0].run).toBe(`r${KEPT + 4}`)
+    // What Hermes kept is read warily: anything else is left out.
+    expect(findingsOf({ murmur_findings: [{ run: 'a', at: 1 }, { run: 2 }, null, 'x'] })).toEqual([{ run: 'a', at: 1 }])
+    expect(findingsOf({ murmur_findings: 'nope' })).toEqual([])
+  })
+})
+
+describe('what a run found', () => {
+  const brief = { role: 'user', content: '[IMPORTANT: You are running as a scheduled cron job. …]\n\nCheck Gmail' }
+
+  it('is the agent’s last answer', () => {
+    const found = findingIn([brief, { role: 'assistant', content: 'Looking…' }, { role: 'tool', content: '{}' }, { role: 'assistant', content: 'AIS replied.' }])
+    expect(found).toBe('AIS replied.')
+  })
+
+  it('from before anyone replied in it', () => {
+    const found = findingIn([brief, { role: 'assistant', content: 'AIS replied.' }, { role: 'user', content: 'Thanks!' }, { role: 'assistant', content: 'Anytime.' }])
+    expect(found).toBe('AIS replied.')
+  })
+
+  it('and nothing when it had nothing to report', () => {
+    expect(findingIn([brief, { role: 'assistant', content: '[SILENT]' }])).toBe('')
+    expect(findingIn([brief])).toBe('')
+  })
+  it('and nothing when it failed, though Hermes’s apology reads like an answer', () => {
+    const turnedAway = {
+      role: 'assistant',
+      content: 'Your request was not processed. Send it again if you still want me to carry it out.',
+      display_kind: 'failed_turn',
+      display_metadata: { error: 'HTTP 401: Invalid API key' },
+    }
+    expect(findingIn([brief, turnedAway])).toBe('')
+    expect(failureIn([brief, turnedAway])).toBe('HTTP 401: Invalid API key')
+    const marked = { role: 'assistant', content: '[CRON_FAILURE]\nThe Gmail sign-in expired.' }
+    expect(findingIn([brief, marked])).toBe('')
+    expect(failureIn([brief, marked])).toBe('The Gmail sign-in expired.')
+    expect(failureIn([brief, { role: 'assistant', content: 'AIS replied.' }])).toBeUndefined()
+  })
+})
+
+describe('a routine that fails', () => {
+  it('is its job’s newest run failing: when, how many in a row, and why, without Python’s words for it', () => {
+    const job = {
+      last_status: 'error',
+      last_error: 'RuntimeError: HTTP 401: Invalid API key',
+      last_failure: { at: '2026-11-05T12:01:33+00:00', detail: 'RuntimeError: HTTP 401: Invalid API key' },
+      failure_streak: 3,
+      last_run_at: '2026-11-05T12:01:33+00:00',
+    }
+    expect(failingOf(job)).toEqual({ at: Date.parse('2026-11-05T12:01:33Z'), times: 3, why: 'HTTP 401: Invalid API key' })
+    expect(failingOf({ ...job, last_status: 'ok' })).toBeUndefined()
+    // A Hermes that doesn't count them, or keep the failure apart.
+    expect(failingOf({ last_status: 'error', last_error: 'Timed out', last_run_at: '2026-11-05T12:01:33+00:00' })).toEqual({
+      at: Date.parse('2026-11-05T12:01:33Z'),
+      times: undefined,
+      why: 'Timed out',
+    })
+  })
+
+  it('says so in a line', () => {
+    expect(couldntRun('HTTP 401: Invalid API key')).toBe('Couldn’t run: HTTP 401: Invalid API key')
+    expect(couldntRun('Timed out', 3)).toBe('Couldn’t run the last 3 times: Timed out')
+    expect(couldntRun('')).toBe('Couldn’t run.')
+  })
+})
+
+describe('what goes along with a message', () => {
+  const finding = { routine: 'Watch for AIS replies', when: 'today at 9:14 AM', text: '**AIS replied.** Priya approved it.' }
+
+  it('is nothing, most of the time', () => {
+    expect(along({ found: [] })).toBe('')
+  })
+
+  it('says when a routine couldn’t run', () => {
+    const text = along({ found: [{ routine: 'Watch for AIS replies', when: 'today at 9:30 AM', text: 'Couldn’t run: Timed out', failed: true }] })
+    expect(text).toContain('Your routine “Watch for AIS replies” couldn’t run today at 9:30 AM:\nCouldn’t run: Timed out')
+  })
+
+  it('is what routines reported, and once, how they report here', () => {
+    const text = along({ found: [finding], note: true })
+    expect(text).toMatch(/^--- From Murmur ---\n/)
+    expect(text).toContain("deliver='local'")
+    expect(text).toContain('Your routine “Watch for AIS replies” reported in this chat today at 9:14 AM:\n**AIS replied.** Priya approved it.')
+    expect(toldIn(`Watch my inbox\n\n${text}`)).toBe(true)
+    expect(toldIn(`Watch my inbox\n\n${along({ found: [finding] })}`)).toBe(false)
+  })
+
+  it('the newest few, each cut to size', () => {
+    const found = Array.from({ length: 7 }, (_, i) => ({ ...finding, text: `${i}`.repeat(i === 6 ? 5000 : 1) }))
+    const text = along({ found })
+    expect(text).toContain('(2 earlier reports left out.)')
+    expect(text).not.toContain('\n1\n')
+    expect(text).toContain('…')
+  })
+
+  it('is left out when the message is shown again, whatever Hermes added after it', () => {
+    const sent = `What did they say?\n\n${along({ found: [finding] })}`
+    expect(sent.replace(ALONG, '')).toBe('What did they say?')
+    const expanded = `${sent}\n--- Attached Context ---\n\nnotes.txt: hello`
+    expect(expanded.replace(ALONG, '')).toBe('What did they say?\n--- Attached Context ---\n\nnotes.txt: hello')
+    expect(`${sent}\n\nUmbrel Runtime Context: …`.replace(ALONG, '')).toBe('What did they say?\n\nUmbrel Runtime Context: …')
+  })
+})
+
+describe('a message that may get something scheduled', () => {
+  it('asks for later, or again', () => {
+    for (const text of [
+      'Watch my Gmail for a reply from AIS and let me know',
+      'Remind me to call mom on Sunday',
+      'Every morning, send me the weather',
+      'Can you keep an eye on the price of this?',
+      'Tell me when the package ships',
+    ])
+      expect(soundsScheduled(text), text).toBe(true)
+  })
+
+  it('and most messages don’t', () => {
+    for (const text of ['What is the capital of France?', 'Write a haiku about rain', 'Summarize this PDF'])
+      expect(soundsScheduled(text), text).toBe(false)
   })
 })

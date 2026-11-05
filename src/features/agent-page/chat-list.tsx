@@ -389,7 +389,7 @@ function ChatRow({
                   <span className="flex-none">{shortTime(chat.at)}</span>
                   {via && <span className="flex-none">· via {via}</span>}
                   {/* The main chat's title says what it is, and a routine's who it is; what was said tells them apart. */}
-                  {(chat.main || chat.result) && chat.preview && (
+                  {(chat.main || chat.result || chat.reported) && chat.preview && (
                     <span className="min-w-0 truncate">· {chat.preview}</span>
                   )}
                 </span>
@@ -452,7 +452,7 @@ function PlainLine({
   more: boolean
 }) {
   const tag = chat.routine ? 'Routine' : via ? `via ${via}` : ''
-  const found = chat.result && chat.preview
+  const found = (chat.result || chat.reported) && chat.preview
   return (
     <span className="min-w-0 flex-1">
       <span className="flex min-w-0 items-baseline gap-2">

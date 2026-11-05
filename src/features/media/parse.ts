@@ -4,6 +4,7 @@
 import type { UserAttachment } from '@/features/chat/types'
 import { scoped } from '@/hermes/instance'
 import { unquote } from '@shared/message.ts'
+import { ALONG } from '@shared/routines.ts'
 export type { UserAttachment }
 
 const ATTACHED_CONTEXT = /(?:^|\n)--- Attached Context ---\s*\n[\s\S]*$/
@@ -55,9 +56,10 @@ const nameFor = (path: string, names: Record<string, string>) =>
 /**
  * Split a stored user message into the words the person typed and the files
  * they attached. Hermes stores the expanded prompt: image markers, `@file:` /
- * `@image:` refs, the inlined file contents and runtime context.
+ * `@image:` refs, the inlined file contents and runtime context, and what
+ * Murmur sent along with it.
  */
-export function parseUserMessage(raw: string): { text: string; attachments: UserAttachment[] } {
+export function parseUserMessage(stored: string): { text: string; attachments: UserAttachment[] } {
   const attachments: UserAttachment[] = []
   const seen = new Set<string>()
   const add = (a: UserAttachment) => {
@@ -68,6 +70,8 @@ export function parseUserMessage(raw: string): { text: string; attachments: User
   }
 
   const names = uploadNames()
+  // What Murmur sent along (what routines reported, say) isn't what the person wrote.
+  const raw = stored.replace(ALONG, '')
   for (const m of raw.matchAll(IMAGE_ATTACHED)) {
     const path = m[1].trim()
     add({ kind: 'image', name: nameFor(path, names), path })

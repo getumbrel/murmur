@@ -24,7 +24,7 @@ import {
   type RunResult,
 } from '@/state/routines'
 import { markChatSeen } from '@/state/status'
-import { foldQuiet } from '@shared/routines.ts'
+import { couldntRun, foldQuiet } from '@shared/routines.ts'
 import { Glyph } from './glyph'
 import { TimeWheel } from './time-wheel'
 import { RepeatPicker } from './day-picker'
@@ -269,7 +269,7 @@ export function RoutineRunsList({
   // Opening a run reopens it in Hermes, so one that has had its say isn't still going, whatever Hermes says.
   const list = (runs.data ?? []).map((run) => {
     const r = resultOf.get(run.id)
-    return run.running && (r?.quiet || r?.text) ? { ...run, running: false } : run
+    return run.running && (r?.quiet || r?.text || r?.failed !== undefined) ? { ...run, running: false } : run
   })
   const groups = foldQuiet(list, (run) => resultOf.get(run.id)?.quiet === true && !resultOf.get(run.id)?.replied)
 
@@ -423,7 +423,7 @@ function RunRow({
                   transition={{ duration: 0.15 }}
                   className="block truncate text-footnote text-ink-2"
                 >
-                  {summary || (result ? 'No answer this time' : '\u00a0')}
+                  {summary || (result?.failed !== undefined ? couldntRun(result.failed) : result ? 'No answer this time' : '\u00a0')}
                 </motion.span>
               )}
             </AnimatePresence>
@@ -459,7 +459,11 @@ function RunRow({
                 </div>
               ) : (
                 <p className="text-subhead text-ink-3">
-                  {run.running ? 'Still working on it.' : 'It finished without an answer.'}
+                  {run.running
+                    ? 'Still working on it.'
+                    : result?.failed !== undefined
+                      ? couldntRun(result.failed)
+                      : 'It finished without an answer.'}
                 </p>
               )}
               {onOpenRun && (

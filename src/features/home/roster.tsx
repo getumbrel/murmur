@@ -483,13 +483,14 @@ function AgentRow({
   // into it. They're counted as the list shows them, with a line for each routine that's found something,
   // so where the row leads doesn't turn on which of them moved last. Two conversations make several by
   // themselves, so only an agent with fewer reads what its routines found. Till that's known, and in the
-  // sidebar (whose rows fold their chats open), a routine's result the row shows opens itself.
+  // sidebar (whose rows fold their chats open), a routine's result the row shows opens itself, as does
+  // the chat a routine reported in.
   const conversations = useAgentChats(roomy ? agent.id : undefined).data
   const few = conversations && conversations.length < 2
   const listed = useAgentChatList(few ? agent : undefined).data
   const chats = few ? listed : conversations
-  const routine = agent.lastChat?.routine ? agent.lastChat.id : undefined
-  const one = chats ? (chats.length === 1 ? chats[0].id : undefined) : routine
+  const shown = agent.lastChat?.routine || agent.lastChat?.reported ? agent.lastChat.id : undefined
+  const one = chats ? (chats.length === 1 ? chats[0].id : undefined) : shown
   const href =
     status.state === 'waiting' && status.chatId
       ? `/chat/${agent.id}/${status.chatId}`

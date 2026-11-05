@@ -59,6 +59,7 @@ import {
 import { useConnection } from '@/hermes/gateway'
 import { useChatUsage } from '@/state/insights'
 import { useRunOf } from '@/state/routines'
+import { placeFindings, useChatFindings } from '@/state/findings'
 import type { VaultKind } from '@/state/vault'
 import { useFinePointer, useIsWide } from '@/lib/use-media'
 import { useArrival, useUpFrom } from '@/lib/transitions'
@@ -154,12 +155,19 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
   // A routine's run reads as a report, under what the routine is.
   const runOfChat = useRunOf(agentId, id)
   const run = useRunItems(runOfChat, useSolo(chat?.items ?? (starting ? [starting] : [])))
-  const items = run.items
   const online = useConnection((s) => s.state === 'open' || !s.everOpened)
   // Your message is waiting for the connection: Hermes hasn't got it, so nothing's thinking about it yet.
   const connected = useConnection((s) => s.state === 'open')
-  const held = !connected && !!items.findLast((i) => i.kind === 'user' && i.pending)
+  const held = !connected && !!run.items.findLast((i) => i.kind === 'user' && i.pending)
   const busy = (status === 'thinking' || status === 'working' || status === 'waiting') && !held
+  // What the routines set up here have found since, each where it came in.
+  const findings = useChatFindings(
+    agentId,
+    runOfChat === null ? id : undefined,
+    useMade(chat?.items),
+    chat?.older ? (chat.items.find((i) => i.kind === 'user')?.at ?? 0) : 0,
+  )
+  const items = useMemo(() => placeFindings(run.items, findings, busy), [run.items, findings, busy])
   const [typing, setTyping] = useState(false)
   const speaking = useSpeech((s) => s.profile === agentId && s.phase === 'playing')
   const mood = useOrbState(online ? status : 'offline', { typing, speaking })
@@ -908,6 +916,14 @@ function solo(i: ChatItem) {
 }
 function useSolo(items: ChatItem[]) {
   return useMemo(() => items.map(solo), [items])
+}
+
+/** The routines the agent set up in this chat. */
+function useMade(items: ChatItem[] | undefined) {
+  const made = (items ?? []).flatMap((i) => (i.kind === 'tool' && i.routineId ? [i.routineId] : []))
+  const key = made.join(',')
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  return useMemo(() => made, [key])
 }
 
 /** Short enough for one line of the composer's placeholder (textareas can't ellipsize it). */

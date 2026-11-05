@@ -111,11 +111,27 @@ export function askNote(name: string, chat: { id: string; profile: string }, ask
 
 // ── Routines and groups ─────────────────────────────────────────────────────
 
-/** A routine's run found something: titled with the routine, quoting what it found. */
-export function runNote({ agentId, runId, routine, text }: { agentId: string; runId: string; routine: string; text: string }): Note | null {
+/**
+ * A routine's run found something: titled with the routine, quoting what it
+ * found. It opens the run, or the `chat` the routine reports to.
+ */
+export function runNote({
+  agentId,
+  runId,
+  routine,
+  text,
+  chat,
+}: {
+  agentId: string
+  runId: string
+  routine: string
+  text: string
+  chat?: string
+}): Note | null {
   const body = firstLine(text)
   if (!body) return null
-  return { title: title(routine), body, tag: chatTag(runId), href: chatHref({ id: runId, profile: agentId }) }
+  const at = chat ?? runId
+  return { title: title(routine), body, tag: chatTag(at), href: chatHref({ id: at, profile: agentId }) }
 }
 
 /** A group's round ended with something new from its agents. */

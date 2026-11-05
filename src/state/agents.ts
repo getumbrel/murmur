@@ -23,7 +23,7 @@ import { scoped } from '@/hermes/instance'
 import { listProfiles } from '@/hermes/compat'
 import { isQuietExcerpt, isRunBrief, resultLine, runTitle } from '@shared/routines.ts'
 import { agentName, botTitle } from '@shared/agents.ts'
-import { fetchRunResult, knowRun, runOf } from '@/state/routines'
+import { chatOfRoutine, fetchRunResult, knowRun, runOf } from '@/state/routines'
 import { refreshActivity } from '@/state/status'
 
 type LastSession = {
@@ -37,6 +37,8 @@ type LastSession = {
   source?: string
   /** One of a routine's runs (Murmur's note, from `runOf`). */
   run?: boolean
+  /** The chat that run's routine reports to, where what it found is. */
+  reportsTo?: string
 }
 
 export type Profile = {
@@ -75,7 +77,16 @@ export type Agent = {
    * The newest chat, for the roster (the main chat counts, though Hermes hides
    * it). A routine's run counts only when it had something to say.
    */
-  lastChat?: { id: string; title: string; at: number; main?: boolean; routine?: boolean }
+  lastChat?: {
+    id: string
+    title: string
+    at: number
+    main?: boolean
+    /** What a routine found, on a line of its own. */
+    routine?: boolean
+    /** What a routine found, in the chat it reports to (`id`). */
+    reported?: boolean
+  }
   /** When the main chat last moved (Hermes hides it from the lists that say so). */
   mainChatAt?: number
   /** Bot Mode's presentation record, kept so edits merge instead of clobbering. */
@@ -222,9 +233,11 @@ function newestChat(p: Profile): Agent['lastChat'] {
   }
   if (!last) return undefined
   if (last.run) {
-    // What the routine found, under its name.
+    // What the routine found, under its name: in the chat it reports to, or on its own.
     const name = runTitle(last.title ?? '') || 'Routine'
-    return { id: last.id, title: [name, resultLine(last.preview ?? '', name)].filter(Boolean).join(' · '), at: activeAt(last), routine: true }
+    const title = [name, resultLine(last.preview ?? '', name)].filter(Boolean).join(' · ')
+    if (last.reportsTo) return { id: last.reportsTo, title, at: activeAt(last), reported: true }
+    return { id: last.id, title, at: activeAt(last), routine: true }
   }
   return { id: last.id, title: readable(last.title, { files: false }) || readable(last.preview) || 'New chat', at: activeAt(last) }
 }
@@ -246,7 +259,7 @@ export async function placeLastChats<P extends Profile>(profiles: P[]): Promise<
     profiles.map(async (p) => {
       if (!p.last_session?.id) return p
       const last = { ...p.last_session, run: Boolean(await runOf(p.name, p.last_session.id).catch(() => null)) }
-      if (!quietRun(last)) return { ...p, last_session: last }
+      if (!quietRun(last)) return { ...p, last_session: await reported(p.name, last) }
       try {
         const res = await api.get<{ sessions?: LastSession[] }>(
           `/api/sessions?profile=${encodeURIComponent(p.name)}&limit=8&order=recent&min_messages=1`,
@@ -255,7 +268,7 @@ export async function placeLastChats<P extends Profile>(profiles: P[]): Promise<
           // Only Hermes's scheduler makes chats from "cron".
           if (row.source !== 'cron') return { ...p, last_session: row }
           const said = await runSaid(p.name, row)
-          if (said) return { ...p, last_session: { ...row, run: true, preview: said } }
+          if (said) return { ...p, last_session: await reported(p.name, { ...row, run: true, preview: said }) }
         }
         return { ...p, last_session: null }
       } catch {
@@ -263,6 +276,14 @@ export async function placeLastChats<P extends Profile>(profiles: P[]): Promise<
       }
     }),
   )
+}
+
+/** A run whose routine reports to a chat stands for that chat. */
+async function reported(profile: string, s: LastSession): Promise<LastSession> {
+  if (!s.run) return s
+  const run = await runOf(profile, s.id).catch(() => null)
+  const chat = await chatOfRoutine(profile, run?.routineId).catch(() => undefined)
+  return chat ? { ...s, reportsTo: chat } : s
 }
 
 const runWords = new Map<string, Promise<string>>()

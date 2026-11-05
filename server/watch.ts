@@ -9,6 +9,9 @@
 //   and went between looks; waiting is a question, read from what Hermes is
 //   still waiting on (session.events.since).
 // Routines: each agent's newest runs (shared/routines.ts decides which landed).
+//   One set up in a chat here reports there: the chat is noted on the
+//   routine when it's made, and what each run finds is kept on it and told
+//   as that chat's news.
 // Groups: each room's log; a round that was running and isn't has ended, and
 //   while one runs, the OKs it waits on.
 //
@@ -18,7 +21,26 @@
 import { agentName, titleCase, type NamedProfile } from '../shared/agents.ts'
 import { joinNames, lastLine, liveFromLog, TERMINAL, type RoomEvent } from '../shared/groups.ts'
 import { askNote, askText, groupAskNote, groupNote, replyNote, runNote, type Note, type StoredMessage } from '../shared/notes.ts'
-import { deliversElsewhere, isQuiet, isRunBrief, look, routineIdOf, runTitle, type Memory, type RunRow } from '../shared/routines.ts'
+import {
+  couldntRun,
+  deliversElsewhere,
+  failingOf,
+  failureIn,
+  findingIn,
+  findingsOf,
+  isQuiet,
+  isRunBrief,
+  look,
+  madeRoutine,
+  reportsTo,
+  routineIdOf,
+  runTitle,
+  withFindings,
+  type Finding,
+  type Memory,
+  type Reporting,
+  type RunRow,
+} from '../shared/routines.ts'
 import type { Hermes } from './hermes.ts'
 import { openSocket, RpcError, type HermesEvent } from './socket.ts'
 
@@ -29,6 +51,8 @@ export type WatchDeps = {
   call: <T>(method: string, params?: Record<string, unknown>) => Promise<T>
   /** A signed-in REST read; null when it didn't answer. */
   get: <T>(path: string) => Promise<T | null>
+  /** A signed-in JSON write: whether Hermes took it. */
+  put?: (path: string, body: unknown) => Promise<boolean>
   tell: (moment: Moment) => void
   now?: () => number
   /** Waits between looks at a chat that just finished, while Hermes saves it. */
@@ -38,9 +62,17 @@ export type WatchDeps = {
 type LiveRow = { id: string; session_key: string; status: string; title?: string; message_count?: number }
 type OpenRequest = { id: string; method: string; params?: Record<string, unknown> }
 type Owner = { profile: string; source: string }
-type SessionRow = { id: string; title?: string | null; source?: string | null; started_at?: number; end_reason?: string | null; cron_job_id?: string | null }
-type MessageRow = StoredMessage & { id?: number; timestamp?: number }
-type JobRow = { id: string; name?: string; prompt?: string; deliver?: unknown }
+type SessionRow = {
+  id: string
+  title?: string | null
+  source?: string | null
+  started_at?: number
+  ended_at?: number | null
+  end_reason?: string | null
+  cron_job_id?: string | null
+}
+type MessageRow = StoredMessage & { id?: number; timestamp?: number; tool_name?: string | null }
+type JobRow = Reporting & { id: string; name?: string; prompt?: string; deliver?: unknown; last_status?: unknown; last_error?: unknown; last_failure?: unknown; failure_streak?: unknown; last_run_at?: unknown }
 type WireMember = { member_id: string; profile: string; handle: string; display_name?: string }
 type WireRoom = { room_id: string; name?: string; members: WireMember[]; latest_seq?: number }
 type PendingAction = { kind: string; task_id?: string; request_id?: string; member_id?: string; approval?: { request_id?: string } }
@@ -57,8 +89,9 @@ const LATEST = Number.MAX_SAFE_INTEGER
 const q = encodeURIComponent
 
 const missing = (error: unknown) => error instanceof RpcError && error.code === -32601
+const jobPath = (id: string, agent: string) => `/api/cron/jobs/${q(id)}?profile=${q(agent)}`
 
-export function createWatcher({ call, get, tell, now = Date.now, pause = (ms) => new Promise((done) => setTimeout(done, ms)) }: WatchDeps) {
+export function createWatcher({ call, get, put = async () => false, tell, now = Date.now, pause = (ms) => new Promise((done) => setTimeout(done, ms)) }: WatchDeps) {
   // ── Agents ────────────────────────────────────────────────────────────────
 
   let profiles: { list: NamedProfile[]; at: number } | null = null
@@ -178,11 +211,25 @@ export function createWatcher({ call, get, tell, now = Date.now, pause = (ms) =>
       const res = await get<{ messages?: MessageRow[] }>(`/api/sessions/${q(chat.key)}/messages?profile=${q(owner.profile)}&order=latest&limit=20`)
       const messages = chronological(res?.messages ?? [])
       if (owner.source === RUN && !repliedIn(messages)) return
+      if (owner.source !== RUN) await settle(owner.profile, chat.key, messages)
       // A chat opened again isn't a reply: its newest answer is older than the last look.
       const answeredAt = messages.findLast((m) => m.role === 'assistant')?.timestamp ?? 0
       if (since && answeredAt * 1000 < since - SLACK_MS) return
       const note = replyNote(await nameOf(owner.profile), { id: chat.key, profile: owner.profile }, messages)
       if (note) return tell({ kind: 'note', note })
+    }
+  }
+
+  /** A routine the agent set up in this chat (one Murmur may not have seen made) reports to it. */
+  async function settle(agent: string, chatId: string, messages: MessageRow[]) {
+    const made = messages.flatMap((m) => {
+      const id = m.role === 'tool' ? madeRoutine(m.tool_name || 'cronjob', m.content) : undefined
+      return id ? [id] : []
+    })
+    if (!made.length) return
+    const jobs = await get<JobRow[]>(`/api/cron/jobs?profile=${q(agent)}`)
+    for (const job of Array.isArray(jobs) ? jobs : []) {
+      if (made.includes(job.id) && !job.murmur_chat) await put(jobPath(job.id, agent), { updates: { murmur_chat: chatId } })
     }
   }
 
@@ -199,9 +246,10 @@ export function createWatcher({ call, get, tell, now = Date.now, pause = (ms) =>
     const res = await get<{ sessions?: SessionRow[] }>(`/api/sessions?profile=${q(agent)}&source=cron&order=recent&limit=20`)
     if (!res) return
     const rows = (res.sessions ?? []).map(
-      (s): RunRow & { routineId?: string } => ({
+      (s): RunRow & { routineId?: string; endedAt?: number } => ({
         id: s.id,
         startedAt: s.started_at ?? 0,
+        endedAt: s.ended_at ?? undefined,
         finished: Boolean(s.end_reason?.startsWith('cron_')),
         title: s.title ?? '',
         routineId: s.cron_job_id || routineIdOf(s.id),
@@ -211,6 +259,7 @@ export function createWatcher({ call, get, tell, now = Date.now, pause = (ms) =>
     memories.set(agent, memory)
     if (!landed.length) return
     const jobs = await get<JobRow[]>(`/api/cron/jobs?profile=${q(agent)}`)
+    const found = new Map<JobRow, Finding[]>()
     for (const run of landed) {
       const routineId = run.routineId ?? (await get<SessionRow>(`/api/sessions/${q(run.id)}?profile=${q(agent)}`))?.cron_job_id
       const said = await get<{ messages?: MessageRow[] }>(`/api/sessions/${q(run.id)}/messages?profile=${q(agent)}&order=latest&limit=20`)
@@ -223,12 +272,33 @@ export function createWatcher({ call, get, tell, now = Date.now, pause = (ms) =>
       const job = jobs.find((j) => j.id === routineId)
       if (job && deliversElsewhere(job.deliver)) continue
       const messages = chronological(said.messages ?? [])
-      const text = (messages.findLast((m) => m.role === 'assistant' && m.content?.trim())?.content ?? '').trim()
-      // Nothing to report, or a run you've replied in (a conversation, told like any chat).
-      if (!text || isQuiet(text) || repliedIn(messages)) continue
+      const chat = job && reportsTo(job)
       const routine = (job?.name || job?.prompt || runTitle(run.title) || 'Routine').trim()
-      const note = runNote({ agentId: agent, runId: run.id, routine, text })
+      // A run you've replied in is a conversation, told like any chat.
+      if (repliedIn(messages)) continue
+      if (failureIn(messages) !== undefined) {
+        // Told once for each stretch of failed runs, when Hermes has counted this one on its routine.
+        const failing = job && failingOf(job)
+        const counted = Date.parse(String(job?.last_run_at ?? '')) >= run.startedAt * 1000
+        if (job && !counted && now() - (run.endedAt ?? run.startedAt) * 1000 < 60_000) {
+          memory.done.delete(run.id)
+          memory.going.add(run.id)
+          continue
+        }
+        const note = failing?.times === 1 && counted && runNote({ agentId: agent, runId: run.id, routine, text: couldntRun(failing.why), chat: chat || undefined })
+        if (note) tell({ kind: 'note', note })
+        continue
+      }
+      const text = chat ? findingIn(messages) : (messages.findLast((m) => m.role === 'assistant' && m.content?.trim())?.content ?? '').trim()
+      // Nothing to report.
+      if (!text || isQuiet(text)) continue
+      if (job && chat) found.set(job, [...(found.get(job) ?? []), { run: run.id, at: (run.endedAt ?? run.startedAt) * 1000 }])
+      const note = runNote({ agentId: agent, runId: run.id, routine, text, chat: chat || undefined })
       if (note) tell({ kind: 'note', note })
+    }
+    // Kept on the routine, so the chat it reports to still has them when Hermes lists only its newest runs.
+    for (const [job, list] of found) {
+      await put(jobPath(job.id, agent), { updates: { murmur_findings: withFindings(findingsOf(job), list) } })
     }
   }
 
@@ -368,7 +438,12 @@ export function watchHermes(hermes: Hermes, tell: (moment: Moment) => void) {
       if (event.type === 'cron.changed') runs.soon(1500)
     },
   })
-  const watcher = createWatcher({ call: socket.call, get: (path) => hermes.read(path, 10_000), tell })
+  const watcher = createWatcher({
+    call: socket.call,
+    get: (path) => hermes.read(path, 10_000),
+    put: (path, body) => hermes.write('PUT', path, body),
+    tell,
+  })
   const chats = loop(watcher.chats, () => (watcher.busy() ? 2000 : 10_000))
   const groups = loop(watcher.groups, () => (watcher.rounds() ? 3000 : 20_000))
   const runs = loop(watcher.runs, () => 60_000)

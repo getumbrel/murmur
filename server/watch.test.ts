@@ -17,9 +17,14 @@ function fakeHermes() {
     live: [] as Row[],
     open: {} as Record<string, { id: string; method: string; params?: Record<string, unknown> }[]>,
     sessions: { default: [], atlas: [] } as Record<string, { id: string; source?: string }[]>,
-    messages: {} as Record<string, { role: string; content: string | null; timestamp?: number }[]>,
-    runs: { default: [], atlas: [] } as Record<string, { id: string; title?: string; started_at: number; end_reason?: string | null; cron_job_id?: string }[]>,
-    jobs: { atlas: [] } as Record<string, { id: string; name?: string; deliver?: unknown }[]>,
+    messages: {} as Record<string, { role: string; content: string | null; timestamp?: number; tool_name?: string }[]>,
+    runs: { default: [], atlas: [] } as Record<
+      string,
+      { id: string; title?: string; started_at: number; ended_at?: number; end_reason?: string | null; cron_job_id?: string }[]
+    >,
+    jobs: { atlas: [] } as Record<string, ({ id: string; name?: string; deliver?: unknown } & Record<string, unknown>)[]>,
+    /** What was written to Hermes: each PUT's path and body. */
+    writes: [] as { path: string; body: unknown }[],
     rooms: [] as { room_id: string; name?: string; members: { member_id: string; profile: string; handle: string }[]; latest_seq: number }[],
     logs: {} as Record<string, { seq: number; event_id: string; kind: string; actor: { kind: string; id: string }; payload: Record<string, unknown>; created_at: number }[]>,
     pending: {} as Record<string, { kind: string; task_id: string; request_id?: string; member_id?: string }[]>,
@@ -61,8 +66,18 @@ function fakeHermes() {
     if (url.pathname === '/api/cron/jobs') return (state.jobs[profile] ?? []) as T
     return null
   }
+  const put = async (path: string, body: unknown) => {
+    state.writes.push({ path, body })
+    // Hermes keeps the fields as given (cron/jobs.py update_job).
+    const url = new URL(path, 'http://hermes')
+    const id = decodeURIComponent(url.pathname.split('/').pop()!)
+    const job = (state.jobs[url.searchParams.get('profile') ?? ''] ?? []).find((j) => j.id === id)
+    if (!job) return false
+    Object.assign(job, (body as { updates: Record<string, unknown> }).updates)
+    return true
+  }
   const told: Moment[] = []
-  const watcher = createWatcher({ call, get, tell: (m) => told.push(m), pause: async () => {} })
+  const watcher = createWatcher({ call, get, put, tell: (m) => told.push(m), pause: async () => {} })
   return { state, told, watcher }
 }
 
@@ -250,6 +265,109 @@ describe('routines', () => {
     state.messages.cron_b = [{ role: 'assistant', content: 'News!' }]
     await watcher.runs()
     expect(told).toEqual([])
+  })
+
+  it('notes the chat a routine was set up in, once', async () => {
+    const { state, watcher } = fakeHermes()
+    state.sessions.atlas = [{ id: 'c9', source: 'tui' }]
+    state.jobs.atlas = [{ id: 'j9', name: 'Watch for AIS replies', deliver: 'local' }, { id: 'j8', name: 'Older', murmur_chat: 'c0' }]
+    state.live = [{ id: 'rt9', session_key: 'c9', status: 'working' }]
+    await watcher.chats()
+    const made = (id: string) => JSON.stringify({ success: true, job_id: id, schedule: 'every 15m', next_run_at: 'soon' }, null, 2)
+    state.messages.c9 = [
+      { role: 'user', content: 'Watch my Gmail for AIS' },
+      { role: 'tool', content: made('j9'), tool_name: 'tool_call' },
+      { role: 'tool', content: made('j8'), tool_name: 'cronjob_manage' },
+      { role: 'assistant', content: 'Done.' },
+    ]
+    state.live = [{ id: 'rt9', session_key: 'c9', status: 'idle' }]
+    await watcher.chats()
+    // One Murmur noted already keeps its chat.
+    expect(state.writes).toEqual([{ path: '/api/cron/jobs/j9?profile=atlas', body: { updates: { murmur_chat: 'c9' } } }])
+  })
+
+  it('tells what a routine set up in a chat found as that chat’s, and keeps it on the routine', async () => {
+    const { state, told, watcher } = fakeHermes()
+    state.jobs.atlas = [{ id: 'j9', name: 'Watch for AIS replies', deliver: 'local', murmur_chat: 'c9', murmur_findings: [{ run: 'r0', at: 1000 }] }]
+    await watcher.runs()
+    state.runs.atlas = [
+      { id: 'r2', started_at: 600, ended_at: 620, end_reason: 'cron_complete', cron_job_id: 'j9' },
+      { id: 'r1', started_at: 500, ended_at: 510, end_reason: 'cron_complete', cron_job_id: 'j9' },
+    ]
+    const brief = { role: 'user', content: 'You are running as a scheduled cron job. Check Gmail.' }
+    state.messages.r1 = [brief, { role: 'assistant', content: '[SILENT]' }]
+    state.messages.r2 = [brief, { role: 'assistant', content: '**AIS replied.** Priya approved it.' }]
+    await watcher.runs()
+    expect(told).toEqual([
+      {
+        kind: 'note',
+        note: { title: 'Watch for AIS replies', body: 'AIS replied. Priya approved it.', tag: 'murmur:chat:c9', href: '/chat/atlas/c9' },
+      },
+    ])
+    expect(state.jobs.atlas[0].murmur_findings).toEqual([
+      { run: 'r2', at: 620_000 },
+      { run: 'r0', at: 1000 },
+    ])
+  })
+
+  it('tells once when a routine starts failing, and never as something it found', async () => {
+    const { state, told, watcher } = fakeHermes()
+    const failing = (streak: number, at: number) => ({
+      last_status: 'error',
+      last_error: 'RuntimeError: HTTP 401: Invalid API key',
+      last_failure: { at: new Date(at * 1000).toISOString(), detail: 'RuntimeError: HTTP 401: Invalid API key' },
+      failure_streak: streak,
+      last_run_at: new Date(at * 1000).toISOString(),
+    })
+    state.jobs.atlas = [{ id: 'j9', name: 'Watch for AIS replies', deliver: 'local', murmur_chat: 'c9' }]
+    await watcher.runs()
+    const brief = { role: 'user', content: 'You are running as a scheduled cron job. Check Gmail.' }
+    // Hermes's stock apology is the run's answer: what failed says why.
+    const apology = {
+      role: 'assistant',
+      content: 'Your request was not processed. Send it again if you still want me to carry it out.',
+      display_kind: 'failed_turn',
+      display_metadata: { error: 'HTTP 401: Invalid API key' },
+    }
+    state.runs.atlas = [{ id: 'r1', started_at: 500, ended_at: 502, end_reason: 'cron_complete', cron_job_id: 'j9' }]
+    state.messages.r1 = [brief, apology]
+    Object.assign(state.jobs.atlas[0], failing(1, 502))
+    await watcher.runs()
+    expect(told).toEqual([
+      {
+        kind: 'note',
+        note: { title: 'Watch for AIS replies', body: 'Couldn’t run: HTTP 401: Invalid API key', tag: 'murmur:chat:c9', href: '/chat/atlas/c9' },
+      },
+    ])
+    // Still failing: already told.
+    state.runs.atlas = [{ id: 'r2', started_at: 600, ended_at: 602, end_reason: 'cron_complete', cron_job_id: 'j9' }, ...state.runs.atlas]
+    state.messages.r2 = [brief, apology]
+    Object.assign(state.jobs.atlas[0], failing(2, 602))
+    await watcher.runs()
+    expect(told).toHaveLength(1)
+    expect(state.jobs.atlas[0].murmur_findings).toBeUndefined()
+  })
+
+  it('waits for Hermes to count a failed run on its routine before telling it', async () => {
+    const { state, told, watcher } = fakeHermes()
+    const now = Date.now() / 1000
+    state.jobs.atlas = [{ id: 'j9', name: 'Morning note', deliver: 'local', last_status: 'ok', last_run_at: new Date((now - 3600) * 1000).toISOString() }]
+    await watcher.runs()
+    state.runs.atlas = [{ id: 'r1', started_at: now - 2, ended_at: now - 1, end_reason: 'cron_complete', cron_job_id: 'j9' }]
+    state.messages.r1 = [
+      { role: 'user', content: 'You are running as a scheduled cron job. Write the note.' },
+      { role: 'assistant', content: '[CRON_FAILURE]\nThe calendar wouldn’t open.' },
+    ]
+    await watcher.runs()
+    expect(told).toEqual([])
+    Object.assign(state.jobs.atlas[0], {
+      last_status: 'error',
+      last_error: 'The calendar wouldn’t open.',
+      failure_streak: 1,
+      last_run_at: new Date(now * 1000).toISOString(),
+    })
+    await watcher.runs()
+    expect(told).toMatchObject([{ kind: 'note', note: { title: 'Morning note', body: 'Couldn’t run: The calendar wouldn’t open.', href: '/chat/atlas/r1' } }])
   })
 
   it('tries a run again when Hermes didn’t answer about it', async () => {

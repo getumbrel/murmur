@@ -44,6 +44,8 @@ import { ERROR_ACTION_LABEL, errorActionOf, type ErrorAction } from './errors'
 import { Plan } from './plan'
 import { HelperPill, Helpers, HelpersBack, useCardInSight } from './helpers'
 import { WakeLine } from './wake-line'
+import { FailedLine, FindingLine } from '@/features/routines/finding-line'
+import { RoutineCard } from '@/features/routines/routine-card'
 import { ReactionBadge, ReactionPills, Tapback, useHoldToReact } from './reactions'
 import { BrowserPeek, HandCard } from '@/features/screen'
 import { ASK_TOOL, OPENS_PAGES } from '@/state/screen'
@@ -62,6 +64,8 @@ type Block =
   /** Helpers the agent sent off; `back`, when Hermes woke the agent with them. */
   | { kind: 'helpers'; id: string; items: Of<'helper'>[]; back?: Of<'wake'> }
   | { kind: 'wake'; id: string; item: Of<'wake'> }
+  /** One of the chat's routines found something: what opens the agent saying so. */
+  | { kind: 'finding'; id: string; item: Of<'finding'> }
   /** The agent asking for a hand with its browser, then how that went. */
   | { kind: 'hand'; id: string; item: Of<'tool'> }
 
@@ -72,8 +76,10 @@ type Row =
   | { kind: 'notice'; id: string; item: Of<'notice'> }
   | { kind: 'command'; id: string; item: Of<'command'> }
   | { kind: 'aside'; id: string; item: Of<'aside'> }
-  /** `woken`: Hermes started it, not you (a helper came back, say). */
-  | { kind: 'turn'; id: string; sections: Section[]; woken?: boolean }
+  /** One of the chat's routines couldn't run: Murmur saying so, not the agent. */
+  | { kind: 'failed'; id: string; item: Of<'finding'> }
+  /** `woken`: Hermes started it, not you (a helper came back, say); `found`, one of the chat's routines did. */
+  | { kind: 'turn'; id: string; sections: Section[]; woken?: boolean; found?: boolean }
 
 const DEFAULT_HUE = 278
 /** How the buttons over the composer come and go. */
@@ -116,6 +122,25 @@ function toRows(items: ChatItem[], busy: boolean, live: Set<string>): Row[] {
       rows.push(...aside)
       aside = []
       rows.push({ kind: item.kind, id: item.id, item } as Row)
+      turn = null
+      prev = item.id
+      continue
+    }
+    if (item.kind === 'finding') {
+      // A routine found something: the agent speaking up with it, a turn of its own.
+      rows.push(...aside)
+      aside = []
+      if (item.failed) {
+        rows.push({ kind: 'failed', id: item.id, item })
+        turn = null
+        prev = item.id
+        continue
+      }
+      const blocks: Block[] = [
+        { kind: 'finding', id: item.id, item },
+        { kind: 'text', id: `${item.id}-said`, item: saidOf(item) },
+      ]
+      rows.push({ kind: 'turn', id: `turn-${item.id}`, sections: [{ id: item.id, blocks }], woken: true, found: true })
       turn = null
       prev = item.id
       continue
@@ -177,6 +202,14 @@ function toRows(items: ChatItem[], busy: boolean, live: Set<string>): Row[] {
   if (busy && !turn) rows.push({ kind: 'turn', id: `turn-${prev}`, sections: [] })
   rows.push(...aside)
   return rows
+}
+
+/** What a routine found, as the agent's words (the same ones each time, so its turn keeps still). */
+const said = new WeakMap<Of<'finding'>, Of<'assistant'>>()
+function saidOf(item: Of<'finding'>) {
+  let out = said.get(item)
+  if (!out) said.set(item, (out = { kind: 'assistant', id: `${item.id}-said`, text: item.text, streaming: false, at: item.at }))
+  return out
 }
 
 /**
@@ -738,6 +771,7 @@ export function Thread({
                               {row.item.text}
                             </p>
                           )
+                        else if (row.kind === 'failed') content = <FailedLine item={row.item} agentId={agent?.id} />
                         else if (row.kind === 'command')
                           content = <CommandCard item={row.item} isNew={isNew(row.id)} onDismiss={onDismiss} />
                         else if (row.kind === 'aside')
@@ -760,7 +794,8 @@ export function Thread({
                               // Trying again asks your last message again: a turn Hermes started isn't one of those.
                               onRetry={last && !row.woken && handlers.onRetry ? stable.onRetry : undefined}
                               onErrorAction={last && handlers.onErrorAction ? stable.onErrorAction : undefined}
-                              onReact={handlers.onReact ? stable.onReact : undefined}
+                              // What a routine found is kept with its run, not here: there's nothing to react to.
+                              onReact={handlers.onReact && !row.found ? stable.onReact : undefined}
                               onStopHelper={handlers.onStopHelper ? stable.onStopHelper : undefined}
                             />
                           )
@@ -1129,6 +1164,8 @@ const Turn = memo(function Turn({
                     .flatMap((i) => (i.kind === 'tool' && i.media ? i.media : []))
                     .filter((m) => !delivered.has(m))
                   const finds = found.get(block.id) ?? []
+                  // Routines it set up, each under the step that did.
+                  const routines = block.items.flatMap((i) => (i.kind === 'tool' && i.routineId ? [i.routineId] : []))
                   // While it works in its browser: the browser itself, live.
                   const browsing = liveBlock && block.items.some((i) => i.kind === 'tool' && i.name.startsWith('browser_'))
                   return (
@@ -1144,6 +1181,7 @@ const Turn = memo(function Turn({
                         <MachineScreen key={screen.key} screen={screen} live={live} folded={foldedKeys.has(screen.key)} />
                       ))}
                       {finds.length > 0 && <Finds finds={finds} agent={seed} />}
+                      {seed && routines.map((id) => <RoutineCard key={id} agentId={seed} routineId={id} />)}
                     </Fragment>
                   )
                 }
@@ -1181,6 +1219,8 @@ const Turn = memo(function Turn({
                   )
                 case 'wake':
                   return <WakeLine key={block.id} item={block.item} hue={hue} seed={seed} />
+                case 'finding':
+                  return <FindingLine key={block.id} item={block.item} agentId={agent?.id} />
                 case 'hand':
                   return who && <HandCard key={block.id} item={block.item} agent={who} site={site} hue={hue} seed={seed} />
                 case 'approval':

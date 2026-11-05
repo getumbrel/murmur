@@ -172,3 +172,187 @@ export const deliversElsewhere = (deliver: unknown) => {
   const to = Array.isArray(deliver) ? deliver.join(',') : String(deliver ?? '')
   return to.split(',').some((t) => t.trim() && t.trim() !== 'local')
 }
+
+// ── Reporting where it was set up ───────────────────────────────────────────
+// Hermes can't deliver to a chat in Murmur: it has no address there, so a
+// routine set up in one is only ever saved. Murmur notes that chat on the
+// routine's job (Hermes keeps fields it doesn't know) and shows each run that
+// found something there, as the agent speaking up.
+
+/** A run that found something, by when it ran (ms). */
+export type Finding = { run: string; at: number }
+
+/** Murmur's own fields on a routine's job. */
+export type Reporting = {
+  /** The chat it was set up in. */
+  murmur_chat?: unknown
+  /**
+   * Its runs that found something, newest first. Hermes lists only a
+   * routine's newest runs, so a busy one's findings would fall out of reach.
+   */
+  murmur_findings?: unknown
+  /** When the newest run read for findings started (ms): none up to then needs reading again. */
+  murmur_read?: unknown
+}
+
+/** How many findings a routine keeps. */
+export const KEPT = 50
+
+/** The chat a routine reports to: the one it was set up in, unless Hermes sends what it finds elsewhere. */
+export function reportsTo(job: Reporting & { deliver?: unknown }) {
+  const chat = job.murmur_chat
+  return typeof chat === 'string' && chat && !deliversElsewhere(job.deliver) ? chat : undefined
+}
+
+/** A job's findings, as kept. */
+export function findingsOf(job: Reporting): Finding[] {
+  const list: unknown[] = Array.isArray(job.murmur_findings) ? job.murmur_findings : []
+  return list.filter((f): f is Finding => typeof (f as Finding)?.run === 'string' && typeof (f as Finding)?.at === 'number')
+}
+
+/** Findings with more of them: each run once, newest first, the newest few kept. */
+export function withFindings(kept: Finding[], found: Finding[]): Finding[] {
+  const byRun = new Map<string, Finding>()
+  for (const f of [...found, ...kept]) if (!byRun.has(f.run)) byRun.set(f.run, f)
+  return [...byRun.values()].sort((a, b) => b.at - a.at).slice(0, KEPT)
+}
+
+/** Hermes's scheduler, by the names it's called by: its own, or through tool search's one "tool_call". */
+const SCHEDULER = new Set(['cronjob', 'cronjob_manage', 'tool_call'])
+
+/**
+ * The routine a call to Hermes's scheduler made, from its answer (the JSON,
+ * or that parsed): only making one answers with its id, its schedule and its
+ * next run.
+ */
+export function madeRoutine(tool: string, result: unknown): string | undefined {
+  if (!SCHEDULER.has(tool)) return undefined
+  let answer = result
+  if (typeof result === 'string') {
+    try {
+      answer = JSON.parse(result)
+    } catch {
+      // Cut short in history: its opening still says.
+      return /^\s*\{\s*"success":\s*true,\s*"job_id":\s*"([\w-]+)"/.exec(result)?.[1]
+    }
+  }
+  const a = answer && typeof answer === 'object' ? (answer as Record<string, unknown>) : {}
+  const made = a.success === true && typeof a.job_id === 'string' && a.job_id && 'schedule' in a && 'next_run_at' in a
+  return made ? (a.job_id as string) : undefined
+}
+
+type Said = { role?: string | null; content?: string | null; display_kind?: string | null; display_metadata?: unknown }
+
+/** The agent's last words in a run, before anyone replied in it. `messages` are oldest first. */
+function answerIn<M extends Said>(messages: M[]): M | undefined {
+  const brief = messages.findIndex((m) => m.role === 'user' && isRunBrief(m.content ?? ''))
+  const reply = messages.findIndex((m, i) => i > brief && m.role === 'user' && m.content?.trim())
+  return messages.slice(0, reply < 0 ? undefined : reply).findLast((m) => m.role === 'assistant' && m.content?.trim())
+}
+
+const FAILED = '[CRON_FAILURE]'
+
+/**
+ * Why a run failed, from its answer: the error Hermes kept with a turn that
+ * failed (the model turned it away, say), whose words are Hermes's stock
+ * apology, or what the agent said after marking it failed. undefined when it
+ * didn't fail.
+ */
+export function failureOf(answer: Said | undefined): string | undefined {
+  if (answer?.display_kind === 'failed_turn') {
+    const error = (answer.display_metadata as { error?: unknown } | null | undefined)?.error
+    return typeof error === 'string' ? error.trim() : ''
+  }
+  const text = answer?.content?.trim() ?? ''
+  return text.startsWith(FAILED) ? text.slice(FAILED.length).trim() : undefined
+}
+
+/** Why a run failed (see failureOf), or undefined. `messages` are oldest first. */
+export const failureIn = (messages: Said[]) => failureOf(answerIn(messages))
+
+/**
+ * What a run found: the agent's last words before anyone replied in it, or ''
+ * when it had nothing to report, or failed. `messages` are oldest first.
+ */
+export function findingIn(messages: Said[]) {
+  const answer = answerIn(messages)
+  const text = (answer?.content ?? '').trim()
+  return isQuiet(text) || failureOf(answer) !== undefined ? '' : text
+}
+
+/** A routine whose newest run failed: when, how many runs in a row (where Hermes says), and why. */
+export type Failing = { at: number; times?: number; why: string }
+
+/** Whether a routine's newest run failed, from its job; undefined when it didn't. */
+export function failingOf(job: {
+  last_status?: unknown
+  last_error?: unknown
+  last_failure?: unknown
+  failure_streak?: unknown
+  last_run_at?: unknown
+}): Failing | undefined {
+  if (job.last_status !== 'error') return undefined
+  const last = (job.last_failure && typeof job.last_failure === 'object' ? job.last_failure : {}) as { at?: unknown; detail?: unknown }
+  const at = Date.parse(String(last.at ?? job.last_run_at ?? ''))
+  const why = typeof last.detail === 'string' && last.detail ? last.detail : typeof job.last_error === 'string' ? job.last_error : ''
+  const times = typeof job.failure_streak === 'number' && job.failure_streak > 0 ? job.failure_streak : undefined
+  // Python's exception name says nothing to a person.
+  return { at: Number.isNaN(at) ? 0 : at, times, why: why.replace(/^\w*(?:Error|Exception):\s*/, '').trim() }
+}
+
+/** What failed runs say in a line: that it couldn't run (`times` in a row), and why. */
+export function couldntRun(why: string, times = 1) {
+  const what = times > 1 ? `Couldn’t run the last ${times} times` : 'Couldn’t run'
+  return why ? `${what}: ${why}` : `${what}.`
+}
+
+// ── Telling the agent ───────────────────────────────────────────────────────
+// A routine's runs are chats of their own, so the agent in the chat they
+// report to never saw what they found. Your next message there takes it
+// along, after your words, under a mark Murmur leaves out when it shows that
+// message again. Once in a chat, it also says how routines report here.
+
+const MARK = '--- From Murmur ---'
+
+/** What Murmur added to a message, up to whatever Hermes added after it. */
+export const ALONG = new RegExp(
+  `\\n*${MARK}[\\s\\S]*?(?=\\n--- Attached Context ---|\\n--- Context Warnings ---|\\n*Umbrel Runtime Context:|\\n*\\[Image attached at:|$)`,
+)
+
+/** The note on how routines report here, in a message as stored. */
+export const toldIn = (raw: string) => raw.includes(MARK) && raw.includes(NOTE)
+
+const NOTE =
+  "This chat is in Murmur. A routine you schedule from it with deliver='local' reports back here: Murmur shows what each run finds in this chat and lets the person know, and their next message brings it back to you. Use deliver='local' unless they ask for it to go somewhere else."
+
+/** Each finding's words, at most; and how many findings go along at once. */
+const ALONG_LIMIT = { text: 4000, findings: 5 }
+
+export type Carried = { routine: string; when: string; text: string; failed?: boolean }
+
+/**
+ * What goes along with a message: what routines reported in the chat since
+ * the last one (oldest first), and, when `note`, how they report here.
+ */
+export function along({ found, note = false }: { found: Carried[]; note?: boolean }) {
+  if (!found.length && !note) return ''
+  const lines = [MARK]
+  if (note) lines.push(NOTE)
+  const shown = found.slice(-ALONG_LIMIT.findings)
+  if (shown.length < found.length) lines.push('', `(${found.length - shown.length} earlier reports left out.)`)
+  for (const f of shown) {
+    const text = f.text.length > ALONG_LIMIT.text ? `${f.text.slice(0, ALONG_LIMIT.text).trimEnd()}…` : f.text
+    const said = f.failed ? `couldn’t run ${f.when}` : `reported in this chat ${f.when}`
+    lines.push('', `Your routine “${f.routine}” ${said}:`, text)
+  }
+  return lines.join('\n')
+}
+
+/**
+ * Whether a message asks for something later or again, which an agent may
+ * schedule: the moment it needs to know how routines report here.
+ */
+export const soundsScheduled = (text: string) =>
+  /\b(?:every|each (?:day|morning|evening|night|week|hour)|daily|nightly|weekly|hourly|monthly|remind|routine|schedul|cron|recurring|watch|monitor|keep an eye|let me know|notify|alert|ping me|tell me (?:when|if)|whenever|check (?:back|again|in on))/i.test(
+    text,
+  )

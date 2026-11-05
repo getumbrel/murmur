@@ -7,6 +7,7 @@
 //
 // Results are delivered "locally" (saved only), which is what makes them show
 // up here; Telegram is offered only when that agent has Telegram connected.
+// One an agent set up in a chat reports in that chat (state/findings.ts).
 
 import { useQueries, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { useMemo, useRef } from 'react'
@@ -24,11 +25,24 @@ import {
   type RawSchedule,
   type When,
 } from '@/features/routines/schedule'
-import { isQuiet, isRunBrief, routineIdOf, runTitle } from '@shared/routines.ts'
+import {
+  failingOf,
+  failureOf,
+  findingsOf,
+  isQuiet,
+  isRunBrief,
+  reportsTo,
+  routineIdOf,
+  runTitle,
+  withFindings,
+  type Failing,
+  type Finding,
+  type Reporting,
+} from '@shared/routines.ts'
 
 // ── Shapes ──────────────────────────────────────────────────────────────────
 
-type RawJob = {
+type RawJob = Reporting & {
   id: string
   name?: string
   prompt?: string
@@ -41,6 +55,8 @@ type RawJob = {
   last_status?: string | null
   last_error?: string | null
   last_delivery_error?: string | null
+  last_failure?: unknown
+  failure_streak?: number
   deliver?: string
   created_at?: string
   /** Murmur's own note of the template a routine came from (Hermes keeps unknown fields). */
@@ -71,6 +87,16 @@ export type Routine = {
   /** The request is the person's own words (not a template's instructions), so it's worth showing. */
   ownWords: boolean
   createdAt: number
+  /** The chat it reports to: the one it was set up in, when it isn't sent elsewhere. */
+  chat?: string
+  /** Murmur has noted the chat it was set up in (reporting there or not). */
+  noted: boolean
+  /** Its runs that found something, as kept on it, newest first (only for one that reports to a chat). */
+  findings: Finding[]
+  /** When the newest run read for findings started: none up to then needs reading again. */
+  findingsRead: number
+  /** Its newest run failed. */
+  failing?: Failing
 }
 
 export type BlueprintField = {
@@ -119,7 +145,13 @@ export type JobRun = {
 }
 
 /** What came of a run: what the agent said last, whether that was "nothing to report", and whether you replied. */
-export type RunResult = { text: string; quiet: boolean; replied: boolean }
+export type RunResult = {
+  text: string
+  quiet: boolean
+  replied: boolean
+  /** It failed, and why (see failureOf): it has nothing to say. */
+  failed?: string
+}
 
 // ── Reading ─────────────────────────────────────────────────────────────────
 
@@ -151,6 +183,11 @@ function toRoutine(j: RawJob, agentId: string): Routine {
     template,
     ownWords: !template || template === 'custom' || template === 'custom-once',
     createdAt: ms(j.created_at) ?? 0,
+    chat: reportsTo(j),
+    noted: typeof j.murmur_chat === 'string' && j.murmur_chat !== '',
+    findings: findingsOf(j),
+    findingsRead: typeof j.murmur_read === 'number' ? j.murmur_read : 0,
+    failing: failingOf(j),
   }
 }
 
@@ -296,6 +333,20 @@ export async function runOf(agentId: string, chatId: string): Promise<RunOf> {
   }
 }
 
+const reporting = new Map<string, { chat?: string; at: number }>()
+
+/** The chat a routine reports to, if any, for a run seen without its routine's list. Kept a minute. */
+export async function chatOfRoutine(agentId: string, routineId: string | undefined) {
+  if (!routineId) return undefined
+  const key = placedKey(agentId, routineId)
+  const hit = reporting.get(key)
+  if (hit && Date.now() - hit.at < 60_000) return hit.chat
+  const j = await api.get<RawJob>(job(routineId, agentId))
+  const chat = reportsTo(j)
+  reporting.set(key, { chat, at: Date.now() })
+  return chat
+}
+
 /** `runOf` for a screen: undefined until it's known. */
 export function useRunOf(agentId: string | undefined, chatId: string | undefined) {
   return useQuery({
@@ -329,28 +380,30 @@ async function placeRuns(agentId: string, rows: SessionRow[]) {
   await Promise.all(unplaced.map((s) => runOf(agentId, s.id).catch(() => null)))
 }
 
+/** One routine's runs, newest first, as `useJobRuns` reads them (for `useQueries`). */
+export const jobRunsQuery = (agentId: string, routineId: string) => ({
+  queryKey: ['routine-job-runs', agentId, routineId] as const,
+  queryFn: async () => {
+    const res = await api.get<{ runs: SessionRow[] }>(`${job(routineId, agentId, 'runs')}&limit=30`)
+    return (res.runs ?? []).map<JobRun>((r) => {
+      if (r.source === 'cron') knowRun(agentId, r.id, { routineId })
+      const at = (r.started_at ?? 0) * 1000
+      return {
+        id: r.id,
+        at,
+        endedAt: r.ended_at ? r.ended_at * 1000 : undefined,
+        lastAt: r.last_active ? r.last_active * 1000 : at,
+        running: Boolean(r.is_active) && !r.end_reason,
+        messageCount: r.message_count ?? 0,
+      }
+    })
+  },
+  staleTime: 10_000,
+})
+
 /** One routine's runs, newest first. */
 export function useJobRuns(agentId: string, routineId: string | undefined) {
-  return useQuery({
-    queryKey: ['routine-job-runs', agentId, routineId],
-    enabled: Boolean(routineId),
-    queryFn: async () => {
-      const res = await api.get<{ runs: SessionRow[] }>(`${job(routineId!, agentId, 'runs')}&limit=30`)
-      return (res.runs ?? []).map<JobRun>((r) => {
-        if (r.source === 'cron') knowRun(agentId, r.id, { routineId: routineId! })
-        const at = (r.started_at ?? 0) * 1000
-        return {
-          id: r.id,
-          at,
-          endedAt: r.ended_at ? r.ended_at * 1000 : undefined,
-          lastAt: r.last_active ? r.last_active * 1000 : at,
-          running: Boolean(r.is_active) && !r.end_reason,
-          messageCount: r.message_count ?? 0,
-        }
-      })
-    },
-    staleTime: 10_000,
-  })
+  return useQuery({ ...jobRunsQuery(agentId, routineId ?? ''), enabled: Boolean(routineId) })
 }
 
 /** What came of a run. A run that has moved since is asked again; one that hasn't never changes. */
@@ -358,18 +411,21 @@ export const runResultKey = (agentId: string, run: { id: string; lastAt: number 
   ['routine-run-result', agentId, run.id, run.lastAt] as const
 
 export async function fetchRunResult(agentId: string, runId: string): Promise<RunResult> {
-  type Row = { id?: number; timestamp?: number; role?: string; content?: string | null }
+  type Row = { id?: number; timestamp?: number; role?: string; content?: string | null; display_kind?: string | null; display_metadata?: unknown }
   const res = await api.get<{ messages?: Row[] }>(
     `/api/sessions/${encodeURIComponent(runId)}/messages?${p(agentId)}&order=latest&limit=20`,
   )
   const rows = (res.messages ?? []).sort((a, b) => (a.timestamp ?? a.id ?? 0) - (b.timestamp ?? b.id ?? 0))
   const said = rows.filter((r) => r.role === 'assistant' && r.content?.trim())
   const text = (said.at(-1)?.content ?? '').trim()
+  // A failed turn's words are Hermes's stock apology, not a result.
+  const failed = failureOf(said.at(-1))
   return {
-    text: isQuiet(text) ? '' : text,
+    text: isQuiet(text) || failed !== undefined ? '' : text,
     quiet: isQuiet(text),
     // Anything you wrote, as opposed to Hermes's brief that opens every run.
     replied: rows.some((r) => r.role === 'user' && r.content?.trim() && !isRunBrief(r.content)),
+    ...(failed !== undefined && { failed }),
   }
 }
 
@@ -629,6 +685,31 @@ export async function rescheduleRoutine(routine: Routine, when: When) {
 
 export async function renameRoutine(routine: Routine, name: string) {
   await api.put(job(routine.id, routine.agentId), { updates: { name } })
+}
+
+/**
+ * A routine an agent made in a chat reports to that chat, unless it was
+ * already noted somewhere (Murmur's server may have got there first).
+ */
+export async function reportHere(agentId: string, routineId: string, chatId: string) {
+  const j = await api.get<RawJob>(job(routineId, agentId)).catch(() => null)
+  if (!j || j.murmur_chat) return false
+  await api.put(job(routineId, agentId), { updates: { murmur_chat: chatId } })
+  return true
+}
+
+/**
+ * Keeps what a routine's runs found on it, with how far they've been read.
+ * Read fresh first, so what Murmur's server kept meanwhile stays too.
+ */
+export async function keepFindings(routine: Routine, found: Finding[], read: number) {
+  const j = await api.get<RawJob>(job(routine.id, routine.agentId))
+  const kept = findingsOf(j)
+  const findings = withFindings(kept, found)
+  const was = typeof j.murmur_read === 'number' ? j.murmur_read : 0
+  const same = findings.length === kept.length && findings.every((f, i) => f.run === kept[i].run)
+  if (same && read <= was) return
+  await api.put(job(routine.id, routine.agentId), { updates: { murmur_findings: findings, murmur_read: Math.max(read, was) } })
 }
 
 export async function deleteRoutine(routine: Routine) {

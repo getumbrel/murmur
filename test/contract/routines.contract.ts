@@ -6,12 +6,26 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest'
-import { isQuiet, isRunBrief, runTitle } from '@shared/routines.ts'
+import {
+  along,
+  failingOf,
+  failureIn,
+  findingIn,
+  findingsOf,
+  isQuiet,
+  isRunBrief,
+  madeRoutine,
+  reportsTo,
+  runTitle,
+  toldIn,
+} from '@shared/routines.ts'
 import { parseSchedule, toSchedule, WEEKDAYS, type When } from '@/features/routines/schedule'
 import { startGateway } from '@/state/hermes-gateway'
-import { fetchRoutineRuns, runOf } from '@/state/routines'
+import { fetchRoutineRuns, fetchRunResult, runOf } from '@/state/routines'
 import { placeLastChats, toAgent, type Profile } from '@/state/agents'
-import { agentName, api, connect, newChat, q, sleep, turn, type Socket } from './client'
+import { parseUserMessage } from '@/features/media/parse'
+import { agentName, api, connect, modelRequests, newChat, q, sleep, turn, type Socket } from './client'
+import { toolsTag } from './fake-model'
 
 const agent = agentName('routines')
 const p = q(agent)
@@ -262,5 +276,106 @@ describe('the gateway that runs them', () => {
     expect(await api.get(`/api/status?${p}`)).toMatchObject({ gateway_running: true })
     expect(await startGateway(agent)).toMatchObject({ gateway_running: true })
     expect(await api.get(`/api/status?${p}`)).toMatchObject({ gateway_running: true })
+  })
+})
+
+describe('a routine an agent sets up in a chat', () => {
+  type Row = Message & { tool_name?: string | null }
+  let chat: { runtime: string; stored: string }
+  let made: string
+  let live: string | undefined
+
+  beforeAll(async () => {
+    chat = await newChat(socket, agent)
+    await turn(socket, chat.runtime, 'hello', agent)
+    // As the agent reaches it: directly when it's among the tools, else through Hermes's tool_call.
+    const tools = ((await modelRequests()).at(-1)?.body.tools ?? []) as { function: { name: string } }[]
+    const direct = ['cronjob_manage', 'cronjob'].find((name) => tools.some((t) => t.function.name === name))
+    const args = { action: 'create', name: 'Reply watch', prompt: 'Look for a reply [[say: AIS replied. Thursday at 2 PM works.]]', schedule: 'every 1h' }
+    const call = direct ? { name: direct, args } : { name: 'tool_call', args: { calls: [{ name: 'cronjob_manage', arguments: args }] } }
+    const from = socket.events.length
+    await turn(socket, chat.runtime, toolsTag([call]), agent)
+    const done = socket.events.slice(from).find((e) => e.type === 'tool.complete' && e.session_id === chat.runtime)
+    const payload = (done?.payload ?? {}) as { name?: string; result?: unknown }
+    live = madeRoutine(String(payload.name ?? ''), payload.result)
+    made = (await api.get<Job[]>(`/api/cron/jobs?${p}`)).find((j) => j.name === 'Reply watch')!.id
+  })
+
+  it('is told apart from the step that made it, live and from the history', async () => {
+    expect(live).toBe(made)
+    const rows = (await api.get<{ messages: Row[] }>(`/api/sessions/${chat.stored}/messages?${p}&order=oldest&limit=50`)).messages
+    const tools = rows.filter((r) => r.role === 'tool')
+    expect(tools.map((r) => madeRoutine(r.tool_name || 'cronjob', r.content))).toContain(made)
+  })
+
+  it('keeps the chat Murmur notes on it, through its runs, and its schedule with it', async () => {
+    const was = await api.get<Job>(job(made))
+    expect(was.deliver).toBe('local')
+    await api.put(job(made), { updates: { murmur_chat: chat.stored } })
+    const noted = await api.get<Job & { murmur_chat?: string }>(job(made))
+    expect(reportsTo(noted)).toBe(chat.stored)
+    expect(noted.schedule.display).toBe(was.schedule.display)
+    expect(noted.next_run_at).toBe(was.next_run_at)
+    await trigger(made)
+    expect(reportsTo(await api.get<Job & { murmur_chat?: string }>(job(made)))).toBe(chat.stored)
+  })
+
+  it('says what a run found, and keeps what Murmur writes down of it', async () => {
+    const [run] = await runs(made)
+    const read = await api.get<{ messages: Message[] }>(`/api/sessions/${run.id}/messages?${p}&order=oldest&limit=100&inline_images=false`)
+    expect(findingIn(read.messages)).toBe('AIS replied. Thursday at 2 PM works.')
+    const kept = [{ run: run.id, at: run.ended_at! * 1000 }]
+    await api.put(job(made), { updates: { murmur_findings: kept, murmur_read: run.started_at * 1000 } })
+    const after = await api.get<Job & { murmur_findings?: unknown; murmur_read?: unknown }>(job(made))
+    expect(findingsOf(after)).toEqual(kept)
+    expect(after.murmur_read).toBe(run.started_at * 1000)
+  })
+
+  it('goes to the agent with your next message, which reads back as just what you wrote', async () => {
+    const extra = along({ found: [{ routine: 'Reply watch', when: 'today at 9:15 AM', text: 'AIS replied.' }], note: true })
+    await turn(socket, chat.runtime, `What did they say?\n\n${extra}`, agent)
+    const sent = (await modelRequests()).at(-1)!.body.messages as { role: string; content: unknown }[]
+    expect(JSON.stringify(sent.filter((m) => m.role === 'user').at(-1)?.content)).toContain('AIS replied.')
+    const rows = (await api.get<{ messages: Row[] }>(`/api/sessions/${chat.stored}/messages?${p}&order=latest&limit=10`)).messages
+    const mine = rows.filter((r) => r.role === 'user').at(-1)!.content!
+    expect(toldIn(mine)).toBe(true)
+    expect(parseUserMessage(mine).text).toBe('What did they say?')
+  })
+
+  afterAll(async () => {
+    if (made) await api.delete(job(made))
+  })
+})
+
+describe('a failed run', () => {
+  const read = async (run: string) =>
+    (await api.get<{ messages: Message[] }>(`/api/sessions/${run}/messages?${p}&order=oldest&limit=100&inline_images=false`)).messages
+  const lastRun = async (id: string) => Date.parse((await api.get<{ last_run_at: string }>(job(id))).last_run_at)
+
+  it('isn’t a result, though Hermes’s apology is its answer, and says why; its routine counts it', async () => {
+    const made = await create('Turned away', 'Look [[fail]]')
+    await trigger(made.id)
+    await sleep(1100)
+    await trigger(made.id)
+    const [run] = await runs(made.id)
+    const said = await read(run.id)
+    expect(findingIn(said)).toBe('')
+    expect(failureIn(said)).toMatch(/refused/)
+    expect(await fetchRunResult(agent, run.id)).toMatchObject({ text: '', failed: expect.stringMatching(/refused/) })
+    expect(failingOf(await api.get(job(made.id)))).toMatchObject({ times: 2, why: expect.stringMatching(/^HTTP 400: .*refused/) })
+    // Counted once its routine's last run is no older than the run (server/watch.ts).
+    expect(await lastRun(made.id)).toBeGreaterThanOrEqual(run.started_at * 1000)
+    await api.delete(job(made.id))
+  })
+
+  it('the agent marks failed says why, and its routine keeps that', async () => {
+    const made = await create('Marked failed', 'Look [[say: [CRON_FAILURE]\nThe Gmail sign-in expired.]]')
+    await trigger(made.id)
+    const [run] = await runs(made.id)
+    const said = await read(run.id)
+    expect(findingIn(said)).toBe('')
+    expect(failureIn(said)).toBe('The Gmail sign-in expired.')
+    expect(failingOf(await api.get(job(made.id)))).toMatchObject({ times: 1, why: 'The Gmail sign-in expired.' })
+    await api.delete(job(made.id))
   })
 })

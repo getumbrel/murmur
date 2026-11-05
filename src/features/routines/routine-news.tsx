@@ -1,3 +1,4 @@
+import { useLocation } from 'wouter'
 import { Skeleton } from '@/ui/skeleton'
 import { cn } from '@/lib/cn'
 import type { Agent } from '@/state/agents'
@@ -61,14 +62,20 @@ export function RoutineNewsList({
 
 function NewsRow({ item, onOpen }: { item: RoutineNews; onOpen: (routineId: string, runId?: string) => void }) {
   const { routine, latest, quiet, more } = item
-  const unread = useChatUnread(latest?.run.id, latest?.run.lastAt)
+  const [, navigate] = useLocation()
+  // One that reports to a chat said it there: that's where it opens, and what's seen.
+  const unread = useChatUnread(latest && (routine.chat ?? latest.run.id), latest?.run.lastAt)
   const at = latest?.run.at ?? item.lastAt
   const checks = `${quiet}${more ? '+' : ''} ${quiet === 1 && !more ? 'time' : 'times'}`
   return (
     <li className="[&+&]:shadow-[inset_0_0.5px_0_var(--line)]">
       <button
         type="button"
-        onClick={() => onOpen(routine.id, latest?.run.id)}
+        onClick={() =>
+          routine.chat
+            ? navigate(`/chat/${encodeURIComponent(routine.agentId)}/${encodeURIComponent(routine.chat)}`)
+            : onOpen(routine.id, latest?.run.id)
+        }
         className="flex min-h-15 w-full items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-fill-1 active:bg-fill-2"
       >
         <Glyph icon={iconFor(routine.template, routine.name)} size={36} className={cn(!latest && 'opacity-55')} />

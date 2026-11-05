@@ -107,6 +107,8 @@ export type ChatItem =
       app?: string
       /** How long the person had the agent's browser when it asked for a hand, once they handed it back (ms). */
       took?: number
+      /** The routine it set up (Hermes's scheduler), which reports in this chat. */
+      routineId?: string
     }
   | {
       kind: 'approval'
@@ -193,6 +195,24 @@ export type ChatItem =
       took?: number
       /** Who went, by Hermes's ids: their cards are in the turn that sent them. */
       subagentIds?: string[]
+    }
+  /**
+   * One of the chat's routines found something: the agent speaking up, at
+   * the moment it did, with what it found. Read from the routine's run (a
+   * chat of its own), so it isn't in this chat's history.
+   */
+  | {
+      kind: 'finding'
+      /** The run's chat id, which opens it whole. */
+      id: string
+      routineId: string
+      /** The routine's name, and the template it came from (its glyph). */
+      routine: string
+      template?: string
+      at: number
+      text: string
+      /** Not a finding: its newest runs failed, this many in a row, and `text` is why. */
+      failed?: number
     }
   /** A slash command you ran, and what it printed. */
   | { kind: 'command'; id: string; command: string; output?: string; status: 'running' | 'done' | 'error' }
