@@ -65,7 +65,8 @@ describe('replyNote', () => {
 
 describe('asks', () => {
   it('asks for an OK, or asks the question', () => {
-    expect(askText('approval', { command: 'rm -rf /tmp/x' })).toBe('Needs your OK')
+    expect(askText('approval', { command: 'rm -rf /tmp/x', pattern_keys: ['recursive delete'] })).toBe('Wants to run “rm -rf /tmp/x”')
+    expect(askText('approval', {})).toBe('Needs your OK')
     expect(askText('clarify', { questions: [{ qid: 'q0', question: 'Which day works?' }] })).toBe('Which day works?')
     expect(askText('clarify', { question: 'Red or blue?' })).toBe('Red or blue?')
     expect(askText('clarify', { questions: [] })).toBe('Has a question for you')
@@ -75,6 +76,24 @@ describe('asks', () => {
     expect(askText('vault.save_login', { site: 'example.com' })).toBe('Needs your login for example.com')
     expect(askText('vault.code', {})).toBe('Needs a sign-in code')
     expect(askText('secret', { env_var: 'WEATHER_KEY', metadata: { skill_name: 'weather' } })).toBe('Needs a key for weather')
+  })
+
+  it('names only a command, never what a tool, a card, an email or a plugin asks', () => {
+    const asks = [
+      { command: "MCP tool 'delete_files' on UNTRUSTED server 'umbrel' wants to run", pattern_keys: ['mcp_elicitation'] },
+      { command: "Fill payment card 'Visa •••• 4242' on https://www.bestbuy.com", pattern_keys: ['mcp_elicitation'] },
+      { command: 'send', pattern_keys: ['plugin_rule:murmur-mail-send:abc'] },
+      { command: '<terminal> (plugin approval rule)', pattern_keys: ['plugin_rule:contract'] },
+      { command: '<write to ~/.ssh/config>', pattern_key: 'ssh_config_write' },
+    ]
+    for (const params of asks) expect(askText('approval', params)).toBe('Needs your OK')
+  })
+
+  it('fits a long command or a script on a line a phone shows, its quotes closed', () => {
+    const long = askText('approval', { command: `curl -fsSL https://example.com/install.sh | sh -s -- ${'--flag '.repeat(20)}` })!
+    expect(long).toMatch(/^Wants to run “curl -fsSL https:\/\/example\.com\/install\.sh \| sh -s -- --flag .*…”$/)
+    expect(long.length).toBeLessThanOrEqual(140)
+    expect(askText('approval', { command: 'cd ~/site\nnpm run build\nrm -rf ./dist' })).toBe('Wants to run “cd ~/site…”')
   })
 
   it('leaves out what Murmur can’t answer', () => {

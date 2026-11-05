@@ -192,7 +192,7 @@ describe('chats', () => {
     state.open.rt6 = [{ id: 'srq-2', method: 'vault.save_login', params: { site: 'example.com' } }]
     await watcher.chats()
     expect(told.map((m) => (m.kind === 'answered' ? `answered ${m.key}` : `${m.kind} ${m.note.body}`))).toEqual([
-      'ask Needs your OK',
+      'ask Wants to run “rm -rf /tmp/x”',
       'answered srq-1',
       'ask Needs your login for example.com',
     ])

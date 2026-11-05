@@ -89,12 +89,34 @@ const text = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : und
 const record = (v: unknown) => (v && typeof v === 'object' ? (v as Record<string, unknown>) : {})
 
 /**
- * What Hermes is asking, in a line: a question, an OK, a login. Undefined for
- * requests Murmur can't answer (a terminal read, a theme pick), which aren't
- * the person's to be told about.
+ * The command an approval asks to run, when it's Hermes's own check before a
+ * risky one. Not a connected tool, a saved card, an email or a plugin's rule
+ * (their keys say so, or a stand-in takes the command's place): those need
+ * their card to be understood (src/features/chat/approval-text.ts).
+ */
+function commandAsked(params: Record<string, unknown>): string | undefined {
+  const command = text(params.command)
+  const keys = [params.pattern_key, ...(Array.isArray(params.pattern_keys) ? params.pattern_keys : [])].filter((k) => typeof k === 'string')
+  if (!command || /^<[^<>]+>(?: \([^()]*\))?$/.test(command) || /^MCP tool '/.test(command)) return undefined
+  return keys.some((k) => k === 'mcp_elicitation' || k.startsWith('plugin_rule:')) ? undefined : command
+}
+
+/** "Wants to run “…”": a script by its first line, and clipped inside the quotes, so they still close. */
+function toRun(command: string) {
+  const [first, ...more] = command.split('\n')
+  return `Wants to run “${clip(more.length ? `${first.trimEnd()}…` : command, LIMIT.body - 'Wants to run “”'.length)}”`
+}
+
+/**
+ * What Hermes is asking, in a line: the command it wants to run, a question,
+ * an OK, a login. Undefined for requests Murmur can't answer (a terminal read,
+ * a theme pick), which aren't the person's to be told about.
  */
 export function askText(method: string, params: Record<string, unknown>): string | undefined {
-  if (method === 'approval') return 'Needs your OK'
+  if (method === 'approval') {
+    const command = commandAsked(params)
+    return command ? toRun(command) : 'Needs your OK'
+  }
   if (method === 'clarify') {
     const first = Array.isArray(params.questions) ? record(params.questions[0]).question : params.question
     return clip(text(first) ?? '') || 'Has a question for you'

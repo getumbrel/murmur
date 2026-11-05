@@ -115,7 +115,7 @@ describe('a chat', () => {
     expect(ask).toEqual({
       kind: 'ask',
       key: expect.stringMatching(/^srq-/),
-      note: { title: 'Hermes', body: 'Needs your OK', tag: `murmur:chat:${stored}`, href: `/chat/default/${stored}` },
+      note: { title: 'Hermes', body: 'Wants to run “rm -rf /opt/data/contract-notify”', tag: `murmur:chat:${stored}`, href: `/chat/default/${stored}` },
     })
     // Looked at again, it's the same question: told once.
     await watch.chats()
