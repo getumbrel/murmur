@@ -409,15 +409,16 @@ describe('questions', () => {
     expect(pushes).toHaveLength(2)
   })
 
-  it('wait, like replies, while the person’s still at a device', async () => {
+  it('wait, like replies, while the person’s still at a device, and are never told there twice', async () => {
     await start()
     await register(1)
-    const laptop = await register(2)
-    await beat('t1', { device: laptop, active: false, here: true })
+    const phone = await register(2)
+    await beat('t1', { device: phone, active: false, here: true })
     tell!({ kind: 'ask', key: 'srq-1', note: ask })
     expect(to()).toEqual(['device-2'])
-    await beat('t1', { device: laptop, active: false, here: false })
-    expect(to()).toEqual(['device-2', 'device-1', 'device-2'])
+    // Two minutes on, the phone still shows the question; the person's gone as far as Murmur knows.
+    await beat('t1', { device: phone, active: false, here: false })
+    expect(to()).toEqual(['device-2', 'device-1'])
     expect(pushes.every((p) => p.ttl === 60 * 60)).toBe(true)
   })
 

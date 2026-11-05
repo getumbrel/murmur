@@ -23,7 +23,7 @@ vi.stubGlobal('fetch', async (_url: string, init: { body: string }) => {
 vi.mock('@/hermes/instance', () => ({ tabHermes: () => 'env' }))
 vi.mock('./notifications', () => ({ useNotifications: create(() => ({ device: 'phone' })) }))
 
-const { setCalling, setReplying, setViewing, startPresence } = await import('./presence')
+const { setCalling, setReplying, setViewing, startPresence, touch } = await import('./presence')
 const last = () => said.at(-1)
 const goBehind = () => {
   page.focused = false
@@ -89,6 +89,16 @@ describe('presence', () => {
     expect(last()).toMatchObject({ active: true })
     vi.advanceTimersByTime(91_000)
     expect(last()).toMatchObject({ active: false })
+  })
+
+  it('counts opening it from a notification as a touch, though the tap was outside the page', () => {
+    vi.advanceTimersByTime(3 * 60_000)
+    expect(last()).toMatchObject({ active: false, here: false })
+    // The phone's shade, then Murmur: the question that tapped open is on screen.
+    touch()
+    expect(last()).toMatchObject({ active: true, here: true, viewing: 'murmur:chat:c1' })
+    vi.advanceTimersByTime(121_000)
+    expect(last()).toMatchObject({ active: false, here: false })
   })
 
   it('stays at this device, behind, for two minutes after the last touch, kept fresh meanwhile', () => {

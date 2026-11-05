@@ -16,12 +16,12 @@
 // else the devices the person is at, if they're at any (and, when they're not
 // active anywhere, the others too once they've gone, unless they're back in
 // Murmur first); else every device. A question still open when the person goes
-// away is told to every device then, once. Active is a tab in front, in a
-// focused window, touched in the last two minutes, or one with a call going.
-// At a device is a tab there touched in the last two minutes, in front or not,
-// or with a reply coming in on screen in front of them then, or a call (the
-// app decides both, and says so as they change:
-// src/features/notifications/presence.ts).
+// away is told then to every device that hasn't heard it. Active is a tab in
+// front, in a focused window, touched in the last two minutes (opening it from
+// a notification counts), or one with a call going. At a device is a tab there
+// touched in the last two minutes, in front or not, or with a reply coming in
+// on screen in front of them then, or a call (the app decides both, and says
+// so as they change: src/features/notifications/presence.ts).
 //
 // Devices and Murmur's push keys are kept in DATA_DIR/notifications.json; the
 // notes a device hasn't shown yet, only in memory.
@@ -55,7 +55,8 @@ export type NotifyOptions = {
 type Device = Subscription & { id: string; /** Where its links open. */ origin: string; since: number }
 type Stored = { vapid?: VapidKeys; devices?: Device[]; native?: boolean }
 type Tab = { device?: string; hermes?: string; active: boolean; here: boolean; viewing?: string; at: number }
-type Ask = { note: Note; hermes: string; everyone: boolean }
+/** A question told and not yet answered: who was told it, and whether that was every device. */
+type Ask = { note: Note; hermes: string; told: Set<string>; everyone: boolean }
 /** A note told only where the person was, away from Murmur there, for the others once they've gone: who was told it. */
 type Held = { note: Note; hermes: string; told: Set<string>; at: number }
 /** A note as one device was sent it. */
@@ -145,14 +146,18 @@ export function createNotifications(options: NotifyOptions = {}) {
     return [...tabs.values()]
   }
 
-  /** Someone just went away: questions still open are told everywhere, once, and replies held for the others told them. */
+  /**
+   * Someone just went away: questions still open, and replies held, are told to
+   * the devices that haven't heard them. Never again where they have: a phone
+   * buzzing twice for one question is one Chrome may call spam.
+   */
   function settle() {
     const here = liveTabs().some((t) => t.here)
     if (wasHere && !here) {
       for (const ask of asks.values()) {
         if (ask.everyone) continue
         ask.everyone = true
-        send(ask.note, ask.hermes, everyDevice(), true)
+        send(ask.note, ask.hermes, everyDevice().filter((t) => !ask.told.has(targetId(t))), true)
       }
       const fresh = Date.now() - TTL.note * 1000
       for (const { note, hermes, told, at } of held.values()) {
@@ -228,7 +233,7 @@ export function createNotifications(options: NotifyOptions = {}) {
     }
     const ask = moment.kind === 'ask'
     const heard = audience(moment.note, hermes)
-    if (ask) asks.set(`${hermes}\n${moment.key}`, { note: moment.note, hermes, everyone: heard?.everyone ?? false })
+    if (ask) asks.set(`${hermes}\n${moment.key}`, { note: moment.note, hermes, told: new Set(heard?.to.map(targetId)), everyone: heard?.everyone ?? false })
     // Held while they're at a device but not in Murmur: they may miss it there. Not a question (asks), nor one looked at.
     const key = `${hermes}\n${moment.note.tag}`
     held.delete(key)

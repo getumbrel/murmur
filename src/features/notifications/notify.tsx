@@ -18,7 +18,7 @@ import { HomeScreenSteps, OpenInSafari } from '@/features/home/install-tip'
 import { BellIcon } from '@/ui/icons'
 import { chatTag, groupTag } from '@shared/notes.ts'
 import { isOn, setNotifications, shouldOffer, support, syncNotifications, useNotifications, type Problem } from './notifications'
-import { setCalling, setReplying, setViewing, startPresence } from './presence'
+import { setCalling, setReplying, setViewing, startPresence, touch } from './presence'
 
 /**
  * Where notifications are allowed. The desktop app always reads as allowed to
@@ -121,6 +121,7 @@ export function useNotifier() {
       if (typeof hermes === 'string' && hermes && hermes !== tabHermes()) {
         return window.location.assign(`${href}?${HERMES_PARAM}=${encodeURIComponent(hermes)}`)
       }
+      touch()
       focusWindow()
       latest.current.navigate(href)
     }

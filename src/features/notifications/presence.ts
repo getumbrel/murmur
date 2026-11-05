@@ -1,6 +1,7 @@
 // Where the person is, so Murmur's server knows who to tell (server/notifications.ts).
 // Active: this tab is in front, in a focused window, and was touched in the
-// last two minutes, or has a call going (talking touches nothing, and the
+// last two minutes (opening it from a notification is a touch: the tap was
+// outside the page), or has a call going (talking touches nothing, and the
 // window needn't be in front). Here: the person's at this device, if not in
 // this tab right now: it was touched in the last two minutes, in front or not,
 // or a reply came in on screen in front of them then (watching one touches
@@ -76,7 +77,8 @@ function tell(always = false) {
 
 const state = () => `${active()} ${here()}`
 
-function touch() {
+/** The person did something here: touched the page, or opened it from a notification. */
+export function touch() {
   const was = state()
   touched = Date.now()
   if (state() !== was) tell()
