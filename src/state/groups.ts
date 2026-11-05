@@ -458,8 +458,7 @@ function poll(id: string): Promise<void> {
         void qc?.invalidateQueries({ queryKey: SUMMARIES })
       }
     } catch (e) {
-      const code = (e as { code?: number }).code
-      if (code === 4112 || /not found/i.test(String((e as Error).message))) {
+      if (await isGone(id, e)) {
         patch(id, () => ({ missing: true, loaded: true }))
         stopWatching(id)
       }
@@ -471,6 +470,14 @@ function poll(id: string): Promise<void> {
   })()
   polling.set(id, task)
   return task
+}
+
+/** A room that couldn't be read is gone when Hermes says so (4112, or "not found"), or no longer lists it:
+ *  Hermes 0.22.6 on answers a disbanded room's reads with invalid_params. A list that fails says nothing. */
+async function isGone(id: string, error: unknown) {
+  if ((error as { code?: number }).code === 4112 || /not found/i.test(String((error as Error).message))) return true
+  const listed = await rpc<{ rooms: WireRoom[] }>('groups.list', { limit: 200 }).catch(() => undefined)
+  return !!listed && !listed.rooms.some((r) => r.room_id === id)
 }
 
 const ENDS_TURN = new Set(['message.member', 'turn.settled', 'turn.failed', 'turn.cancelled'])

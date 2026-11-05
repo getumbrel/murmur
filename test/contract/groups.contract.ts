@@ -85,12 +85,13 @@ describe('a group', () => {
     expect((await log()).events.at(-1)).toMatchObject({ kind: 'room.renamed', payload: { name: 'Renamed' } })
   })
 
-  it('is disbanded, and then reads as not found', async () => {
+  it('is disbanded, and then is neither listed nor read', async () => {
     await socket.request('groups.disband', { room_id: room })
+    // Murmur takes a room it can't read for gone once Hermes stops listing it (src/state/groups.ts
+    // isGone): Hermes 0.22.6 on answers a disbanded room's reads with invalid_params, not 4112.
     const { rooms } = await socket.request('groups.list', { limit: 200 })
     expect(rooms.map((r: { room_id: string }) => r.room_id)).not.toContain(room)
-    // Murmur treats code 4112 or "not found" as a room that's gone.
-    const error = await socket.failure('groups.log', { room_id: room, since_seq: 0, limit: 10 })
-    expect(error.code === 4112 || /not found/i.test(error.message)).toBe(true)
+    await socket.failure('groups.log', { room_id: room, since_seq: 0, limit: 10 })
+    await socket.failure('groups.state', { room_id: room })
   })
 })
