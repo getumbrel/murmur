@@ -26,6 +26,7 @@ import { sectionOf, setFolded, useFoldedMap, type Section } from '@/state/sectio
 import { prefetchGroup, useGroupSummaries } from '@/state/groups'
 import { useAccessRequests } from '@/state/access'
 import { RequestCard } from '@/features/access/request-card'
+import { useAgentChatList } from '@/features/agent-page/chats'
 import { cn } from '@/lib/cn'
 import { useGroupRows, type GroupRow } from './groups'
 import { shortTime } from './time'
@@ -479,16 +480,23 @@ function AgentRow({
   // With the open chat listed beneath, the highlight belongs to it rather than the agent.
   const showsChat = useShowsChat(agent.id, expanded, openChatId)
   // On a phone's Home, an agent with several chats opens on the list of them; with one it opens straight
-  // into it. What a routine found, when the row shows it, is one of them: the list gives it a line.
-  const conversations = useAgentChats(roomy ? agent.id : undefined).data?.length ?? 0
+  // into it. They're counted as the list shows them, with a line for each routine that's found something,
+  // so where the row leads doesn't turn on which of them moved last. Two conversations make several by
+  // themselves, so only an agent with fewer reads what its routines found. Till that's known, and in the
+  // sidebar (whose rows fold their chats open), a routine's result the row shows opens itself.
+  const conversations = useAgentChats(roomy ? agent.id : undefined).data
+  const few = conversations && conversations.length < 2
+  const listed = useAgentChatList(few ? agent : undefined).data
+  const chats = few ? listed : conversations
   const routine = agent.lastChat?.routine ? agent.lastChat.id : undefined
+  const one = chats ? (chats.length === 1 ? chats[0].id : undefined) : routine
   const href =
     status.state === 'waiting' && status.chatId
       ? `/chat/${agent.id}/${status.chatId}`
-      : conversations + (routine ? 1 : 0) > 1
+      : chats && chats.length > 1
         ? `/chats/${agent.id}`
-        : routine
-          ? `/chat/${agent.id}/${routine}`
+        : one
+          ? `/chat/${agent.id}/${one}`
           : `/chat/${agent.id}`
   const active = Boolean(status.activity && status.state !== 'idle' && status.state !== 'done')
   const unread = useChatUnread(agent.lastChat?.id, agent.lastChat?.at) && !active
