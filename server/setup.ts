@@ -3,6 +3,7 @@
 //   GET  /murmur/setup   → {decided, umbrel, builtin, found}; ?again=1 looks
 //                          afresh rather than reusing what it found seconds ago
 //   POST /murmur/setup   {use: 'builtin'} | {use: 'found', id, username?, password?}
+//                        | {use: 'found', id, signIn} (a single sign-on, sso.ts)
 //                        → {connection, active, connections, builtin?}, and this
 //                          browser uses it; 422 {…connection} when it couldn't be
 //                          used; 404 when that id is unknown; 409 {error:
@@ -138,7 +139,7 @@ export async function handleSetup(req: http.IncomingMessage, res: http.ServerRes
   let target
   if (body.use === 'builtin') target = await addNamed(res, { builtin: true })
   else if (body.use === 'found')
-    target = await addNamed(res, { found: body.id ?? '', username: body.username, password: body.password })
+    target = await addNamed(res, { found: body.id ?? '', username: body.username, password: body.password, signIn: body.signIn })
   else {
     sendJson(res, 422, { error: 'Choose the built-in Hermes or one Murmur found.' })
     return true

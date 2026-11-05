@@ -23,9 +23,13 @@ const COPY = {
   failed: ['That didn’t go through', 'Head back to Murmur and try again.'],
 }
 
-/** The page the sign-in tab lands on. It closes itself when it can; Murmur's own tab says the rest. */
-export function returnPage(ok: boolean) {
-  const [title, body] = ok ? COPY.ok : COPY.failed
+/**
+ * The page the sign-in tab lands on. It closes itself when it can; Murmur's
+ * own tab says the rest. `next`: what to do after a failure, when Murmur's tab
+ * says why (it's "try again" otherwise).
+ */
+export function returnPage(ok: boolean, next?: string) {
+  const [title, body] = ok ? COPY.ok : [COPY.failed[0], next ?? COPY.failed[1]]
   const mark = ok ? '<path d="M8 12.5l2.6 2.6L16 9.5" />' : '<path d="M12 7.5v5.5" /><path d="M12 16.4v.1" />'
   return `<!doctype html>
 <html lang="en">
@@ -61,8 +65,8 @@ ${ok ? '<script>setTimeout(() => window.close(), 900)</script>' : ''}
 `
 }
 
-export function sendReturnPage(res: http.ServerResponse, ok: boolean) {
-  const html = returnPage(ok)
+export function sendReturnPage(res: http.ServerResponse, ok: boolean, next?: string) {
+  const html = returnPage(ok, next)
   res.writeHead(ok ? 200 : 400, {
     'content-type': 'text/html; charset=utf-8',
     'content-length': Buffer.byteLength(html),

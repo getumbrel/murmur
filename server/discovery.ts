@@ -16,7 +16,7 @@
 
 import { createHash } from 'node:crypto'
 import { isThisComputer, memo, normalizeUrl, setting, UMBREL_HOST } from './config.ts'
-import { createHermes, MIN_HERMES_VERSION, olderThan, type Hermes } from './hermes.ts'
+import { createHermes, MIN_HERMES_VERSION, olderThan, waysIn, type Hermes, type SignIn } from './hermes.ts'
 
 // ── Where to look ───────────────────────────────────────────────────────────
 
@@ -94,23 +94,41 @@ const LOOK_MS = 2500
 /** How long one found Hermes may take, all told. One that's slow to say what's in it is offered without. */
 const FOUND_MS = 4000
 
-export type PublicStatus = { version: string; authRequired: boolean; installId?: string; fromImage?: boolean }
+export type PublicStatus = {
+  version: string
+  authRequired: boolean
+  /** It hands a single sign-on to an app (Hermes's native_pkce flow). */
+  nativeSignIn?: boolean
+  installId?: string
+  fromImage?: boolean
+}
 
 /** Hermes's public status (no credentials sent), or null when it isn't a Hermes that answers. */
 export async function publicStatus(url: string, timeout = PUBLIC_MS): Promise<PublicStatus | null> {
   try {
     const res = await fetch(`${url}/api/status`, { redirect: 'manual', signal: AbortSignal.timeout(timeout) })
-    const body = (await res.json()) as { version?: unknown; auth_required?: unknown; install_id?: unknown; can_update_hermes?: unknown } | null
+    const body = (await res.json()) as { version?: unknown; auth_required?: unknown; auth_flows?: unknown; install_id?: unknown; can_update_hermes?: unknown } | null
     if (!res.ok || typeof body?.version !== 'string' || !('auth_required' in body)) return null
     return {
       version: body.version,
       authRequired: Boolean(body.auth_required),
+      ...(Array.isArray(body.auth_flows) && body.auth_flows.includes('native_pkce') && { nativeSignIn: true }),
       installId: typeof body.install_id === 'string' ? body.install_id : undefined,
       // In a container, where `hermes update` can't apply.
       ...(body.can_update_hermes === false && { fromImage: true }),
     }
   } catch {
     return null
+  }
+}
+
+/** How a Hermes behind a sign-in takes one, from its public provider list. */
+async function signInsAt(url: string, native: boolean): Promise<SignIn[]> {
+  try {
+    const res = await fetch(`${url}/api/auth/providers`, { redirect: 'manual', signal: AbortSignal.timeout(PUBLIC_MS) })
+    return waysIn(res.ok ? await res.json() : null, native)
+  } catch {
+    return ['password']
   }
 }
 
@@ -214,6 +232,8 @@ export type Found = Contents & {
   /** It runs from an image, updated by pulling a newer one. */
   fromImage?: boolean
   needsSignIn?: boolean
+  /** With `needsSignIn`: how it takes one, once asked. */
+  signIns?: SignIn[]
   /** It answered a while ago and doesn't now: what it showed then (see remembered()). */
   away?: boolean
   /** Which Hermes this is (its data folder), to tell the same one at two addresses apart. Never sent to the app. */
@@ -236,8 +256,8 @@ async function look(c: Candidate): Promise<Found | null> {
   }
   if (olderThan(status.version, MIN_HERMES_VERSION))
     Object.assign(found, { outdated: true, minVersion: MIN_HERMES_VERSION, ...(status.fromImage && { fromImage: true }) })
-  // Password-protected: nothing more is sent its way until someone signs in.
-  if (status.authRequired) return { ...found, needsSignIn: true }
+  // Behind a sign-in: nothing more is sent its way until someone signs in, beyond asking how.
+  if (status.authRequired) return { ...found, needsSignIn: true, signIns: await signInsAt(c.url, !!status.nativeSignIn) }
   const hermes = createHermes({ id: c.id, name: c.name, url: c.url, source: 'saved' })
   const described = (async (): Promise<Partial<Found>> => {
     try {

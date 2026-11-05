@@ -56,6 +56,12 @@ export const BUILTIN_NAME = 'Built-in'
 
 export type Credentials = { username: string; password: string }
 
+/**
+ * A single sign-on to a Hermes (sso.ts): what renews it, kept between
+ * restarts. `provider` is Hermes's name for how it signed in.
+ */
+export type Sso = { provider: string; refresh: string }
+
 export type Target = {
   id: string
   name: string
@@ -66,6 +72,8 @@ export type Target = {
    */
   source: 'env' | 'saved' | 'default' | 'builtin'
   credentials?: Credentials
+  /** Signed in with single sign-on. A fresh sign-in also carries its first access token, kept in memory only. */
+  sso?: Sso & { access?: string; expiresAt?: number }
   /** An explicit dashboard session token (HERMES_TOKEN). */
   token?: string
 }
@@ -76,6 +84,7 @@ type SavedConnection = {
   url: string
   username?: string
   password?: string
+  sso?: Sso
   /** The built-in: its place and name. Its address and sign-in always come from the environment. */
   builtin?: true
 }
@@ -194,6 +203,7 @@ const toTarget = (c: SavedConnection): Target => ({
   url: c.url,
   source: 'saved',
   credentials: c.username && c.password ? { username: c.username, password: c.password } : undefined,
+  sso: c.sso?.provider && c.sso.refresh ? { provider: c.sso.provider, refresh: c.sso.refresh } : undefined,
 })
 
 /** Before the built-in, the Hermes Agent app was named "This Umbrel" for the machine; it now goes by its app's name. */
@@ -297,7 +307,7 @@ export function noteSetupSeen(): boolean {
 /** What the person renamed the HERMES_URL Hermes to, if they did (kept after it's no longer pinned). */
 export const managedName = () => read().managedName
 
-export function addTarget(input: { name?: string; url: string; credentials?: Credentials }): Target {
+export function addTarget(input: { name?: string; url: string; credentials?: Credentials; sso?: Sso }): Target {
   const stored = migrated(read())
   const list = stored.connections ?? []
   const names = listTargets().map((t) => t.name)
@@ -307,13 +317,23 @@ export function addTarget(input: { name?: string; url: string; credentials?: Cre
     name: input.name ?? nameFor(input.url, names),
     url: input.url,
     ...input.credentials,
+    ...(input.sso && { sso: keptSso(input.sso) }),
   }
   write({ ...stored, connections: [...list, entry] })
   return toTarget(entry)
 }
 
-/** Rename, or change the address and sign-in. The managed entry can only be renamed. */
-export function updateTarget(id: string, patch: { name?: string; url?: string; credentials?: Credentials | null }) {
+/** Only what renews a sign-in is written down; its access token lives in memory. */
+const keptSso = (sso: Sso): Sso => ({ provider: sso.provider, refresh: sso.refresh })
+
+/**
+ * Rename, or change the address and sign-in. The managed entry can only be
+ * renamed. A password and a single sign-on replace each other; `null` removes one.
+ */
+export function updateTarget(
+  id: string,
+  patch: { name?: string; url?: string; credentials?: Credentials | null; sso?: Sso | null },
+) {
   const stored = migrated(read())
   if (id === ENV_ID && pinned()) {
     if (patch.name) write({ ...stored, managedName: patch.name })
@@ -324,7 +344,8 @@ export function updateTarget(id: string, patch: { name?: string; url?: string; c
     if (c.builtin) return patch.name ? { ...c, name: patch.name } : c
     const next: SavedConnection = { id: c.id, name: patch.name ?? c.name, url: patch.url ?? c.url }
     const credentials = patch.credentials === undefined ? (c.username && c.password ? { username: c.username, password: c.password } : undefined) : patch.credentials
-    return credentials ? { ...next, ...credentials } : next
+    const sso = patch.sso === undefined ? c.sso : patch.sso
+    return { ...next, ...credentials, ...(sso && { sso: keptSso(sso) }) }
   })
   write({ ...stored, connections })
 }

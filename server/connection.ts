@@ -2,6 +2,7 @@
 //
 //   GET    /murmur/connections               → State: every Hermes with its status, and this browser's
 //   POST   /murmur/connections               {name?, url, username?, password?, activate?} → tests, saves
+//                                             {url, signIn}: signed in with single sign-on instead (sso.ts)
 //                                             {found: id, username?, password?, activate?}: one Murmur found (setup.ts)
 //                                             {builtin: true, activate?}: the Hermes that comes with Murmur
 //   PATCH  /murmur/connections/:id           {name} renames; {url, username?, password?} tests, then saves
@@ -34,11 +35,13 @@ import {
   updateTarget,
   UrlError,
   type Credentials,
+  type Sso,
   type Target,
 } from './config.ts'
 import { createHermes, MIN_HERMES_VERSION, type ConnectionInfo, type Hermes } from './hermes.ts'
 import { appendCookie, readCookie, readJson, secure, sendJson } from './http.ts'
 import { candidateById } from './discovery.ts'
+import { takeGrant, type Grant } from './sso.ts'
 
 export const HERMES_COOKIE = 'murmur_hermes'
 export const HERMES_HEADER = 'x-murmur-hermes'
@@ -64,7 +67,14 @@ const find = (id: string | null | undefined) => (id ? targets().find((t) => t.id
 export function instance(target: Target) {
   const { instances } = known()
   let hermes = instances.get(target.id)
-  if (!hermes) instances.set(target.id, (hermes = createHermes(target)))
+  if (!hermes) instances.set(target.id, (hermes = keeping(createHermes(target))))
+  return hermes
+}
+
+/** A saved Hermes keeps its single sign-on's newest refresh token in murmur.json. */
+function keeping(hermes: Hermes) {
+  const { id, source } = hermes.target
+  if (source === 'saved') hermes.keepSignIn((sso: Sso) => updateTarget(id, { sso }))
   return hermes
 }
 
@@ -155,18 +165,34 @@ export type Body = {
   activate?: unknown
   found?: unknown
   builtin?: unknown
+  /** A finished single sign-on (sso.ts), in place of a username and password. */
+  signIn?: unknown
 }
 
-/** What a form describes. A blank password keeps the saved one for the same address and user. */
-function candidate(body: Body, saved?: Target): { url: string; credentials?: Credentials } {
+const SIGN_IN_GONE = 'That sign-in has expired. Sign in again.'
+
+/**
+ * What a form describes. A blank password keeps the saved one for the same
+ * address and user; no sign-in at all keeps a saved single sign-on for the
+ * same address.
+ */
+function candidate(body: Body, saved?: Target): { url: string; credentials?: Credentials; sso?: Grant | Sso } {
   const url = normalizeUrl(body.url)
+  if (body.signIn !== undefined) {
+    const grant = takeGrant(body.signIn, url)
+    if (!grant) throw new SignInGone()
+    return { url, sso: grant }
+  }
   const username = typeof body.username === 'string' ? body.username.trim() : ''
   let password = typeof body.password === 'string' ? body.password : ''
   if (username && !password && saved?.url === url && saved.credentials?.username === username) {
     password = saved.credentials.password
   }
-  return { url, credentials: username && password ? { username, password } : undefined }
+  if (username && password) return { url, credentials: { username, password } }
+  return { url, sso: !username && saved?.url === url && saved.sso ? saved.sso : undefined }
 }
+
+class SignInGone extends Error {}
 
 const urlProblem = (body: Body, error: UrlError): ConnectionInfo => ({
   url: typeof body.url === 'string' ? body.url : '',
@@ -183,6 +209,10 @@ async function trial(res: http.ServerResponse, body: Body, saved?: Target) {
   try {
     next = candidate(body, saved)
   } catch (error) {
+    if (error instanceof SignInGone) {
+      sendJson(res, 422, { ...urlProblem(body, new UrlError(SIGN_IN_GONE)), mode: 'sso', status: 'needs-login' })
+      return null
+    }
     if (!(error instanceof UrlError)) throw error
     sendJson(res, 422, urlProblem(body, error))
     return null
@@ -193,7 +223,11 @@ async function trial(res: http.ServerResponse, body: Body, saved?: Target) {
     return null
   }
   const id = saved?.id ?? 'new'
-  const hermes = createHermes({ id, name: '', url: next.url, source: 'saved', credentials: next.credentials })
+  // Its saved single sign-on, unchanged: asked through the one Hermes that renews it, never a second.
+  const hermes =
+    saved && next.sso && next.sso === saved.sso
+      ? instance(saved)
+      : createHermes({ id, name: '', url: next.url, source: 'saved', credentials: next.credentials, sso: next.sso })
   const info = await hermes.check()
   if (info.status !== 'connected') {
     sendJson(res, 422, { id, name: saved?.name ?? '', ...info })
@@ -212,10 +246,21 @@ async function trial(res: http.ServerResponse, body: Body, saved?: Target) {
 async function add(res: http.ServerResponse, body: Body) {
   const tried = await trial(res, body)
   if (!tried) return null
-  const target = addTarget({ name: cleanName(body.name), url: tried.url, credentials: tried.credentials })
+  const target = addTarget({
+    name: cleanName(body.name),
+    url: tried.url,
+    credentials: tried.credentials,
+    sso: tried.hermes.sso() ?? undefined,
+  })
   reload()
-  known().instances.set(target.id, tried.hermes)
+  known().instances.set(target.id, keepingAs(tried.hermes, target.id))
   return target
+}
+
+/** A trial that became a saved Hermes keeps its sign-in there from now on. */
+function keepingAs(hermes: Hermes, id: string) {
+  hermes.keepSignIn((sso: Sso) => updateTarget(id, { sso }))
+  return hermes
 }
 
 const NOT_FOUND = 'That Hermes isn’t answering anymore.'
@@ -250,9 +295,14 @@ export async function addNamed(res: http.ServerResponse, body: Body): Promise<Ta
 async function update(res: http.ServerResponse, target: Target, body: Body) {
   const tried = await trial(res, body, target)
   if (!tried) return null
-  updateTarget(target.id, { url: tried.url, credentials: tried.credentials ?? null, name: cleanName(body.name) })
+  updateTarget(target.id, {
+    url: tried.url,
+    credentials: tried.credentials ?? null,
+    sso: tried.hermes.sso(),
+    name: cleanName(body.name),
+  })
   reload(target.id)
-  known().instances.set(target.id, tried.hermes)
+  known().instances.set(target.id, keepingAs(tried.hermes, target.id))
   return find(target.id)!
 }
 
@@ -298,7 +348,7 @@ export async function handleConnection(req: http.IncomingMessage, res: http.Serv
     if (req.method === 'PATCH') {
       const body = (await readJson(req).catch(() => ({}))) as Body
       const name = cleanName(body.name)
-      if (body.url === undefined && body.username === undefined && body.password === undefined) {
+      if (body.url === undefined && body.username === undefined && body.password === undefined && body.signIn === undefined) {
         if (!name) return reply(res, 422, { error: 'Give this Hermes a name.' })
         if (target.source === 'default') return reply(res, 409, { error: 'Connect to this Hermes before naming it.' })
         updateTarget(target.id, { name })
@@ -333,8 +383,10 @@ export async function handleConnection(req: http.IncomingMessage, res: http.Serv
   if (path === '/murmur/connection/test' && req.method === 'POST') {
     const body = (await readJson(req).catch(() => ({}))) as Body
     try {
-      const { url, credentials } = candidate(body, target)
-      sendJson(res, 200, { id: target.id, name: target.name, ...(await createHermes({ ...target, source: 'saved', url, credentials, token: undefined }).check()) })
+      const { url, credentials, sso } = candidate({ ...body, signIn: undefined }, target)
+      // A saved single sign-on is only ever renewed by its own Hermes: ask that one.
+      if (sso) return reply(res, 200, await describe(target, true))
+      sendJson(res, 200, { id: target.id, name: target.name, ...(await createHermes({ ...target, source: 'saved', url, credentials, sso: undefined, token: undefined }).check()) })
     } catch (error) {
       if (!(error instanceof UrlError)) throw error
       sendJson(res, 422, urlProblem(body, error))

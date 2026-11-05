@@ -129,3 +129,27 @@ describe('an update from before the choice', () => {
     expect(stored()).toEqual({ managedName: 'Home', setupSeen: true })
   })
 })
+
+describe('a single sign-on', () => {
+  it('is saved as what renews it, never its access token', () => {
+    const sso = { provider: 'self-hosted', refresh: 'rt-1', access: 'at-1', expiresAt: 1 }
+    const t = addTarget({ url: 'https://hermes.example.com', sso })
+    expect(stored().connections[0]).toEqual({ id: t.id, name: 'hermes.example.com', url: 'https://hermes.example.com', sso: { provider: 'self-hosted', refresh: 'rt-1' } })
+    expect(listTargets().find((x) => x.id === t.id)?.sso).toEqual({ provider: 'self-hosted', refresh: 'rt-1' })
+  })
+
+  it('and a password replace each other', () => {
+    const t = addTarget({ url: 'https://hermes.example.com', credentials: { username: 'dasun', password: 'pw' } })
+    updateTarget(t.id, { credentials: null, sso: { provider: 'self-hosted', refresh: 'rt-1' } })
+    expect(stored().connections[0]).not.toHaveProperty('password')
+    expect(stored().connections[0].sso).toEqual({ provider: 'self-hosted', refresh: 'rt-1' })
+
+    // A new refresh token alone keeps everything else.
+    updateTarget(t.id, { sso: { provider: 'self-hosted', refresh: 'rt-2' } })
+    expect(stored().connections[0]).toMatchObject({ name: 'hermes.example.com', sso: { refresh: 'rt-2' } })
+
+    updateTarget(t.id, { credentials: { username: 'dasun', password: 'pw' }, sso: null })
+    expect(stored().connections[0]).toMatchObject({ username: 'dasun', password: 'pw' })
+    expect(stored().connections[0]).not.toHaveProperty('sso')
+  })
+})

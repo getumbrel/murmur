@@ -4,7 +4,7 @@
 //
 //   GET  /murmur/setup[?again=1]                        → Setup (again: look afresh, not what it found seconds ago)
 //   POST /murmur/setup  {use: 'builtin'}                → Chosen (200)
-//   POST /murmur/setup  {use: 'found', id, username?, password?}
+//   POST /murmur/setup  {use: 'found', id, username?, password?} or {use: 'found', id, signIn}
 //        → Chosen (200); 422 {connection} it couldn't use (needs-login,
 //          bad-login, unreachable, outdated, with a friendly `error`);
 //          404 {error: 'not_found'} when that id isn't found anymore;
@@ -41,6 +41,7 @@ import {
   type HermesConnection,
   type HermesList,
   type KnownHermes,
+  type SignInWay,
 } from '@/state/connection'
 
 // ── The answer ──────────────────────────────────────────────────────────────
@@ -98,8 +99,10 @@ export type FoundHermes = {
   minVersion?: string
   /** It runs from an image (Docker): updated by pulling a newer one, not with `hermes update`. */
   fromImage?: boolean
-  /** Password-protected: Murmur sent it nothing; choosing it takes a username and password. */
+  /** Behind a sign-in: Murmur sent it nothing; choosing it takes a username and password, or single sign-on. */
   needsSignIn?: boolean
+  /** With `needsSignIn`: how it takes one. */
+  signIns?: SignInWay[]
   /**
    * It answered a while ago and doesn't now, most often because it's being
    * updated: the rest is what it showed then. Shown, but it can't be chosen
@@ -191,7 +194,8 @@ export function useLookAgain() {
 
 // ── Choosing ────────────────────────────────────────────────────────────────
 
-export type Choice = { use: 'builtin' } | { use: 'found'; id: string; username?: string; password?: string }
+/** `signIn`: a finished single sign-on (state/sign-in.ts), in place of a username and password. */
+export type Choice = { use: 'builtin' } | { use: 'found'; id: string; username?: string; password?: string; signIn?: string }
 
 export type ChoiceResult =
   /** Chosen. `connection.status` is not 'connected' while the built-in is still starting. */

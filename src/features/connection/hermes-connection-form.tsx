@@ -11,15 +11,20 @@ import { cn } from '@/lib/cn'
 import { ask } from '@/features/settings/ask'
 import { useQuery } from '@tanstack/react-query'
 import { useHermesConnection, type ConnectionRequest, type HermesConnection } from '@/state/connection'
+import { looksFinished, useSsoSignIn } from '@/state/sign-in'
 import { BUILTIN_ID, fetchSetup, setupKey } from '@/state/setup'
 import { BackPill, STEP_COLUMN, StepHeader } from '@/features/onboarding/step'
 import { BrandHeader } from './brand-header'
 import { Field, Note, PasswordField, StatusDot } from './fields'
 import { NearbyList, placeOf, useNearbyHermes, type NearbyHermes } from './nearby'
+import { SsoSteps } from './sso-steps'
 
 // "Connect to Hermes": where a standalone Murmur learns which Hermes to use.
 // Type an address, Murmur checks it as you leave the field (and opens the
 // password fields if that Hermes has one), then Connect tests and saves.
+// A Hermes behind single sign-on turns Connect into "Continue with SSO": the
+// sign-in opens in a tab (the browser, on desktop) and either comes back by
+// itself or ends on a page whose address is pasted here (state/sign-in.ts).
 // A Hermes set by the environment, or built into Murmur, shows a read-only
 // card instead. In onboarding (`step`) it wears the steps' chrome, and what
 // Murmur's server found on its own is offered first.
@@ -129,11 +134,21 @@ export function HermesConnectionFormView({
   const nearby = [...serverFound, ...looked.filter((n) => !serverFound.some((f) => placeOf(f.url) === placeOf(n.url)))]
   // The one picked from that list, while it connects.
   const [picked, setPicked] = useState<string>()
+  // Signing in with single sign-on: once it worked, connect with it as with a password.
+  const sso = useSsoSignIn((signIn) => void connect({ url: url.trim(), signIn }))
+  const [pasted, setPasted] = useState('')
+  const signingIn = sso.phase.step !== 'idle'
 
   // Has the person changed anything since the last answer?
   const unchanged = !!known && known.status === 'connected' && sameUrl(url, known.url) && username === (known.username ?? '') && !password
   const status = result?.status
   const savedPassword = !!known?.username && sameUrl(url, known.url) && username === known.username
+  // How this address's Hermes lets people in: the last answer for it, else what's known of the saved one.
+  const facts = result ?? (known && sameUrl(url, known.url) ? known : undefined)
+  const offersSso = !!facts?.signIns?.includes('sso') || facts?.mode === 'sso'
+  const offersPassword = !facts?.signIns || facts.signIns.includes('password')
+  // Single sign-on leads; a username typed into the password fields takes over.
+  const viaSso = offersSso && !(offersPassword && showAuth && username.trim())
 
   const reveal = (focus: 'username' | 'password') => {
     setShowAuth(true)
@@ -152,7 +167,7 @@ export function HermesConnectionFormView({
       // Leaving the field only opens doors; problems wait until Connect.
       if (answer.status === 'needs-login') {
         setResult(answer)
-        if (!showAuth) reveal('username')
+        if (!showAuth && wantsPassword(answer)) reveal('username')
       } else setResult(answer.status === 'connected' ? answer : undefined)
     } catch {
       // Quiet: Connect will say what's wrong.
@@ -165,7 +180,19 @@ export function HermesConnectionFormView({
     e.preventDefault()
     if (!url.trim() || phase !== 'idle') return
     setPicked(undefined)
+    if (sso.phase.step === 'waiting') return void (sso.phase.returns === 'paste' && pasted.trim() && sso.paste(pasted))
+    if (signingIn) return
+    if (viaSso) {
+      setPasted('')
+      return void sso.start({ url: url.trim() })
+    }
     void connect({ url: url.trim(), ...(showAuth && username.trim() ? { username: username.trim(), password } : {}) })
+  }
+
+  /** The address the sign-in ended on: it goes as soon as it looks like one. */
+  const onPaste = (text: string) => {
+    setPasted(text)
+    if (looksFinished(text)) void sso.paste(text)
   }
 
   /** Something found nearby: straight in, or to the sign-in fields when it has a password. */
@@ -186,7 +213,7 @@ export function HermesConnectionFormView({
     }
     setPicked(undefined)
     setResult(n.connection)
-    reveal('username')
+    if (wantsPassword(n.connection)) reveal('username')
   }
 
   const connect = async (req: ConnectionRequest, via?: () => Promise<HermesConnection>) => {
@@ -200,6 +227,11 @@ export function HermesConnectionFormView({
     }
     // A Hermes chosen by id keeps its address out of the field, whatever the answer.
     if (via) answer = { ...answer, url: url }
+    // A sign-in that worked but didn't connect: say why where the sign-in starts again.
+    if (req.signIn && answer.status !== 'connected') {
+      setPhase('idle')
+      return sso.report(answer.error)
+    }
     setResult(answer)
     if (answer.status === 'connected') {
       setPhase('connected')
@@ -211,7 +243,9 @@ export function HermesConnectionFormView({
     }
     setPhase('idle')
     setPicked(undefined)
-    if (answer.status === 'needs-login') reveal(username.trim() ? 'password' : 'username')
+    // Opened only on the way to a password: one the Hermes asks for, or one being typed.
+    if (answer.status === 'needs-login' && (wantsPassword(answer) || !!req.username))
+      reveal(req.username ? 'password' : 'username')
     if (answer.status === 'bad-login') passwordRef.current?.select()
   }
 
@@ -228,6 +262,8 @@ export function HermesConnectionFormView({
   const edit = (set: (v: string) => void, field: 'url' | 'auth') => (v: string) => {
     set(v)
     if (field === 'url') probed.current = undefined
+    // A sign-in under way is for the address as it was.
+    if (field === 'url' && signingIn) sso.cancel()
     // A fresh edit clears the complaint about the old value.
     if (result && result.status !== 'connected' && (field === 'url' ? result.status === 'unreachable' : result.status === 'bad-login')) {
       setResult(undefined)
@@ -239,6 +275,14 @@ export function HermesConnectionFormView({
   const authError = status === 'bad-login' ? result?.error : undefined
   // needs-login normally just opens the fields; anything else it says is worth showing.
   const unsupported = status === 'needs-login' && result?.mode === 'password' && result.error && !/username and password\.$/.test(result.error) ? result.error : undefined
+  // Under the address, for a Hermes behind single sign-on: why the last sign-in didn't work, else what it is.
+  const ssoNote: { tone: 'quiet' | 'danger'; text: string } | undefined =
+    sso.phase.step === 'idle' && sso.phase.error
+      ? { tone: 'danger', text: sso.phase.error }
+      : !signingIn && offersSso && !offersPassword && facts?.status === 'needs-login'
+        ? // Picked from what Murmur found, there's no answer yet to say it.
+          { tone: 'quiet', text: facts.error ?? 'This Hermes signs in with single sign-on.' }
+        : undefined
 
   // Baseline-aligned, so the words (not the dot's box) sit on the label's baseline.
   const hint = probing ? (
@@ -255,11 +299,27 @@ export function HermesConnectionFormView({
     </span>
   ) : undefined
 
+  const waiting = sso.phase.step === 'waiting' ? sso.phase : undefined
+  const label =
+    phase === 'connected'
+      ? 'Connected'
+      : waiting?.returns === 'paste'
+        ? 'Finish signing in'
+        : viaSso || signingIn
+          ? 'Continue with SSO'
+          : 'Connect'
   const button = (
-    <Button type="submit" size="lg" variant="accent" loading={phase === 'connecting'} disabled={!url.trim() || (unchanged && phase === 'idle')} className={cn(phase === 'connected' && 'bg-success! text-accent-ink! opacity-100!')}>
+    <Button
+      type="submit"
+      size="lg"
+      variant="accent"
+      loading={phase === 'connecting' || sso.phase.step === 'opening' || waiting?.returns === 'here' || !!waiting?.checking}
+      disabled={!url.trim() || (unchanged && phase === 'idle' && !signingIn) || (waiting?.returns === 'paste' && !pasted.trim())}
+      className={cn(phase === 'connected' && 'bg-success! text-accent-ink! opacity-100!')}
+    >
       <AnimatePresence mode="popLayout" initial={false}>
         <motion.span
-          key={phase === 'connected' ? 'done' : 'connect'}
+          key={label}
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
           exit={{ opacity: 0, scale: 0.9 }}
@@ -271,7 +331,7 @@ export function HermesConnectionFormView({
               <Check size={18} strokeWidth={2.5} /> Connected
             </>
           ) : (
-            'Connect'
+            label
           )}
         </motion.span>
       </AnimatePresence>
@@ -297,57 +357,63 @@ export function HermesConnectionFormView({
           aria-label="Hermes address"
           invalid={!!urlError}
         />
-        <Note tone="danger">{urlError}</Note>
+        <Note tone={ssoNote?.tone ?? 'danger'}>{urlError ?? ssoNote?.text}</Note>
       </div>
 
-      <div className="mt-5">
-        <button
-          type="button"
-          onClick={() => (showAuth ? setShowAuth(false) : reveal('username'))}
-          aria-expanded={showAuth}
-          // px-4: the words start on the Label line above, like every label.
-          className="pressable flex min-h-11 items-center gap-1.5 rounded-md px-4 text-subhead text-ink-2 select-none hover:text-ink active:text-ink"
-        >
-          This Hermes needs a password
-          <ChevronDown size={16} className={cn('transition-transform duration-300 ease-[var(--ease-out)]', showAuth && 'rotate-180')} />
-        </button>
-        <AnimatePresence initial={false}>
-          {showAuth && (
-            <motion.div
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: 'auto', opacity: 1 }}
-              exit={{ height: 0, opacity: 0, transition: { duration: 0.26, ease: [0.32, 0.72, 0, 1] } }}
-              transition={{ duration: 0.34, ease: [0.32, 0.72, 0, 1] }}
-              className="-mx-1 overflow-hidden px-1"
-            >
-              <div className="space-y-3 pt-2 pb-1">
-                <Field
-                  ref={usernameRef}
-                  value={username}
-                  onChange={(e) => edit(setUsername, 'auth')(e.target.value)}
-                  placeholder="Username"
-                  aria-label="Username"
-                  autoComplete="username"
-                  autoCapitalize="off"
-                  autoCorrect="off"
-                  spellCheck={false}
-                  invalid={!!authError}
-                />
-                <PasswordField
-                  ref={passwordRef}
-                  value={password}
-                  onChange={(e) => edit(setPassword, 'auth')(e.target.value)}
-                  placeholder={savedPassword ? 'Saved' : 'Password'}
-                  aria-label="Password"
-                  autoComplete="current-password"
-                  invalid={!!authError}
-                />
-              </div>
-              <Note tone={authError || unsupported ? 'danger' : 'quiet'}>{authError ?? unsupported ?? 'Murmur keeps this password on its server, never in your browser.'}</Note>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
+      <AnimatePresence initial={false} mode="popLayout">
+        {sso.phase.step !== 'idle' && <SsoSteps key="sso" phase={sso.phase} pasted={pasted} onPaste={onPaste} onCancel={sso.cancel} />}
+      </AnimatePresence>
+
+      {!signingIn && (offersPassword || !offersSso) && (
+        <div className="mt-5">
+          <button
+            type="button"
+            onClick={() => (showAuth ? setShowAuth(false) : reveal('username'))}
+            aria-expanded={showAuth}
+            // px-4: the words start on the Label line above, like every label.
+            className="pressable flex min-h-11 items-center gap-1.5 rounded-md px-4 text-subhead text-ink-2 select-none hover:text-ink active:text-ink"
+          >
+            {offersSso ? 'Use a password instead' : 'This Hermes needs a password'}
+            <ChevronDown size={16} className={cn('transition-transform duration-300 ease-[var(--ease-out)]', showAuth && 'rotate-180')} />
+          </button>
+          <AnimatePresence initial={false}>
+            {showAuth && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0, transition: { duration: 0.26, ease: [0.32, 0.72, 0, 1] } }}
+                transition={{ duration: 0.34, ease: [0.32, 0.72, 0, 1] }}
+                className="-mx-1 overflow-hidden px-1"
+              >
+                <div className="space-y-3 pt-2 pb-1">
+                  <Field
+                    ref={usernameRef}
+                    value={username}
+                    onChange={(e) => edit(setUsername, 'auth')(e.target.value)}
+                    placeholder="Username"
+                    aria-label="Username"
+                    autoComplete="username"
+                    autoCapitalize="off"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    invalid={!!authError}
+                  />
+                  <PasswordField
+                    ref={passwordRef}
+                    value={password}
+                    onChange={(e) => edit(setPassword, 'auth')(e.target.value)}
+                    placeholder={savedPassword ? 'Saved' : 'Password'}
+                    aria-label="Password"
+                    autoComplete="current-password"
+                    invalid={!!authError}
+                  />
+                </div>
+                <Note tone={authError || unsupported ? 'danger' : 'quiet'}>{authError ?? unsupported ?? 'Murmur keeps this password on its server, never in your browser.'}</Note>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      )}
     </>
   )
 
@@ -539,6 +605,11 @@ export function ManagedHermes({ connection: c, starting }: { connection: HermesC
       }
     />
   )
+}
+
+/** Whether a Hermes's answer leads to its password fields: it takes a password, and not single sign-on too. */
+function wantsPassword(c: Pick<HermesConnection, 'signIns'>) {
+  return !c.signIns || (c.signIns.includes('password') && !c.signIns.includes('sso'))
 }
 
 function hostOf(url: string) {

@@ -13,7 +13,12 @@ import { hermesHeaders, SESSION_CHECK } from '@/hermes/rest'
 import { stopGateway } from '@/hermes/gateway'
 import { adoptHermes, browserHermes, forgetForEveryHermes, forgetHermesStorage, HERMES_GONE, tabHermes } from '@/hermes/instance'
 
-export type ConnectionMode = 'token' | 'password' | 'unknown'
+export type ConnectionMode = 'token' | 'password' | 'sso' | 'unknown'
+/** How a Hermes behind a sign-in lets people in: a password, single sign-on, or both. */
+export type SignInWay = 'password' | 'sso'
+
+/** A Hermes that signs in with single sign-on and nothing else. */
+export const ssoOnly = (ways?: SignInWay[]) => !!ways?.includes('sso') && !ways.includes('password')
 export type ConnectionStatus = 'connected' | 'unreachable' | 'needs-login' | 'bad-login'
 
 export type HermesConnection = {
@@ -36,6 +41,8 @@ export type HermesConnection = {
   fromImage?: boolean
   /** Who Murmur signs in as, when this Hermes has a password. */
   username?: string
+  /** What a Hermes behind a sign-in accepts, once Murmur has asked it. */
+  signIns?: SignInWay[]
   /** Friendly, ready to show. */
   error?: string
 }
@@ -44,7 +51,8 @@ export type HermesConnection = {
 export type KnownHermes = HermesConnection & { id: string; name: string }
 export type HermesList = { active: string; connections: KnownHermes[] }
 
-export type ConnectionRequest = { url: string; username?: string; password?: string }
+/** `signIn`: a finished single sign-on (state/sign-in.ts), in place of a username and password. */
+export type ConnectionRequest = { url: string; username?: string; password?: string; signIn?: string }
 
 // Where should your agents live (the built-in, or a Hermes Murmur found): state/setup.ts.
 

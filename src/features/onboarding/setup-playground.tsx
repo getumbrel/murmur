@@ -11,7 +11,7 @@ import { WhereStep } from './where'
 
 // The setup flow's screens for the onboarding playground, all fake:
 //   ?screen=where&case=looking | found | found-many | found-fresh | found-network | outdated | updating
-//                    | away | signin | signin-error | fresh | fresh-down | down-row | none | other
+//                    | away | signin | signin-error | signin-sso | fresh | fresh-down | down-row | none | other
 //                    | cant-reach | connecting | connected
 //   ?screen=ready&stage=starting | room | slow | stuck | failed | done
 //   ?screen=here&agents=1..9&chats=0|1|240
@@ -109,6 +109,8 @@ const CASES: Record<string, Setup | undefined> = {
   away: { decided: false, umbrel: true, builtin: ready, found: [agentApp({ away: true })] },
   signin: { decided: false, umbrel: false, builtin: ready, found: [studio] },
   'signin-error': { decided: false, umbrel: false, builtin: ready, found: [studio] },
+  // Continue with SSO opens a real sign-in on the dev server, so it only goes further with one running.
+  'signin-sso': { decided: false, umbrel: false, builtin: ready, found: [{ ...studio, signIns: ['sso'] }] },
   fresh: { decided: false, umbrel: true, builtin: ready, found: [] },
   'fresh-down': { decided: false, umbrel: true, builtin: { ...ready, state: 'unreachable' }, found: [] },
   'down-row': { decided: false, umbrel: true, builtin: { ...ready, state: 'unreachable' }, found: [agentApp()] },
@@ -168,7 +170,7 @@ export function SetupPlayground({ screen }: { screen: 'where' | 'ready' | 'here'
       return { ok: true, connection: c, active: c.id, connections: [c] }
     }
     const f = setup?.found.find((x) => x.id === choice.id)
-    if (f?.needsSignIn && (choice.username !== 'murmur' || choice.password !== 'hunter2')) {
+    if (f?.needsSignIn && !choice.signIn && (choice.username !== 'murmur' || choice.password !== 'hunter2')) {
       return { ok: false, reason: 'failed', connection: { ...connection({}), status: 'bad-login' } }
     }
     const c = connection({ name: f?.name ?? 'Hermes Agent' })

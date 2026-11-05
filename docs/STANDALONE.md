@@ -58,6 +58,7 @@ Murmur works out how to sign in by reading Hermes's public `/api/status`.
 |---|---|
 | `hermes dashboard` on the **same computer** (it listens on 127.0.0.1 by default) | Reads the dashboard's session key from its page. Nothing to type except the address, e.g. `http://localhost:9119`. |
 | A dashboard on **another computer** (`--host 0.0.0.0`) | Hermes requires a sign-in for this. Turn on its built-in password sign-in, then enter the same username and password in Murmur. |
+| A dashboard behind **single sign-on** (Authentik, Keycloak, Zitadel, Authelia…) | Murmur offers **Continue with SSO** and signs in the way Hermes Desktop does. See [Single sign-on](#single-sign-on). |
 | You already have the dashboard's session key | Set `HERMES_TOKEN`. Hermes makes a new key every time it starts unless you set `HERMES_DASHBOARD_SESSION_TOKEN` on it, so this mostly suits fixed setups. |
 
 To turn on Hermes's password sign-in (bundled with Hermes, no extra service needed):
@@ -71,6 +72,29 @@ hermes dashboard --host 0.0.0.0 --port 9119
 The Hermes Docker image does the same with `HERMES_DASHBOARD=1` plus those two variables.
 
 With a password, Murmur signs in once and keeps the short-lived access token in memory. It renews the token the way Hermes Desktop does (`/auth/native/refresh`) and asks for a new single-use ticket for every live connection. If Hermes restarts and forgets its sessions, Murmur signs in again on its own. You don't need to, but setting `HERMES_DASHBOARD_BASIC_AUTH_SECRET` on Hermes keeps its sessions alive across restarts.
+
+### Single sign-on
+
+Hermes can put its dashboard behind your own OpenID Connect provider. Murmur signs in to it with Hermes's sign-in for apps (the one Hermes Desktop uses: OAuth with PKCE, RFC 8252), so the provider's page opens in a browser tab and Murmur's server keeps what comes back. Set Hermes up like this (Authentik shown; any OIDC provider works):
+
+```sh
+HERMES_DASHBOARD_OIDC_ISSUER=https://auth.example.com/application/o/hermes/ \
+HERMES_DASHBOARD_OIDC_CLIENT_ID=hermes \
+HERMES_DASHBOARD_OIDC_SCOPES='openid profile email offline_access' \
+HERMES_DASHBOARD_PUBLIC_URL=https://hermes.example.com \
+hermes dashboard --host 0.0.0.0 --port 9119
+```
+
+- In the provider, give the application the redirect URI `https://hermes.example.com/auth/callback` (Hermes's own address, not Murmur's). A confidential client also needs `HERMES_DASHBOARD_OIDC_CLIENT_SECRET`.
+- `offline_access` is what makes Authentik hand out a refresh token, so Murmur can keep you signed in (in Authentik, the provider also needs the `offline_access` scope mapping). Without one Hermes's sign-in only lasts minutes, and Murmur says to add it. Keycloak hands one out without it.
+- The issuer must be HTTPS (or `http://127.0.0.1`). Set `HERMES_DASHBOARD_PUBLIC_URL` to the address your browser opens Hermes at. Murmur opens the sign-in there, even when it reaches Hermes some other way (a container's name, say).
+
+Then type Hermes's address in Murmur and choose **Continue with SSO**. Hermes only ever sends an app's sign-in back to the computer the browser runs on (`http://127.0.0.1`), so how it finishes depends on where you are:
+
+- **On the computer Murmur runs on** (the desktop app, or Murmur at `localhost`): it comes straight back, and Murmur carries on by itself.
+- **Anywhere else** (a phone, Murmur on a server or on umbrelOS): the sign-in ends on a page that can't load, at an address starting with `http://127.0.0.1/murmur/sign-in/return?code=…`. Copy that address and paste it into Murmur within two minutes. The code in it is useless to anyone else: it only works with a secret that never leaves Murmur's server, and only once.
+
+Murmur keeps the refresh token on its server (`murmur.json`) and the short-lived access token in memory, renewing it as it does with a password. When the provider ends the session (you signed out everywhere, or an admin revoked it), Murmur asks you to sign in again, from the same screen.
 
 **Murmur in Docker, Hermes on the same machine.** Inside a container, `localhost` means the container itself. Use `http://host.docker.internal:9119` on macOS and Windows. On Linux, run Murmur with `--network host`. A dashboard bound to 127.0.0.1 only accepts connections from its own machine, so that is the only way to reach it without a password.
 
@@ -94,13 +118,13 @@ Anyone who can open Murmur can talk to your agents, and through them, to whateve
 -e MURMUR_PASSWORD='something long'
 ```
 
-With it set, Murmur shows a sign-in screen. Hermes, the live connection and Murmur's settings API all need a signed, HttpOnly, SameSite=Lax cookie, which lasts 30 days. Changing the password signs everyone out. Sign-in attempts are limited to 10 every 10 minutes per address. The web app's static files stay public: they hold no secrets and are needed to draw the sign-in screen. So does one Hermes address, `GET /hermes/api/mcp/oauth/callback/<app>`, where an app (Notion, Linear…) sends the browser back after someone signs in to it for an agent: that often happens in another browser, without Murmur's cookie. Hermes keeps it public too and accepts only the one-time state it issued, and Murmur passes on nothing but the address.
+With it set, Murmur shows a sign-in screen. Hermes, the live connection and Murmur's settings API all need a signed, HttpOnly, SameSite=Lax cookie, which lasts 30 days. Changing the password signs everyone out. Sign-in attempts are limited to 10 every 10 minutes per address. The web app's static files stay public: they hold no secrets and are needed to draw the sign-in screen. So does one Hermes address, `GET /hermes/api/mcp/oauth/callback/<app>`, where an app (Notion, Linear…) sends the browser back after someone signs in to it for an agent: that often happens in another browser, without Murmur's cookie. Hermes keeps it public too and accepts only the one-time state it issued, and Murmur passes on nothing but the address. Murmur's own `GET /murmur/sign-in/return` is public for the same reason: it's where a [single sign-on](#single-sign-on) to Hermes comes back, and it only finishes a sign-in Murmur started, named by its one-time state.
 
 More protections are always on:
 
 - **No cross-site use.** Requests to Hermes and settings changes must come from Murmur's own page. A browser's `Origin` has to match the host it reached, or `X-Forwarded-Host`, or both have to be loopback. Without this, any website you visit could open Murmur's WebSocket. If a reverse proxy rewrites `Host`, list the public origin in `MURMUR_ALLOWED_ORIGINS`.
 - **Only names you trust.** Murmur answers only to IP addresses, `localhost`, single-label names like `nas`, `*.local`, Tailscale `*.ts.net` names, and the names you list. This stops DNS rebinding, where a website points its own name at your computer to get around the check above. If you reach Murmur at a domain of your own (`murmur.example.com`), add it to `MURMUR_ALLOWED_HOSTS` or `MURMUR_ALLOWED_ORIGINS`. Otherwise Murmur answers `403` and says so.
-- **Credentials stay server-side.** The browser never sees the Hermes password, token, access token or tickets. Murmur only passes on Hermes's API (`/hermes/api/*`), never its pages, which carry the token. It strips cookies, `Authorization` and forwarding headers from browser requests before passing them to Hermes.
+- **Credentials stay server-side.** The browser never sees the Hermes password, token, access token, refresh token or tickets. Murmur only passes on Hermes's API (`/hermes/api/*`), never its pages, which carry the token. It strips cookies, `Authorization` and forwarding headers from browser requests before passing them to Hermes.
 - **No framing.** Murmur's pages can't be put inside another site's frame, so nobody can trick a click onto an approval.
 
 For access from outside your home network, put Murmur behind HTTPS (Caddy, Tailscale Serve, a Cloudflare tunnel) rather than exposing port 3000. Murmur marks its cookie `Secure` when the request arrived over HTTPS (`X-Forwarded-Proto: https`).
@@ -109,7 +133,7 @@ For access from outside your home network, put Murmur behind HTTPS (Caddy, Tails
 
 `DATA_DIR/murmur.json` (mode 0600, in a 0700 directory) holds:
 
-- each Hermes added in the app: an id, its name, its address and, if it has one, its username and password. Murmur keeps the password so it can sign in again after Hermes restarts. (A file from before multiple Hermes, with a single `hermes` entry, is moved into this list the first time Murmur reads it.)
+- each Hermes added in the app: an id, its name, its address and, if it has one, its username and password, or for single sign-on the provider's name and refresh token. Murmur keeps the password so it can sign in again after Hermes restarts, and the refresh token so a single sign-on outlives Murmur's. (A file from before multiple Hermes, with a single `hermes` entry, is moved into this list the first time Murmur reads it.)
 - the built-in Hermes, once chosen or added: its place in the list and its name. Its address and password always come from the environment.
 - a new name for the `HERMES_URL` Hermes, if you renamed it.
 - the secret that signs Murmur's own cookie, unless you set `MURMUR_SECRET`.
@@ -146,16 +170,20 @@ Every response is JSON with `cache-control: no-store`. Changes need a same-origi
 | Endpoint | Body | Answer |
 |---|---|---|
 | `GET /murmur/setup` | `?again=1` to look afresh | `Setup`: whether a Hermes is chosen yet, the built-in's state, and the Hermes Murmur found that it doesn't have. What it found is reused for a few seconds unless `again` is set ("Check again"). |
-| `POST /murmur/setup` | `{use: 'builtin'}` or `{use: 'found', id, username?, password?}` | Makes it this Murmur's Hermes and this browser's: `{connection, active, connections}`. `422` with the `Connection` if it can't be used, `404` for an unknown `id`, `409 {error: 'decided', active, connections}` once a Hermes is chosen. |
+| `POST /murmur/setup` | `{use: 'builtin'}` or `{use: 'found', id, username?, password?}` or `{use: 'found', id, signIn}` | Makes it this Murmur's Hermes and this browser's: `{connection, active, connections}`. `422` with the `Connection` if it can't be used, `404` for an unknown `id`, `409 {error: 'decided', active, connections}` once a Hermes is chosen. |
 | `GET /murmur/connections` | | `{active, connections: Connection[]}`: each Hermes with its status (checked, or from the last 10 seconds), and the one this browser uses. |
-| `POST /murmur/connections` | `{url, username?, password?, name?, activate?}`, or `{found: id, username?, password?}`, or `{builtin: true}` | Tests, then saves: `{connection, active, connections}`. `422` with the `Connection` if it can't connect, `409 {error}` if it's already added. `activate: true` also switches this browser to it. A found Hermes is named by its id from `GET /murmur/setup`, so the address a sign-in goes to is always the server's. |
-| `PATCH /murmur/connections/:id` | `{name}` or `{url, username?, password?}` | Renames, or tests and then saves a new address or sign-in (its live sockets close and reconnect). A blank password keeps the saved one for the same address and username. The `HERMES_URL` one can only be renamed (`409`). |
+| `POST /murmur/connections` | `{url, username?, password?, name?, activate?}`, or `{url, signIn, name?, activate?}`, or `{found: id, username?, password?}` or `{found: id, signIn}`, or `{builtin: true}` | Tests, then saves: `{connection, active, connections}`. `422` with the `Connection` if it can't connect, `409 {error}` if it's already added. `activate: true` also switches this browser to it. A found Hermes is named by its id from `GET /murmur/setup`, so the address a sign-in goes to is always the server's. |
+| `PATCH /murmur/connections/:id` | `{name}` or `{url, username?, password?}` or `{url, signIn}` | Renames, or tests and then saves a new address or sign-in (its live sockets close and reconnect). A blank password keeps the saved one for the same address and username, and no sign-in at all keeps a saved single sign-on for the same address. The `HERMES_URL` one can only be renamed (`409`). |
 | `DELETE /murmur/connections/:id` | | Forgets it and closes its sockets: `{active, connections}`. A browser that was using it moves to the first. `409` for the `HERMES_URL` one and the built-in. |
 | `POST /murmur/connections/:id/activate` | | This browser uses it from now on (sets the cookie): `{active, connections}`. |
 | `GET /murmur/connection` | | The `Connection` for this request's Hermes. |
 | `POST /murmur/connection/test` | `{url, username?, password?}` | A `Connection` for that address. Nothing is saved. |
-| `PUT /murmur/connection` | `{url, username?, password?}` | Tests, then saves this request's Hermes (on a first run, adds one). `422` with the `Connection` if it can't connect; `409` for the `HERMES_URL` one. |
+| `PUT /murmur/connection` | `{url, username?, password?}` or `{url, signIn}` | Tests, then saves this request's Hermes (on a first run, adds one). `422` with the `Connection` if it can't connect; `409` for the `HERMES_URL` one. |
 | `DELETE /murmur/connection` | | Forgets this request's Hermes and returns the first one's `Connection`. |
+| `POST /murmur/sign-in` | `{url}` or `{found: id}` | Starts a single sign-on to that Hermes: `{id, address, returns}`. The browser opens `address`. `returns` is `'here'` when it will come back to this server by itself, `'paste'` when the address it ends on is to be pasted. `422 {error}` when that Hermes doesn't sign in that way. |
+| `POST /murmur/sign-in/:id` | `{address}` | Finishes it with the pasted address: `{status: 'ready'}`, or `422 {status: 'waiting', error}` when that isn't this sign-in's end, or `422 {status: 'failed', error}` when it can't finish (start again). |
+| `GET /murmur/sign-in/:id` | | `{status: 'waiting' \| 'ready' \| 'failed', error?}`. Once `ready`, a connection call takes the id as `signIn`, once, within ten minutes of the start. |
+| `GET /murmur/sign-in/return` | `?code&state` | Public: where Hermes sends the browser back on this computer. A page that says it worked, and closes itself. |
 | `GET /murmur/session` | | `{required, signedIn}` |
 | `POST /murmur/login` | `{password}` | `200 {ok}` and sets the cookie, `401 {error}`, or `429 {error}` with `Retry-After` |
 | `POST /murmur/logout` | | Clears the cookie and closes the live connections it opened. |
@@ -167,7 +195,8 @@ type Connection = {
   url: string                 // normalized: http(s)://host[:port][/prefix]
   managed: boolean            // true when HERMES_URL sets it, or it's the built-in
   source: 'env' | 'saved' | 'default' | 'builtin'
-  mode: 'token' | 'password' | 'unknown'
+  mode: 'token' | 'password' | 'sso' | 'unknown'
+  signIns?: Array<'password' | 'sso'>  // what a Hermes that needs a sign-in takes, once asked
   status: 'connected' | 'unreachable' | 'needs-login' | 'bad-login'
   hermesVersion?: string
   username?: string
@@ -194,7 +223,8 @@ type Setup = {
     version?: string
     outdated?: boolean
     minVersion?: string
-    needsSignIn?: boolean     // password-protected: Murmur sent it nothing
+    needsSignIn?: boolean     // behind a sign-in: Murmur sent it nothing
+    signIns?: Array<'password' | 'sso'>  // with needsSignIn: how it takes one
     hasModel?: boolean
     agents?: Array<{ id: string; name: string; hue?: number; color?: string; isDefault?: boolean }>
     agentCount?: number

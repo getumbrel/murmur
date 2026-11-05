@@ -23,6 +23,9 @@ import {
   type FoundHermes,
   type Setup,
 } from '@/state/setup'
+import { ssoOnly } from '@/state/connection'
+import { looksFinished, useSsoSignIn } from '@/state/sign-in'
+import { SsoSteps } from '@/features/connection/sso-steps'
 import { agentHue, problemLine, useLabel, whereBody } from './setup-copy'
 import { STEP_COLUMN, StepHeader } from './step'
 import { IconChip, LockIcon, ServerIcon } from '@/ui/icons'
@@ -114,10 +117,7 @@ export function WhereStep({
 
   // ── Choosing ──
 
-  const useFound = async (creds?: {
-    username: string
-    password: string
-  }): Promise<'ok' | 'bad-login' | 'needs-login' | 'error'> => {
+  const useFound = async (creds?: FoundCreds): Promise<'ok' | 'bad-login' | 'needs-login' | 'error'> => {
     if (!shown || busy) return 'error'
     setBusy('found')
     setNote(undefined)
@@ -156,7 +156,7 @@ export function WhereStep({
       return 'error'
     }
     if (c.status === 'needs-login') {
-      setPatch({ needsSignIn: true })
+      setPatch({ needsSignIn: true, ...(c.signIns && { signIns: c.signIns }) })
       return 'needs-login'
     }
     if (c.status === 'bad-login') return 'bad-login'
@@ -325,6 +325,9 @@ export function WhereStep({
   )
 }
 
+/** How a found Hermes behind a sign-in is signed in to: a password, or a finished single sign-on. */
+type FoundCreds = { username: string; password: string } | { signIn: string }
+
 /** While one choice is in flight, the others step back and can't be pressed. */
 const dim = (on: boolean) => cn('transition-opacity duration-200', on && 'pointer-events-none opacity-50')
 
@@ -346,7 +349,7 @@ function FoundCard({
   note?: string
   /** Start fresh is in flight. */
   locked: boolean
-  onUse: (creds?: { username: string; password: string }) => Promise<'ok' | 'bad-login' | 'needs-login' | 'error'>
+  onUse: (creds?: FoundCreds) => Promise<'ok' | 'bad-login' | 'needs-login' | 'error'>
   onCheck: () => Promise<unknown>
   initialSignIn?: { username?: string; password?: string; error?: string }
 }) {
@@ -449,7 +452,9 @@ function FoundCard({
                   ? 'Not answering'
                   : state === 'outdated'
                     ? 'Needs an update'
-                    : 'Needs a password'}
+                    : ssoOnly(f.signIns)
+                      ? 'Signs in with SSO'
+                      : 'Needs a password'}
             </motion.span>
           ) : null}
         </AnimatePresence>
@@ -521,7 +526,11 @@ function FoundCard({
           </Note>
         </div>
       ) : state === 'signin' ? (
-        <SignIn hermes={f} busy={busy === 'found'} done={done} locked={locked} onUse={onUse} initial={initialSignIn} />
+        ssoOnly(f.signIns) ? (
+          <SsoSignIn hermes={f} busy={busy === 'found'} done={done} locked={locked} note={note} onUse={onUse} />
+        ) : (
+          <SignIn hermes={f} busy={busy === 'found'} done={done} locked={locked} onUse={onUse} initial={initialSignIn} />
+        )
       ) : (
         <>
           <SuccessButton
@@ -588,7 +597,7 @@ function SignIn({
   busy: boolean
   done: boolean
   locked: boolean
-  onUse: (creds: { username: string; password: string }) => Promise<'ok' | 'bad-login' | 'needs-login' | 'error'>
+  onUse: (creds: FoundCreds) => Promise<'ok' | 'bad-login' | 'needs-login' | 'error'>
   initial?: { username?: string; password?: string; error?: string }
 }) {
   const [username, setUsername] = useState(initial?.username ?? '')
@@ -656,6 +665,70 @@ function SignIn({
         done={done}
         disabled={locked || !username.trim()}
         label="Sign in"
+      />
+      <span className="sr-only">{f.name}</span>
+    </form>
+  )
+}
+
+/**
+ * A Hermes behind single sign-on: Continue with SSO, then the same steps as
+ * the Connect screen, finishing by itself or with the address it ended on.
+ */
+function SsoSignIn({
+  hermes: f,
+  busy,
+  done,
+  locked,
+  note,
+  onUse,
+}: {
+  hermes: FoundHermes
+  busy: boolean
+  done: boolean
+  locked: boolean
+  /** Why using it didn't work, when it wasn't the sign-in. */
+  note?: string
+  onUse: (creds: FoundCreds) => Promise<'ok' | 'bad-login' | 'needs-login' | 'error'>
+}) {
+  const [pasted, setPasted] = useState('')
+  const sso = useSsoSignIn((signIn) => void finish(signIn))
+  const finish = async (signIn: string) => {
+    const answer = await onUse({ signIn })
+    // Signed in, but Hermes didn't take it: say so where the sign-in starts again. The card's note says the rest.
+    if (answer === 'bad-login' || answer === 'needs-login') sso.report()
+  }
+  const waiting = sso.phase.step === 'waiting' ? sso.phase : undefined
+  const paste = waiting?.returns === 'paste' ? waiting : undefined
+
+  const submit = (e: FormEvent) => {
+    e.preventDefault()
+    if (busy || done) return
+    if (paste) return void (pasted.trim() && sso.paste(pasted))
+    if (sso.phase.step !== 'idle') return
+    setPasted('')
+    void sso.start({ found: f.id })
+  }
+  const onPaste = (text: string) => {
+    setPasted(text)
+    if (looksFinished(text)) void sso.paste(text)
+  }
+
+  return (
+    <form onSubmit={submit} noValidate>
+      <AnimatePresence initial={false} mode="popLayout">
+        {sso.phase.step !== 'idle' && (
+          <SsoSteps key="sso" flush phase={sso.phase} pasted={pasted} onPaste={onPaste} onCancel={sso.cancel} />
+        )}
+      </AnimatePresence>
+      <Note tone="danger">{sso.phase.step === 'idle' ? (sso.phase.error ?? note) : undefined}</Note>
+      <SuccessButton
+        type="submit"
+        className="mt-5"
+        busy={busy || sso.phase.step === 'opening' || waiting?.returns === 'here' || !!waiting?.checking}
+        done={done}
+        disabled={locked || (!!paste && !pasted.trim())}
+        label={paste ? 'Finish signing in' : 'Continue with SSO'}
       />
       <span className="sr-only">{f.name}</span>
     </form>

@@ -4,7 +4,7 @@ import { Check } from 'lucide-react'
 import { Spinner } from '@/ui/spinner'
 import { BuddyStack } from '@/ui/buddy'
 import { cn } from '@/lib/cn'
-import { connectionApi, type HermesConnection } from '@/state/connection'
+import { connectionApi, ssoOnly, type HermesConnection } from '@/state/connection'
 import { orderedAgents, plural, type FoundHermes } from '@/state/setup'
 import { Tile } from '@/features/settings/page'
 import { agentHue } from '@/features/onboarding/setup-copy'
@@ -67,7 +67,7 @@ function describe(c: HermesConnection): NearbyHermes {
     // Shown as given.
   }
   const outdated = !!c.outdated
-  const state = c.status === 'connected' ? undefined : 'Needs a password'
+  const state = c.status === 'connected' ? undefined : ssoOnly(c.signIns) ? 'Signs in with SSO' : 'Needs a password'
   return {
     url: c.url,
     title: `Hermes on ${where}`,
@@ -85,7 +85,7 @@ export function fromFound(f: FoundHermes): NearbyHermes {
     url: f.url,
     title: f.name,
     detail: [
-      f.needsSignIn && 'Needs a password',
+      f.needsSignIn && (ssoOnly(f.signIns) ? 'Signs in with SSO' : 'Needs a password'),
       count > 0 && plural(count, 'agent'),
       f.where === 'umbrel' ? 'On this Umbrel' : f.host,
       f.version && `Hermes ${f.version}`,
@@ -96,8 +96,9 @@ export function fromFound(f: FoundHermes): NearbyHermes {
       url: f.url,
       managed: false,
       source: 'saved',
-      mode: f.needsSignIn ? 'password' : 'token',
+      mode: !f.needsSignIn ? 'token' : ssoOnly(f.signIns) ? 'sso' : 'password',
       status: f.needsSignIn ? 'needs-login' : 'connected',
+      ...(f.signIns && { signIns: f.signIns }),
       hermesVersion: f.version,
       outdated: f.outdated,
     },

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createHermes } from './hermes.ts'
+import { createHermes, waysIn } from './hermes.ts'
 
 // A Hermes started with just `hermes dashboard`: until its gateway first runs
 // there's no session store, and browsing sessions answers 503 saying so
@@ -80,5 +80,129 @@ describe('a Hermes running without its gateway', () => {
     const checking = createHermes(target()).check()
     await vi.advanceTimersByTimeAsync(2000)
     expect(await checking).toMatchObject({ status: 'unreachable', fromImage: true, error: expect.stringContaining('in Hermes’s container with “hermes gateway start”') })
+  })
+})
+
+describe('a Hermes behind single sign-on', () => {
+  /** `ways`: the providers it offers. `rotates`: each refresh hands out a new refresh token. */
+  function gated({ ways = ['sso'], rotates = true }: { ways?: ('password' | 'sso')[]; rotates?: boolean } = {}) {
+    const state = { refresh: new Set(['rt-1']), access: new Set<string>(), refreshes: 0, n: 1 }
+    const json = (status: number, body: unknown) =>
+      new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
+    const fetch = vi.fn(async (input: string | URL | Request, init: RequestInit = {}) => {
+      const url = new URL(String(input))
+      if (url.pathname === '/api/status')
+        return json(200, { version: '0.22.5', auth_required: true, auth_flows: ['cookie', 'native_pkce'] })
+      if (url.pathname === '/api/auth/providers')
+        return json(200, {
+          providers: [
+            ...(ways.includes('password') ? [{ name: 'basic', supports_password: true }] : []),
+            ...(ways.includes('sso') ? [{ name: 'self-hosted', supports_password: false }] : []),
+          ],
+        })
+      if (url.pathname === '/auth/native/refresh') {
+        const { refresh_token, provider } = JSON.parse(String(init.body))
+        if (provider !== 'self-hosted' || !state.refresh.has(refresh_token)) return json(401, { error: 'session_expired' })
+        state.refreshes++
+        const access = `at-${++state.n}`
+        state.access.add(access)
+        if (!rotates) return json(200, { access_token: access, refresh_token, expires_at: Date.now() / 1000 + 300 })
+        state.refresh.delete(refresh_token)
+        const next = `rt-${state.n}`
+        state.refresh.add(next)
+        return json(200, { access_token: access, refresh_token: next, expires_at: Date.now() / 1000 + 300 })
+      }
+      const bearer = String((init.headers as Record<string, string>)?.authorization ?? '').replace(/^Bearer /, '')
+      if (!state.access.has(bearer)) return json(401, { detail: 'Unauthorized' })
+      if (url.pathname === '/api/sessions') return json(200, { sessions: [] })
+      return json(404, { detail: 'Not Found' })
+    })
+    return { state, fetch }
+  }
+  const sso = (refresh = 'rt-1') => ({ ...target(), token: undefined, sso: { provider: 'self-hosted', refresh } })
+
+  it('renews its sign-in, and keeps each new refresh token', async () => {
+    const fake = gated()
+    vi.stubGlobal('fetch', fake.fetch)
+    const hermes = createHermes(sso())
+    const kept: unknown[] = []
+    hermes.keepSignIn((s) => kept.push(s))
+    expect(await hermes.check()).toMatchObject({ status: 'connected', mode: 'sso', signIns: ['sso'] })
+    expect(kept).toEqual([{ provider: 'self-hosted', refresh: 'rt-2' }])
+    expect(hermes.sso()).toEqual({ provider: 'self-hosted', refresh: 'rt-2' })
+
+    // Signed in for five minutes: past that, renewed again.
+    await vi.advanceTimersByTimeAsync(300_000)
+    expect((await hermes.restAuth()).headers.authorization).toBe('Bearer at-3')
+    expect(kept).toEqual([
+      { provider: 'self-hosted', refresh: 'rt-2' },
+      { provider: 'self-hosted', refresh: 'rt-3' },
+    ])
+  })
+
+  it('writes nothing down when the refresh token stays the same', async () => {
+    const fake = gated({ rotates: false })
+    vi.stubGlobal('fetch', fake.fetch)
+    const hermes = createHermes(sso())
+    const kept: unknown[] = []
+    hermes.keepSignIn((s) => kept.push(s))
+    expect(await hermes.check()).toMatchObject({ status: 'connected' })
+    expect(kept).toEqual([])
+  })
+
+  it('starts from a fresh sign-in’s access token, without renewing it', async () => {
+    const fake = gated()
+    fake.state.access.add('fresh')
+    vi.stubGlobal('fetch', fake.fetch)
+    const hermes = createHermes({ ...sso(), sso: { provider: 'self-hosted', refresh: 'rt-1', access: 'fresh', expiresAt: Date.now() + 300_000 } })
+    expect(await hermes.check()).toMatchObject({ status: 'connected', mode: 'sso' })
+    expect(fake.state.refreshes).toBe(0)
+  })
+
+  it('asks for a new sign-in once its sign-in has ended', async () => {
+    const fake = gated()
+    vi.stubGlobal('fetch', fake.fetch)
+    expect(await createHermes(sso('revoked')).check()).toMatchObject({
+      status: 'needs-login',
+      mode: 'sso',
+      error: 'Your sign-in to this Hermes has ended. Sign in again.',
+    })
+  })
+
+  it('says it signs in with single sign-on, to a Hermes that only does', async () => {
+    vi.stubGlobal('fetch', gated().fetch)
+    const { token: _, ...plain } = target()
+    expect(await createHermes(plain).check()).toMatchObject({
+      status: 'needs-login',
+      mode: 'sso',
+      signIns: ['sso'],
+      error: 'This Hermes signs in with single sign-on.',
+    })
+  })
+
+  it('offers both, password first, when Hermes takes either', async () => {
+    vi.stubGlobal('fetch', gated({ ways: ['password', 'sso'] }).fetch)
+    const { token: _, ...plain } = target()
+    expect(await createHermes(plain).check()).toMatchObject({
+      status: 'needs-login',
+      mode: 'password',
+      signIns: ['password', 'sso'],
+    })
+  })
+})
+
+describe('the ways into a Hermes behind a sign-in', () => {
+  const basic = { name: 'basic', supports_password: true }
+  const oidc = { name: 'self-hosted', supports_password: false }
+  it('read from its providers', () => {
+    expect(waysIn({ providers: [basic] }, true)).toEqual(['password'])
+    expect(waysIn({ providers: [oidc] }, true)).toEqual(['sso'])
+    expect(waysIn({ providers: [basic, oidc] }, true)).toEqual(['password', 'sso'])
+  })
+
+  it('leave out single sign-on it can’t hand to an app, and fall back to a password when it can’t say', () => {
+    expect(waysIn({ providers: [oidc] }, false)).toEqual([])
+    expect(waysIn(null, true)).toEqual(['password'])
+    expect(waysIn({ detail: 'Not Found' }, true)).toEqual(['password'])
   })
 })

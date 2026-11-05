@@ -14,11 +14,13 @@ import { tabHermes } from '@/hermes/instance'
 import {
   connectionApi,
   connectionsKey,
+  ssoOnly,
   switchHermes,
   useHermesManager,
   type ConnectionRequest,
   type HermesConnection,
   type KnownHermes,
+  type SignInWay,
 } from '@/state/connection'
 import { addFoundHermes, BUILTIN_ID, fetchSetup, orderedAgents, plural, setupKey, type FoundHermes, type Setup } from '@/state/setup'
 import {
@@ -58,7 +60,7 @@ export function HermesSection() {
   const { list } = useHermesManager()
   const setup = useSetupHere().data
   const [details, setDetails] = useState<string | null>(null)
-  const [adding, setAdding] = useState<{ url?: string } | null>(null)
+  const [adding, setAdding] = useState<AddPrefill | null>(null)
   // Just added: their suggestion rows leave as their server rows arrive (the same row, moving).
   const [moved, setMoved] = useState<Record<string, string>>({})
 
@@ -115,12 +117,12 @@ export function HermesSection() {
           added={connections}
           hidden={takenFound}
           onAdded={(foundId, connection) => setMoved((m) => ({ ...m, [connection]: foundId }))}
-          onNeedsPassword={(url) => setAdding({ url })}
+          onNeedsSignIn={(f) => setAdding({ url: f.url, signIns: f.signIns })}
         />
       )}
 
       <DetailsSheet hermes={open} inUse={open?.id === inUse} starting={starting} onClose={() => setDetails(null)} />
-      <AddSheet open={!!adding} prefill={adding?.url} onOpenChange={(o) => !o && setAdding(null)} />
+      <AddSheet open={!!adding} prefill={adding ?? undefined} onOpenChange={(o) => !o && setAdding(null)} />
     </LayoutGroup>
   )
 }
@@ -135,14 +137,14 @@ function Suggestions({
   added,
   hidden,
   onAdded,
-  onNeedsPassword,
+  onNeedsSignIn,
 }: {
   setup: Setup
   added: KnownHermes[]
   /** Found ids just added here, while the server catches up. */
   hidden: Set<string>
   onAdded: (foundId: string, connectionId: string) => void
-  onNeedsPassword: (url: string) => void
+  onNeedsSignIn: (found: FoundHermes) => void
 }) {
   const qc = useQueryClient()
   const [busy, setBusy] = useState<string | null>(null)
@@ -172,7 +174,7 @@ function Suggestions({
       if (!result.ok) {
         if (result.reason === 'failed' && result.connection.status === 'needs-login') {
           const f = setup.found.find((x) => x.id === id)
-          if (f) onNeedsPassword(f.url)
+          if (f) onNeedsSignIn({ ...f, signIns: result.connection.signIns ?? f.signIns })
           return
         }
         if (result.reason === 'gone') void qc.invalidateQueries({ queryKey: setupKey })
@@ -214,7 +216,7 @@ function Suggestions({
             <FoundRow
               hermes={s.hermes}
               busy={busy === s.hermes.id}
-              onAdd={() => (s.hermes.needsSignIn ? onNeedsPassword(s.hermes.url) : void add(s.hermes.id, s.hermes.name))}
+              onAdd={() => (s.hermes.needsSignIn ? onNeedsSignIn(s.hermes) : void add(s.hermes.id, s.hermes.name))}
             />
           </motion.div>
         ),
@@ -232,7 +234,7 @@ function FoundRow({ hermes: f, busy, onAdd }: { hermes: FoundHermes; busy: boole
       {f.version && ` · Hermes ${f.version}`}
     </>
   ) : f.needsSignIn ? (
-    `Needs a password · ${f.host}`
+    `${ssoOnly(f.signIns) ? 'Signs in with SSO' : 'Needs a password'} · ${f.host}`
   ) : (
     [count > 0 && plural(count, 'agent'), f.chats ? plural(f.chats, 'chat') : null].filter(Boolean).join(' · ') || (f.where === 'umbrel' ? 'On this Umbrel' : f.host)
   )
@@ -469,8 +471,11 @@ function NameField({ hermes: c }: { hermes: KnownHermes }) {
   )
 }
 
-/** Connect one more, then move to it. `prefill`: a found Hermes's address, when it needs a password. */
-function AddSheet({ open, prefill, onOpenChange }: { open: boolean; prefill?: string; onOpenChange: (open: boolean) => void }) {
+/** A found Hermes that needs a sign-in: its address, and how it takes one. */
+type AddPrefill = { url?: string; signIns?: SignInWay[] }
+
+/** Connect one more, then move to it. `prefill`: a found Hermes, when it needs a sign-in. */
+function AddSheet({ open, prefill, onOpenChange }: { open: boolean; prefill?: AddPrefill; onOpenChange: (open: boolean) => void }) {
   const { add, list } = useHermesManager()
   const onUmbrel = useOnUmbrel() || !!list.data?.connections.some(isUmbrelHermes)
   // A fresh form every time it opens.
@@ -485,7 +490,18 @@ function AddSheet({ open, prefill, onOpenChange }: { open: boolean; prefill?: st
         <HermesConnectionFormView
           key={round}
           embedded
-          initial={prefill ? { url: prefill, showAuth: true } : undefined}
+          initial={
+            prefill?.url
+              ? {
+                  url: prefill.url,
+                  // Straight to the password fields, unless it signs in with single sign-on only.
+                  showAuth: !ssoOnly(prefill.signIns),
+                  ...(prefill.signIns && {
+                    result: { url: prefill.url, managed: false, source: 'saved', mode: ssoOnly(prefill.signIns) ? 'sso' : 'password', status: 'needs-login', signIns: prefill.signIns },
+                  }),
+                }
+              : undefined
+          }
           // What's nearby, less what's added already (the server turns those away). Not on umbrelOS.
           suggest={!onUmbrel}
           added={list.data?.connections.map((c) => c.url)}

@@ -1,4 +1,4 @@
-// One Hermes backend and how to get in. Two ways, detected from the public
+// One Hermes backend and how to get in. Three ways, detected from the public
 // /api/status (the same probe Hermes Desktop uses for remote gateways):
 //
 //   token     The dashboard puts its session token in its page (loopback
@@ -9,12 +9,19 @@
 //             /auth/password-login, keep the access token in memory, rotate it
 //             at /auth/native/refresh, send it as a Bearer token, and mint a
 //             single-use ?ticket= at /api/auth/ws-ticket for every socket.
+//   sso       Gated, and signed in to with single sign-on (an OIDC provider
+//             such as Authentik or Keycloak) through Hermes's native-app
+//             sign-in (sso.ts). From there it's password mode without the
+//             password: the refresh token is what's kept, and when it stops
+//             working someone signs in again.
 //
 // Nothing here ever reaches the browser.
 
-import type { Target } from './config.ts'
+import type { Sso, Target } from './config.ts'
 
-export type Mode = 'token' | 'password' | 'unknown'
+export type Mode = 'token' | 'password' | 'sso' | 'unknown'
+/** How a gated Hermes lets people in. */
+export type SignIn = 'password' | 'sso'
 export type Status = 'connected' | 'unreachable' | 'needs-login' | 'bad-login'
 
 export type ConnectionInfo = {
@@ -32,6 +39,8 @@ export type ConnectionInfo = {
   fromImage?: boolean
   /** The saved username, so a form can show who Murmur signs in as. */
   username?: string
+  /** What a gated Hermes accepts, once it's been asked. */
+  signIns?: SignIn[]
   error?: string
 }
 
@@ -67,6 +76,8 @@ const COPY = {
   badLogin: 'That username or password didn’t work.',
   rateLimited: 'Too many sign-in attempts. Wait a minute, then try again.',
   unsupported: 'This Hermes signs in a way Murmur doesn’t support yet. Turn on its username and password sign-in.',
+  needsSso: 'This Hermes signs in with single sign-on.',
+  ssoEnded: 'Your sign-in to this Hermes has ended. Sign in again.',
   badToken: 'Hermes didn’t accept Murmur’s access key.',
   noToken: 'Hermes didn’t let Murmur in. If it runs on another computer, give it a username and password and sign in here.',
   noGateway: 'Hermes is running without its gateway, which Murmur needs. Start it on that computer with “hermes gateway start”, then try again.',
@@ -96,8 +107,14 @@ export function createHermes(target: Target) {
   let version: string | undefined
   let fromImage = false
   let token: string | null = target.token ?? null
-  let session: Session | null = null
-  let provider = 'basic'
+  // A single sign-on starts from its refresh token, or straight from a fresh sign-in's access token.
+  let session: Session | null = target.sso
+    ? { access: target.sso.access ?? '', refresh: target.sso.refresh, expiresAt: target.sso.expiresAt ?? 0 }
+    : null
+  let provider = target.sso?.provider ?? 'basic'
+  let signIns: SignIn[] | undefined
+  /** Told whenever a single sign-on's refresh token changes, so the new one outlives a restart. */
+  let keep: ((sso: Sso) => void) | undefined
 
   // Concurrent callers share one probe / sign-in / refresh. Hermes rotates
   // refresh tokens, so two parallel refreshes would be one too many.
@@ -127,16 +144,24 @@ export function createHermes(target: Target) {
   function detect(): Promise<Mode> {
     return once('detect', async () => {
       const res = await call('/api/status', {}, 5000)
-      const body = (await res.json().catch(() => null)) as { version?: unknown; auth_required?: unknown; can_update_hermes?: unknown } | null
+      const body = (await res.json().catch(() => null)) as { version?: unknown; auth_required?: unknown; auth_flows?: unknown; can_update_hermes?: unknown } | null
       if (!res.ok || !body || typeof body.version !== 'string' || !('auth_required' in body)) {
         throw new ConnectError('unreachable', COPY.notHermes)
       }
       version = body.version
       // Hermes says so when it's in a container, where `hermes update` can't apply.
       fromImage = body.can_update_hermes === false
-      mode = target.token ? 'token' : body.auth_required ? 'password' : 'token'
+      if (target.token || !body.auth_required) return (mode = 'token')
+      signIns = await offered(Array.isArray(body.auth_flows) && body.auth_flows.includes('native_pkce'))
+      mode = target.credentials ? 'password' : target.sso ? 'sso' : (signIns[0] ?? 'password')
       return mode
     })
+  }
+
+  /** A gated Hermes's ways in: a password, single sign-on (`native` when it can hand one to an app), or both. */
+  async function offered(native: boolean): Promise<SignIn[]> {
+    const res = await call('/api/auth/providers').catch(() => null)
+    return waysIn(await res?.json().catch(() => null), native)
   }
 
   const ensureMode = async () => (mode === 'unknown' ? detect() : mode)
@@ -165,13 +190,21 @@ export function createHermes(target: Target) {
     const body = (await res.json().catch(() => null)) as { providers?: { name: string; supports_password?: boolean }[] } | null
     const providers = body?.providers ?? []
     const password = providers.find((p) => p.supports_password)
-    if (providers.length && !password) throw new ConnectError('needs-login', COPY.unsupported)
+    if (providers.length && !password)
+      throw new ConnectError('needs-login', signIns?.includes('sso') ? COPY.needsSso : COPY.unsupported)
     return password?.name ?? 'basic'
   }
 
   function signIn(): Promise<void> {
     return once('auth', async () => {
-      if (!target.credentials) throw new ConnectError('needs-login', COPY.needsLogin)
+      if (!target.credentials) {
+        if (target.sso) throw new ConnectError('needs-login', COPY.ssoEnded)
+        const ways = signIns ?? ['password']
+        throw new ConnectError(
+          'needs-login',
+          ways.includes('password') ? COPY.needsLogin : ways.includes('sso') ? COPY.needsSso : COPY.unsupported,
+        )
+      }
       provider = await pickProvider()
       const res = await postJson('/auth/password-login', { provider, ...target.credentials })
       if (res.status === 401) throw new ConnectError('bad-login', COPY.badLogin)
@@ -198,12 +231,15 @@ export function createHermes(target: Target) {
         if (res.ok) {
           const body = (await res.json()) as { access_token: string; refresh_token?: string | null; expires_at: number }
           session = { access: body.access_token, refresh: body.refresh_token || rt, expiresAt: body.expires_at * 1000 }
+          // Hermes may rotate it: a single sign-on has nothing else to come back with.
+          if (target.sso && session.refresh !== rt) keep?.({ provider, refresh: session.refresh! })
           return
         }
         if (res.status !== 400 && res.status !== 401) {
           throw new ConnectError('unreachable', `Hermes couldn’t sign in right now (${res.status}). Try again in a moment.`)
         }
       }
+      // A single sign-on's refresh token stays saved: signing in again replaces it.
       session = null
     }).then(() => (session ? undefined : signIn()))
   }
@@ -217,8 +253,10 @@ export function createHermes(target: Target) {
   // ── What the proxy uses ───────────────────────────────────────────────────
 
   /** Headers that authenticate a REST call, plus the credential they carry (for `reject`). */
+  const gated = (m: Mode) => m === 'password' || m === 'sso'
+
   async function restAuth(): Promise<{ headers: Record<string, string>; credential: string }> {
-    if ((await ensureMode()) === 'password') {
+    if (gated(await ensureMode())) {
       const access = await bearer()
       return { headers: { authorization: `Bearer ${access}` }, credential: access }
     }
@@ -228,7 +266,7 @@ export function createHermes(target: Target) {
 
   /** The query parameter that admits one WebSocket upgrade. */
   async function socketAuth(): Promise<{ param: [string, string]; credential: string }> {
-    if ((await ensureMode()) === 'password') {
+    if (gated(await ensureMode())) {
       for (let attempt = 0; ; attempt++) {
         const access = await bearer()
         const res = await postJson('/api/auth/ws-ticket', {}, { authorization: `Bearer ${access}` })
@@ -310,6 +348,7 @@ export function createHermes(target: Target) {
     try {
       await detect()
       info.mode = mode
+      if (signIns) info.signIns = signIns
       info.hermesVersion = version
       if (fromImage) info.fromImage = true
       if (version && olderThan(version, MIN_HERMES_VERSION)) Object.assign(info, { outdated: true, minVersion: MIN_HERMES_VERSION })
@@ -323,6 +362,7 @@ export function createHermes(target: Target) {
         }
         if (attempt || (res.status !== 401 && res.status !== 403)) {
           if (res.status === 401 || res.status === 403) {
+            if (mode === 'sso') throw new ConnectError('needs-login', COPY.ssoEnded)
             throw new ConnectError('bad-login', mode === 'password' ? COPY.badLogin : target.token ? COPY.badToken : COPY.noToken)
           }
           throw new ConnectError('unreachable', `Hermes isn’t answering properly (${res.status}). Try again in a moment.`)
@@ -332,6 +372,7 @@ export function createHermes(target: Target) {
       }
     } catch (error) {
       info.mode = mode
+      if (signIns) info.signIns = signIns
       info.status = error instanceof ConnectError ? error.status : 'unreachable'
       info.error = error instanceof ConnectError ? error.message : COPY.unreachable
     }
@@ -450,7 +491,30 @@ export function createHermes(target: Target) {
     })
   }
 
-  return { url: base, prefix, target, check: () => once('check', check), status, restAuth, socketAuth, socketUrl, reject, read, write, send, peek }
+  /** Keep a single sign-on's refresh token wherever this Hermes is saved, from now on (connection.ts). */
+  function keepSignIn(fn: (sso: Sso) => void) {
+    keep = fn
+  }
+
+  /** The single sign-on as it stands now: what to save, or null. */
+  const sso = (): Sso | null => (target.sso && session?.refresh ? { provider, refresh: session.refresh } : null)
+
+  return { url: base, prefix, target, check: () => once('check', check), status, restAuth, socketAuth, socketUrl, reject, read, write, send, peek, keepSignIn, sso }
+}
+
+/**
+ * A gated Hermes's ways in, from its public /api/auth/providers: a password,
+ * single sign-on (`native`: its /api/status lists the native_pkce flow, so it
+ * hands one to an app), or both.
+ */
+export function waysIn(body: unknown, native: boolean): SignIn[] {
+  const providers = (body as { providers?: { supports_password?: unknown }[] } | null)?.providers
+  // Couldn't tell: a password, as before Hermes said.
+  if (!Array.isArray(providers)) return ['password']
+  const ways: SignIn[] = []
+  if (providers.some((p) => p?.supports_password)) ways.push('password')
+  if (native && providers.some((p) => p && !p.supports_password)) ways.push('sso')
+  return ways
 }
 
 /** Set-Cookie lines by name, without any __Host-/__Secure- prefix or quotes. */

@@ -14,12 +14,14 @@ import { SwitchCurtain } from './curtain'
 
 // Dev playground for the connection pieces, at /connection.html?view=…
 //   form · form-needs-login · form-bad-login · form-unreachable · form-connected
+//   form-sso · form-sso-ended (single sign-on; Continue opens a real sign-in on the dev server)
 //   settings · managed · managed-down · managed-env · login · login-error · live
 //   switcher (the pill and Settings → Server, on the real server) · curtain
 //   Settings → Server with a built-in, on a fake server (Add works):
 //     server-builtin · server-both · server-upgrade · server-starting · server-nearby
 //   managed-builtin · managed-builtin-starting · managed-builtin-down · update-builtin · no-hermes
 // Fake answers: any address containing "gated" needs murmur / hunter2;
+// "sso" signs in with single sign-on only;
 // "nope" is unreachable; "example" isn't Hermes.
 
 const view = new URLSearchParams(location.search).get('view') ?? 'form'
@@ -32,6 +34,10 @@ async function fake(req: ConnectionRequest): Promise<HermesConnection> {
   const url = req.url.startsWith('http') ? req.url : `http://${req.url}`
   if (url.includes('nope')) return { ...base, url, mode: 'unknown', status: 'unreachable', hermesVersion: undefined, error: 'Couldn’t reach that address. Check that Hermes is running and the address is right.' }
   if (url.includes('example')) return { ...base, url, mode: 'unknown', status: 'unreachable', hermesVersion: undefined, error: 'That doesn’t look like a Hermes dashboard.' }
+  if (url.includes('sso')) {
+    if (req.signIn) return { ...base, url, mode: 'sso', signIns: ['sso'], status: 'connected' }
+    return { ...base, url, mode: 'sso', signIns: ['sso'], status: 'needs-login', error: 'This Hermes signs in with single sign-on.' }
+  }
   if (url.includes('gated')) {
     if (!req.username) return { ...base, url, mode: 'password', status: 'needs-login', error: 'This Hermes needs a username and password.' }
     if (req.username !== 'murmur' || req.password !== 'hunter2') return { ...base, url, mode: 'password', status: 'bad-login', username: req.username, error: 'That username or password didn’t work.' }
@@ -41,6 +47,7 @@ async function fake(req: ConnectionRequest): Promise<HermesConnection> {
 }
 
 const gated = 'http://192.168.1.20:9119'
+const sso = 'https://hermes.sso.home'
 
 const presets: Record<string, Parameters<typeof HermesConnectionFormView>[0]['initial']> = {
   'form-needs-login': {
@@ -58,6 +65,14 @@ const presets: Record<string, Parameters<typeof HermesConnectionFormView>[0]['in
   'form-unreachable': {
     url: '192.168.1.21:9119',
     result: { ...base, url: 'http://192.168.1.21:9119', mode: 'unknown', status: 'unreachable', hermesVersion: undefined, error: 'Couldn’t reach that address. Check that Hermes is running and the address is right.' },
+  },
+  'form-sso': {
+    url: sso,
+    result: { ...base, url: sso, mode: 'sso', signIns: ['sso'], status: 'needs-login', error: 'This Hermes signs in with single sign-on.' },
+  },
+  'form-sso-ended': {
+    url: sso,
+    result: { ...base, url: sso, mode: 'sso', signIns: ['sso'], status: 'needs-login', error: 'Your sign-in to this Hermes has ended. Sign in again.' },
   },
   'form-connected': {
     url: gated,
