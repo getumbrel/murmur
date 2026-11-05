@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Suspense, useEffect, useLayoutEffect, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { Route, Router, Switch, useLocation } from 'wouter'
 import { Toaster } from 'sonner'
 import { MotionConfig, motion, useReducedMotion } from 'motion/react'
@@ -251,11 +252,15 @@ function Overlays() {
       <NotificationOffer inset={inset} />
       <ScreenViewer />
       <ScreenSheets />
-      <Toaster
-        position="top-center"
-        toastOptions={{ className: 'murmur-toast' }}
-        style={inset ? { left: inset, width: 'auto' } : undefined}
-      />
+      {/* On the page itself, not in #root (its own stacking context): over every dialog, the live browser's included. */}
+      {createPortal(
+        <Toaster
+          position="top-center"
+          toastOptions={{ className: 'murmur-toast' }}
+          style={inset ? { left: inset, width: 'auto' } : undefined}
+        />,
+        document.body,
+      )}
     </>
   )
 }

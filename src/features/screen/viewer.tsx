@@ -1,7 +1,8 @@
 import * as Dialog from '@radix-ui/react-dialog'
-import { useRef, useState, type CSSProperties } from 'react'
-import { motion, useReducedMotion } from 'motion/react'
-import { Keyboard, X } from 'lucide-react'
+import { useEffect, useRef, useState, type CSSProperties, type FormEvent } from 'react'
+import { flushSync } from 'react-dom'
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
+import { ClipboardPaste, Keyboard, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { create } from 'zustand'
 import { Orb } from '@/ui/orb'
@@ -34,8 +35,9 @@ export async function takeOverAndOpen(viewing: Viewing) {
  * The agent's browser, live and big (one, over everything). Watching: what it's
  * doing right now, with Take over. In control: your pointer and keys reach the
  * page, the frame wears the agent's colour, and Hand back gives it back, as
- * does closing. Phones get the whole screen, the one action under the thumb
- * and a keyboard; wide, it's a window over the chat.
+ * does closing. Phones get the whole screen, the one action under the thumb,
+ * a keyboard and a Paste key; wide, it's a window over the chat, and ⌘V or
+ * Ctrl+V pastes.
  */
 export function ScreenViewer() {
   const { viewing, open } = useViewer()
@@ -52,6 +54,11 @@ function Viewer({ viewing, open }: { viewing: Viewing; open: boolean }) {
   const live = useRef<LiveViewHandle>(null)
   const [typing, setTyping] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [pasting, setPasting] = useState(false)
+  const pasteField = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    if (!yours) setPasting(false)
+  }, [yours])
   // Until the live picture arrives, the latest still stands in.
   const still = useStill(profile, open && !yours, 2000)
 
@@ -69,6 +76,36 @@ function Viewer({ viewing, open }: { viewing: Viewing; open: boolean }) {
       setBusy(false)
     }
   }
+  // The phone's Paste key: what you copied goes straight into the page where the browser lets
+  // Murmur read it (iOS asks with its own Paste button), and otherwise you paste it into a field.
+  const openField = () => {
+    flushSync(() => setPasting(true))
+    pasteField.current?.focus({ preventScroll: true })
+  }
+  const paste = () => {
+    if (!navigator.clipboard?.readText) return openField()
+    navigator.clipboard
+      .readText()
+      .then((text) => (text ? live.current?.paste(text) : toast('Nothing’s copied to paste.')), openField)
+  }
+  const pasted = (text: string) => {
+    live.current?.paste(text)
+    setPasting(false)
+  }
+  // A paste, or a keyboard's clipboard putting it all in at once; typed, it goes with Return.
+  const onFieldInput = (e: FormEvent<HTMLInputElement>) => {
+    const { inputType, data } = e.nativeEvent as InputEvent
+    const value = e.currentTarget.value
+    if (
+      value &&
+      (!inputType ||
+        inputType === 'insertFromPaste' ||
+        inputType === 'insertReplacementText' ||
+        (inputType === 'insertText' && (data?.length ?? 0) > 1))
+    )
+      pasted(value)
+  }
+
   // Closing while in control hands back: nobody's left to finish.
   const onOpenChange = (next: boolean) => {
     if (next) return
@@ -165,22 +202,100 @@ function Viewer({ viewing, open }: { viewing: Viewing; open: boolean }) {
               className={cn('min-h-0 flex-1', wide ? 'px-6 pb-6' : 'px-3 pb-3')}
             />
             {!wide && (
-              <footer className="safe-bottom flex flex-none items-center gap-3 px-4 pt-1 pb-4">
-                {yours && (
-                  <IconButton
-                    label={typing ? 'Hide keyboard' : 'Keyboard'}
-                    aria-pressed={typing}
-                    variant="filled"
-                    size="lg"
-                    className="size-13"
-                    // Before the tap's focus moves: the keyboard only opens from within the tap itself.
-                    onPointerDown={(e) => e.preventDefault()}
-                    onClick={() => live.current?.keyboard()}
-                  >
-                    <Keyboard size={20} strokeWidth={1.75} />
-                  </IconButton>
-                )}
-                <div className="min-w-0 flex-1">{action}</div>
+              <footer className="flex-none px-4 pt-1 pb-[max(16px,env(safe-area-inset-bottom))]">
+                <AnimatePresence mode="popLayout" initial={false}>
+                  {pasting ? (
+                    <motion.div
+                      key="paste"
+                      className="flex items-center gap-3"
+                      initial={{ opacity: 0, y: reduce ? 0 : 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+                    >
+                      <label className="relative flex min-w-0 flex-1 items-center">
+                        <ClipboardPaste
+                          size={18}
+                          strokeWidth={1.75}
+                          aria-hidden
+                          className="pointer-events-none absolute left-4.5 text-ink-3"
+                        />
+                        <input
+                          ref={pasteField}
+                          aria-label="Paste into the page"
+                          placeholder="Paste here"
+                          enterKeyHint="send"
+                          autoComplete="off"
+                          autoCapitalize="off"
+                          autoCorrect="off"
+                          spellCheck={false}
+                          data-1p-ignore
+                          data-lpignore="true"
+                          className="h-13 w-full rounded-full bg-fill-2 pr-5 pl-12 text-body text-ink ring-1 ring-transparent outline-none ring-inset placeholder:text-ink-3 focus:ring-line-strong"
+                          onPaste={(e) => {
+                            e.preventDefault()
+                            const text = e.clipboardData.getData('text/plain')
+                            if (text) pasted(text)
+                          }}
+                          onInput={onFieldInput}
+                          onKeyDown={(e) => {
+                            if (e.key !== 'Enter' || !e.currentTarget.value) return
+                            e.preventDefault()
+                            pasted(e.currentTarget.value)
+                          }}
+                          onBlur={() => setPasting(false)}
+                        />
+                      </label>
+                      <IconButton
+                        label="Cancel"
+                        variant="filled"
+                        size="lg"
+                        className="size-13"
+                        onPointerDown={(e) => e.preventDefault()}
+                        onClick={() => setPasting(false)}
+                      >
+                        <X size={20} strokeWidth={1.75} />
+                      </IconButton>
+                    </motion.div>
+                  ) : (
+                    <motion.div
+                      key="keys"
+                      className="flex items-center gap-3"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: 0.2 }}
+                    >
+                      {yours && (
+                        <>
+                          <IconButton
+                            label={typing ? 'Hide keyboard' : 'Keyboard'}
+                            aria-pressed={typing}
+                            variant="filled"
+                            size="lg"
+                            className="size-13"
+                            // Before the tap's focus moves: the keyboard only opens from within the tap itself.
+                            onPointerDown={(e) => e.preventDefault()}
+                            onClick={() => live.current?.keyboard()}
+                          >
+                            <Keyboard size={20} strokeWidth={1.75} />
+                          </IconButton>
+                          <IconButton
+                            label="Paste"
+                            variant="filled"
+                            size="lg"
+                            className="size-13"
+                            onPointerDown={(e) => e.preventDefault()}
+                            onClick={paste}
+                          >
+                            <ClipboardPaste size={20} strokeWidth={1.75} />
+                          </IconButton>
+                        </>
+                      )}
+                      <div className="min-w-0 flex-1">{action}</div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </footer>
             )}
           </motion.div>

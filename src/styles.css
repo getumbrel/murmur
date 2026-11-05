@@ -543,8 +543,9 @@ html [data-sonner-toaster][data-x-position='center'] {
 }
 /* Toasts centre on the conversation pane beside the sidebar (an inline `left`
    from app.tsx), but a dialog is modal to the whole window and centres on it:
-   while one is open, toasts drop onto the dialog's axis instead. */
-html:has([data-sheet][data-state='open']) [data-sonner-toaster][data-x-position='center'] {
+   while one is open (a sheet, or the agent's browser), toasts drop onto the
+   dialog's axis instead. */
+html:has([data-sheet][data-state='open'], [data-screen-viewer]) [data-sonner-toaster][data-x-position='center'] {
   left: 0 !important;
 }
 

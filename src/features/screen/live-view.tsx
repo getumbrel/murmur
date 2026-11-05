@@ -1,6 +1,7 @@
 import './screen.css'
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import RFB from '@novnc/novnc'
+import { toast } from 'sonner'
 import { cn } from '@/lib/cn'
 import { useFinePointer } from '@/lib/use-media'
 import { CHROME, PAGE, handBack, sizeOf, takeOver, useControl, useScreen, watch } from '@/state/screen'
@@ -89,6 +90,28 @@ const KEYS: Record<string, number> = {
   ArrowRight: 0xff53,
   ArrowDown: 0xff54,
 }
+const CONTROL = 0xffe3
+const V = 0x76
+
+/** The most Hermes takes onto the screen's clipboard at once is 256 KiB; a little is kept for the message around it. */
+const MOST_PASTED = 255 * 1024
+
+/**
+ * Pastes into the page the way you would at the screen: the text goes onto its
+ * clipboard, then Ctrl+V in the agent's browser. The page gets a real paste,
+ * so a code split across boxes fills them all. Hermes takes it only from
+ * whoever has control and never sends it on, and the screen asks this window
+ * for it each time something pastes, which Hermes lets through only while
+ * it's still yours: once you hand back, the agent can't paste it again.
+ */
+function pasteInto(rfb: RFB, text: string) {
+  rfb.clipboardPasteFrom(text)
+  rfb.sendKey(CONTROL, 'ControlLeft', true)
+  rfb.sendKey(V, 'KeyV', true)
+  rfb.sendKey(V, 'KeyV', false)
+  rfb.sendKey(CONTROL, 'ControlLeft', false)
+}
+
 /** A character's X keysym: Latin-1 as itself, the rest of Unicode as 0x1000000 plus its code point. */
 const keysymOf = (ch: string) => {
   const cp = ch.codePointAt(0) ?? 0
@@ -98,6 +121,8 @@ const keysymOf = (ch: string) => {
 export type LiveViewHandle = {
   /** Shows or hides the phone's keyboard, typing into the page. */
   keyboard: () => void
+  /** Pastes into the page, while you're in control. */
+  paste: (text: string) => void
 }
 
 /**
@@ -106,8 +131,9 @@ export type LiveViewHandle = {
  * takes your pointer and keys only while you're in control (Hermes lets them
  * through only then, too). With `fit` (a phone), control reshapes the screen
  * to yours, so the page lays out for a phone at its real size rather than a
- * desktop shrunk to a quarter. Dropped, it reconnects by itself, and keeps
- * control if you had it.
+ * desktop shrunk to a quarter. In control, ⌘V or Ctrl+V pastes what you copied
+ * into the page. Dropped, it reconnects by itself, and keeps control if you
+ * had it.
  */
 export const LiveView = forwardRef<
   LiveViewHandle,
@@ -227,6 +253,51 @@ export const LiveView = forwardRef<
     return () => clearTimeout(t)
   }, [rfb, yours, box.w, want.w, want.h])
 
+  // What you copied, into the page.
+  const paste = (text: string) => {
+    if (!rfb || !yours || !text) return
+    if (new TextEncoder().encode(text).length > MOST_PASTED) {
+      toast.error('That’s too long to paste into the page.')
+      return
+    }
+    pasteInto(rfb, text)
+  }
+  const pasteNow = useRef(paste)
+  pasteNow.current = paste
+  useEffect(() => {
+    const host = frame.current
+    const field = typing.current
+    if (!rfb || !yours || !host || !field) return
+    // noVNC sends ⌘V or Ctrl+V on as keys, and so stops the browser's own paste: the field
+    // nobody sees takes the paste instead, and noVNC lets go of the keys it's holding down there.
+    let catching = false
+    const back = () => {
+      if (!catching) return
+      catching = false
+      rfb.focus({ preventScroll: true })
+    }
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.target === field || e.key.toLowerCase() !== 'v' || !(e.metaKey || e.ctrlKey) || e.altKey) return
+      e.stopPropagation()
+      rfb._keyboard._allKeysUp()
+      catching = true
+      field.focus({ preventScroll: true })
+      // Nothing to paste (a picture, or nothing copied): the keys go back to the page.
+      setTimeout(back, 100)
+    }
+    const onPaste = (e: ClipboardEvent) => {
+      e.preventDefault()
+      pasteNow.current(e.clipboardData?.getData('text/plain') ?? '')
+      back()
+    }
+    host.addEventListener('keydown', onKeyDown, true)
+    host.addEventListener('paste', onPaste)
+    return () => {
+      host.removeEventListener('keydown', onKeyDown, true)
+      host.removeEventListener('paste', onPaste)
+    }
+  }, [rfb, yours])
+
   // The phone's keyboard types into the page through a field nobody sees.
   useImperativeHandle(ref, () => ({
     keyboard: () => {
@@ -235,6 +306,7 @@ export const LiveView = forwardRef<
       if (document.activeElement === el) el.blur()
       else el.focus({ preventScroll: true })
     },
+    paste,
   }))
   useEffect(() => {
     const el = typing.current

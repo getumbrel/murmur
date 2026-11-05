@@ -8,7 +8,8 @@
 //
 // Which tests run depends on the Hermes under test, as the app does:
 //  - one with the screen's packages and murmur-screen (Umbrel's image): every
-//    agent shows its browser, live, and asks for a hand when it needs one;
+//    agent shows its browser, live, and asks for a hand when it needs one,
+//    and the person in control can paste into it;
 //  - one with the packages and not the plugin (Nous's desktop image): the same,
 //    once Murmur has added the plugin;
 //  - one without the packages (Nous's own image, a Hermes of someone's own on
@@ -62,7 +63,8 @@ beforeAll(async () => {
   await exec(
     'sh',
     '-c',
-    `mkdir -p /tmp/site && printf '<title>${TITLE}</title><h1>${TITLE}</h1><p>Prove you are human.</p>' > /tmp/site/index.html`,
+    `mkdir -p /tmp/site && printf '<title>${TITLE}</title><h1>${TITLE}</h1><p>Prove you are human.</p>' > /tmp/site/index.html` +
+      ` && printf '<title>Sign in</title><input id="password">' > /tmp/site/sign-in.html`,
   )
   // Detached, it lives as long as the container.
   await run('docker', [
@@ -158,6 +160,105 @@ function seen(what: string, check: (screen: Screen | undefined) => boolean, time
 const step = (comment: string, code: string) => ({ name: 'browser_exec', args: { code: `# ${comment}\n${code}` } })
 const OPEN = step('Opening the shop', `new_tab("${PAGE}")\nwait_for_load()\nprint(js("document.title"))`)
 const LOOK = step('Looking at the page', 'print(js("document.title"))')
+
+/** A sign-in page with its password field ready for what's typed or pasted; and what's in that field. */
+const SIGN_IN = step(
+  'Opening the sign-in page',
+  `new_tab("${PAGE}sign-in.html")\nwait_for_load()\njs("document.getElementById('password').focus()")\nprint(js("document.activeElement.id"))`,
+)
+const PASSWORD = step('Reading the password field', `print(js("document.getElementById('password').value"))`)
+
+const CONTROL = 0xffe3
+const V = 0x76
+
+/**
+ * A bare viewer on the agent's screen, the way noVNC connects through
+ * Murmur's /hermes proxy: just enough RFB to put text on the screen's
+ * clipboard and press keys, as the live view does when you paste.
+ */
+async function viewer(url: string) {
+  const ws = new WebSocket(url)
+  ws.binaryType = 'arraybuffer'
+  let got = Buffer.alloc(0)
+  let more = () => {}
+  ws.onmessage = (e) => {
+    got = Buffer.concat([got, Buffer.from(e.data as ArrayBuffer)])
+    more()
+  }
+  await new Promise((resolve, reject) => {
+    ws.onopen = resolve
+    ws.onerror = () => reject(new Error('The live picture didn’t connect'))
+  })
+  const deadline = Date.now() + 15_000
+  const read = async (n: number) => {
+    while (got.length < n) {
+      if (Date.now() > deadline) throw new Error('The screen stopped answering')
+      await new Promise<void>((resolve) => ((more = resolve), setTimeout(resolve, 200)))
+    }
+    const head = got.subarray(0, n)
+    got = got.subarray(n)
+    return head
+  }
+  // Hermes's screen asks for no password (its bridge is the gate): version, security None, shared.
+  ws.send(await read(12))
+  await read((await read(1))[0])
+  ws.send(Uint8Array.of(1))
+  expect((await read(4)).readUInt32BE(0)).toBe(0)
+  ws.send(Uint8Array.of(1))
+  await read((await read(24)).readUInt32BE(20))
+  const key = (keysym: number, down: boolean) => {
+    const m = Buffer.alloc(8)
+    m[0] = 4
+    m[1] = down ? 1 : 0
+    m.writeUInt32BE(keysym, 4)
+    ws.send(m)
+  }
+  return {
+    clipboard(text: string) {
+      const t = Buffer.from(text, 'latin1')
+      const m = Buffer.alloc(8)
+      m[0] = 6
+      m.writeUInt32BE(t.length, 4)
+      ws.send(Buffer.concat([m, t]))
+    },
+    paste() {
+      key(CONTROL, true)
+      key(V, true)
+      key(V, false)
+      key(CONTROL, false)
+    },
+    close: () => ws.close(1000),
+  }
+}
+
+/**
+ * Pasting into the agent's browser while you have it: Hermes takes what you
+ * copied onto the screen's clipboard from the viewer in control, and only
+ * from them, and Ctrl+V pastes it into the page.
+ */
+async function pastes() {
+  const { runtime } = await newChat(socket)
+  await turn(socket, runtime, toolsTag([SIGN_IN]))
+  expect(printed(runtime)[0]).toContain('password')
+  const screen = await viewer(await watch('default'))
+  try {
+    // Only watching, nothing reaches the screen's clipboard.
+    screen.clipboard('seen from somewhere else')
+    await takeOver('default')
+    await sleep(500)
+    screen.paste()
+    await sleep(500)
+    const secret = 'Tr0ub4dor&3-correct-horse-battery-staple-é'
+    screen.clipboard(secret)
+    screen.paste()
+    await sleep(1000)
+    await handBack('default')
+    await turn(socket, runtime, toolsTag([PASSWORD]))
+    expect(printed(runtime)[0].trim()).toBe(secret)
+  } finally {
+    screen.close()
+  }
+}
 
 /** What browser_exec printed in a chat, latest first. */
 const printed = (runtime: string) =>
@@ -349,6 +450,11 @@ describe('a Hermes made for this (the screen and murmur-screen)', () => {
     expect(controlOf(useScreens.getState().screens.default, useScreens.getState().held.default)).toBe('agent')
   })
 
+  it('takes a paste into the page from the person in control, and from nobody else', async (ctx) => {
+    if (!ready()) return ctx.skip()
+    await pastes()
+  })
+
   it('goes by each agent’s own setting', async (ctx) => {
     if (!ready() || !other) return ctx.skip()
     await api.put(`/api/config?${q(other)}`, { config: { browser: { headed: false } } })
@@ -428,6 +534,11 @@ describe('a Hermes of someone’s own, with the screen (Nous’s desktop image)'
     await browse(runtime)
     await seen('the screen to start', (s) => !!s?.running)
     expect(await openedForTheScreen()).toBe(true)
+  })
+
+  it('takes a paste into the page from the person in control, and from nobody else', async (ctx) => {
+    if (!own()) return ctx.skip()
+    await pastes()
   })
 })
 
