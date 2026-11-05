@@ -1,4 +1,4 @@
-import { memo, useRef, useState } from 'react'
+import { Fragment, memo, useRef, useState } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { Ban, ChevronRight, Clock, ShieldCheck, Sparkle, X } from 'lucide-react'
 import { Orb } from '@/ui/orb'
@@ -8,6 +8,7 @@ import { didSummary, pastLabel, toolCategory } from './tool-labels'
 import { ToolIcon } from './tool-icon'
 import { AppIcon } from '@/features/apps/app-icon'
 import { formatDuration, formatStep } from './format'
+import { currentTitle, reasoningLines } from './reasoning'
 import './work.css'
 
 export type ToolItem = Extract<ChatItem, { kind: 'tool' }>
@@ -47,6 +48,9 @@ function liveLine(items: WorkItem[]) {
   if (last?.kind === 'tool' && last.status === 'running') {
     return { key: last.id, text: said(last.label, last.detail), state: 'working' as const }
   }
+  // What it's thinking about, when its reasoning comes in titled sections: each new one rolls in.
+  const title = last?.kind === 'thinking' && currentTitle(last.text)
+  if (title) return { key: `${last.id}:${title}`, text: title, state: 'thinking' as const }
   return { key: 'thinking', text: 'Thinking', state: 'thinking' as const }
 }
 
@@ -248,10 +252,16 @@ function Tick({ done }: { done: boolean }) {
 function Reasoning({ text }: { text: string }) {
   const long = text.length > 420
   const [more, setMore] = useState(false)
+  const lines = reasoningLines(text)
   return (
     <div className="mt-1">
       <p className={cn('text-footnote leading-[1.6] whitespace-pre-wrap text-ink-3', long && !more && 'line-clamp-5')}>
-        {text.trim()}
+        {lines.map((line, i) => (
+          <Fragment key={i}>
+            {i > 0 && '\n'}
+            {line.title ? <span className="font-medium text-ink-2">{line.text}</span> : line.text}
+          </Fragment>
+        ))}
       </p>
       {long && (
         <button

@@ -6,10 +6,20 @@ vi.mock('@/lib/upkeep', () => ({ upkeep: () => {}, rememberedSet: () => new Set(
 const hostedAppsAllowed = vi.fn(async () => false)
 vi.mock('./hosted-apps-consent', () => ({ hostedAppsAllowed }))
 
-const { allowHostedApps, hideDesktopToolsets, murmurDisplay, withHiddenToolsets } = await import('./toolsets')
+// Hermes's default tool-search list, as /api/config/defaults would have it (none: an older Hermes that doesn't say).
+let defaults: string[] | undefined
+vi.mock('./tool-search', async (actual) => ({
+  ...(await actual<typeof import('./tool-search')>()),
+  readDefaultDefer: async () => defaults,
+}))
+
+const { allowHostedApps, hideDesktopToolsets, murmurDefer, murmurDisplay, withHiddenToolsets } = await import('./toolsets')
 const { api } = (await import('@/hermes/rest')) as unknown as { api: Record<string, unknown> }
 
-beforeEach(() => hostedAppsAllowed.mockClear())
+beforeEach(() => {
+  hostedAppsAllowed.mockClear()
+  defaults = undefined
+})
 
 describe('toolsets Murmur can’t show', () => {
   it('are added to what the agent already switched off', () => {
@@ -57,6 +67,20 @@ describe('desktop tips, tours and reactions', () => {
   })
 })
 
+describe('the plan', () => {
+  const DEFAULTS = ['image_generate', 'manage_catalog', 'todo_list']
+
+  it('comes out of the agent’s tool search, so it can make one without looking for it', () => {
+    expect(murmurDefer(undefined, DEFAULTS)).toEqual(['image_generate', 'manage_catalog'])
+    expect(murmurDefer(DEFAULTS, DEFAULTS)).toEqual(['image_generate', 'manage_catalog'])
+  })
+
+  it('leaves the image tool out once pictures took it out', () => {
+    expect(murmurDefer(['manage_catalog', 'todo_list'], DEFAULTS)).toEqual(['manage_catalog'])
+    expect(murmurDefer(['manage_catalog'], DEFAULTS)).toBeNull()
+  })
+})
+
 describe('an agent’s config', () => {
   it('gets only the keys Murmur changes, merged into what’s there', async () => {
     const put = vi.fn(async (..._: unknown[]) => ({ ok: true }))
@@ -101,6 +125,22 @@ describe('an agent’s config', () => {
     expect(put.mock.calls).toEqual([
       ['/api/config?profile=default', { config: { agent: { disabled_toolsets: ['catalog', 'project'] } } }],
       ['/api/config?profile=scout', { config: { agent: { disabled_toolsets: ['catalog', 'project'] } } }],
+    ])
+  })
+
+  it('gets the plan to hand in the same write', async () => {
+    defaults = ['image_generate', 'todo_list']
+    const put = vi.fn(async (..._: unknown[]) => ({ ok: true }))
+    Object.assign(api, {
+      get: async () => ({
+        agent: { disabled_toolsets: ['catalog', 'project', 'connections'] },
+        display: { in_app_tips: false, in_app_tours: false, message_reactions: true },
+      }),
+      put,
+    })
+    await hideDesktopToolsets('basil')
+    expect(put.mock.calls).toEqual([
+      ['/api/config?profile=basil', { config: { tools: { tool_search: { defer: ['image_generate'] } } } }],
     ])
   })
 })

@@ -20,12 +20,17 @@
 // must reach Murmur as they happen: with `tool_progress: off` (a terminal
 // setting) Hermes sends none, so a chat shows no steps and nothing found
 // until it's reloaded.
+//
+// And the other way: Hermes hides its plan tool behind its tool search, so an
+// agent hardly ever writes a plan Murmur could show. It comes out of every
+// agent's tool search (state/tool-search.ts).
 
 import { useEffect } from 'react'
 import { api } from '@/hermes/rest'
 import { rememberedSet, upkeep } from '@/lib/upkeep'
 import { scoped } from '@/hermes/instance'
 import { hostedAppsAllowed } from './hosted-apps-consent'
+import { IMAGE_TOOL, PLAN_TOOL, nextDefer, readDefaultDefer, type ToolSearchConfig } from './tool-search'
 
 export const HIDDEN_TOOLSETS = ['catalog', 'project']
 /** Hermes's manage_connections: off until the person agrees to apps through Nous. */
@@ -65,21 +70,40 @@ export function withHiddenToolsets(current: unknown, hosted = false): string[] |
 }
 
 /**
- * Switch off what Murmur can't show, for one agent. `hosted`: whether apps
- * through Nous are allowed, asked of Hermes when not given.
+ * The agent's tool-search list with the plan tool to hand, or null when it
+ * already is. `current` is the agent's own list (none: Hermes's default). The
+ * image tool stays out once pictures took it out (state/pictures.ts).
+ */
+export function murmurDefer(current: unknown, defaults: unknown): string[] | null {
+  const drawing = Array.isArray(current) && !current.includes(IMAGE_TOOL)
+  return nextDefer(current, defaults, drawing ? [PLAN_TOOL, IMAGE_TOOL] : [PLAN_TOOL])
+}
+
+/**
+ * Switch off what Murmur can't show, and keep to hand what it can, for one
+ * agent. `hosted`: whether apps through Nous are allowed, asked of Hermes when
+ * not given.
  */
 export async function hideDesktopToolsets(profile: string, hosted?: boolean) {
   const allowed = hosted ?? (await hostedAppsAllowed())
   const q = `profile=${encodeURIComponent(profile)}`
-  const config = await api.get<{ agent?: { disabled_toolsets?: unknown }; display?: Display }>(
-    `/api/config?${q}&include_defaults=false`,
-  )
+  const [config, defaults] = await Promise.all([
+    api.get<{ agent?: { disabled_toolsets?: unknown }; display?: Display } & ToolSearchConfig>(
+      `/api/config?${q}&include_defaults=false`,
+    ),
+    readDefaultDefer(),
+  ])
   const next = withHiddenToolsets(config?.agent?.disabled_toolsets, allowed)
   const display = murmurDisplay(config?.display)
+  const defer = murmurDefer(config?.tools?.tool_search?.defer, defaults)
   // PUT deep-merges into the file, so only these keys change.
-  if (next || display)
+  if (next || display || defer)
     await api.put(`/api/config?${q}`, {
-      config: { ...(next && { agent: { disabled_toolsets: next } }), ...(display && { display }) },
+      config: {
+        ...(next && { agent: { disabled_toolsets: next } }),
+        ...(display && { display }),
+        ...(defer && { tools: { tool_search: { defer } } }),
+      },
     })
   synced(allowed).add(profile)
 }
@@ -87,8 +111,8 @@ export async function hideDesktopToolsets(profile: string, hosted?: boolean) {
 // Agents known to be in step, remembered across reloads (for a day) so most
 // page loads have nothing to do. One list for each answer about apps through
 // Nous, so agreeing puts every agent through again.
-const syncedOff = rememberedSet(scoped('murmur:desktop-tools:3'))
-const syncedOn = rememberedSet(scoped('murmur:desktop-tools:hosted:3'))
+const syncedOff = rememberedSet(scoped('murmur:desktop-tools:4'))
+const syncedOn = rememberedSet(scoped('murmur:desktop-tools:hosted:4'))
 const synced = (hosted: boolean) => (hosted ? syncedOn : syncedOff)
 
 /**
