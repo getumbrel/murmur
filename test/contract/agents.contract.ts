@@ -75,6 +75,8 @@ describe('an agent', () => {
     await deleteAgent(toAgent(await profile(id)))
     expect((await listProfiles()).map((p) => p.name)).not.toContain(id)
     id = ''
+    // Nothing of it is left open in Hermes: refreshing every chat's apps (connecting one) still works.
+    expect(await socket.request('reload.mcp', { confirm: true })).toMatchObject({ status: 'reloaded' })
     expect((await api.call('DELETE', '/api/profiles/default')).status).toBeGreaterThanOrEqual(400)
   })
 })

@@ -632,8 +632,17 @@ export async function writeMeta(
 /** Remove an agent with its chats and memory. The main agent can't be deleted. */
 export async function deleteAgent(agent: Agent) {
   if (agent.isDefault) throw new Error('The main agent can’t be deleted.')
+  await closeOpenChats(agent.id)
   await api.delete(`/api/profiles/${encodeURIComponent(agent.id)}`)
   setPendingLook(agent.id)
+}
+
+/** Closes the agent's chats that are open in Hermes, so none outlives it there: Hermes keeps a deleted
+ *  agent's open chats, and refreshing them (reload.mcp, as connecting an app does) then fails for every
+ *  agent. A Hermes that can't list them leaves them as they were. */
+async function closeOpenChats(agent: string) {
+  const open = await rpc<{ sessions: { id: string }[] }>('session.active_list', { profile: agent }).catch(() => ({ sessions: [] }))
+  await Promise.all(open.sessions.map((s) => rpc('session.close', { session_id: s.id, profile: agent }).catch(() => {})))
 }
 
 // ── Chats per agent ─────────────────────────────────────────────────────────

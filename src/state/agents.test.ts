@@ -12,8 +12,9 @@ vi.mock('./umbrel-context', () => ({ ensureUmbrelContext: vi.fn(async () => {}) 
 vi.mock('./umbrel-mcp', () => ({ ensureUmbrelMcp: vi.fn(async () => {}) }))
 vi.mock('./mail', () => ({ forgetInheritedMail: vi.fn(async () => {}) }))
 
-const { agentsKey, asTheyAre, createAgent, revealAgent, rosterQuery, saysGone } = await import('./agents')
+const { agentsKey, asTheyAre, createAgent, deleteAgent, revealAgent, rosterQuery, saysGone } = await import('./agents')
 const { rpc } = (await import('@/hermes/gateway')) as unknown as { rpc: ReturnType<typeof vi.fn> }
+const { api } = (await import('@/hermes/rest')) as unknown as { api: Record<string, ReturnType<typeof vi.fn>> }
 const { listProfiles } = (await import('@/hermes/compat')) as unknown as { listProfiles: ReturnType<typeof vi.fn> }
 
 const agent = (id: string, more: Partial<Agent> = {}): Agent => ({ id, name: id, hue: 0, role: '', isDefault: false, ...more })
@@ -96,6 +97,27 @@ describe('a new agent', () => {
     await expect(make()).rejects.toThrow('Hermes said no')
     await revealAgent(qc, 'coder')
     expect(names(qc)).toEqual(['Hermes', 'Zed'])
+  })
+})
+
+describe('a deleted agent', () => {
+  it('has its chats that are open in Hermes closed first, so none outlives it there', async () => {
+    const asked: string[] = []
+    rpc.mockImplementation(async (method: string, params: { session_id?: string }) => {
+      asked.push(params.session_id ? `${method} ${params.session_id}` : method)
+      return method === 'session.active_list' ? { sessions: [{ id: 'run-1' }, { id: 'run-2' }] } : { closed: true }
+    })
+    api.delete = vi.fn(async () => asked.push('delete'))
+    await deleteAgent(agent('zed'))
+    expect(rpc).toHaveBeenCalledWith('session.active_list', { profile: 'zed' })
+    expect(asked).toEqual(['session.active_list', 'session.close run-1', 'session.close run-2', 'delete'])
+  })
+
+  it('is deleted on a Hermes that can’t list them', async () => {
+    rpc.mockRejectedValue(new Error('unknown method'))
+    api.delete = vi.fn(async () => {})
+    await deleteAgent(agent('zed'))
+    expect(api.delete).toHaveBeenCalledWith('/api/profiles/zed')
   })
 })
 
