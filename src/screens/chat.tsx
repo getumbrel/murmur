@@ -8,6 +8,7 @@ import { Thread } from '@/features/chat/thread'
 import { RunHeader, useRunItems } from '@/features/routines/run-view'
 import { useChatName } from '@/features/chat-screen/chat-name'
 import { Composer, useKeyboardInset, type ComposerHandle } from '@/features/chat/composer'
+import { newChatDraft } from '@/features/chat/use-draft'
 import { DropZone } from '@/features/chat-screen/drop-zone'
 import type { MediaContext } from '@/features/media/context'
 import type { ChatItem } from '@/features/chat/types'
@@ -752,7 +753,7 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
               busy={busy}
               disabled={!agent || openError}
               placeholder={agent ? `Message ${clip(agent.name)}` : 'Message'}
-              draftKey={id ?? `${agentId}:new`}
+              draftKey={id ?? newChatDraft(agentId)}
               commands={commands}
               extraCommands={id ? catalog.data?.commands : undefined}
               onCommand={onCommand}

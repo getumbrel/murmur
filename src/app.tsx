@@ -37,6 +37,7 @@ import { ShortcutsSheet, useShortcuts } from '@/features/commands/shortcuts'
 import { retryUnlessMissing } from '@/hermes/compat'
 import { setDesktopBadge } from '@/lib/desktop'
 import { NotificationOffer, useNotifier } from '@/features/notifications/notify'
+import { ShareSheet } from '@/features/share/share-sheet'
 
 // Screens most visits never open load on the side, so the first open is quick.
 const GroupScreen = lazyComponent(() => import('@/screens/group').then((m) => m.GroupScreen))
@@ -76,6 +77,7 @@ export function App() {
             <Gate>
               <Background />
               <ShortcutsSheet />
+              <ShareSheet />
               <Shell>
                 <Suspense>
                   <Switch>
@@ -111,6 +113,9 @@ export function App() {
                           <GroupScreen groupId={p.group} />
                         </Pushed>
                       )}
+                    </Route>
+                    <Route path="/new">
+                      <NewChat />
                     </Route>
                     <Route path="/settings/:section?">{(p) => <SettingsScreen section={p.section} />}</Route>
                     <Route path="/welcome/:step?">{(p) => <OnboardingScreen step={p.step} />}</Route>
@@ -186,6 +191,16 @@ function Gate({ children }: { children: ReactNode }) {
   useLayoutEffect(() => useBooting.setState({ booting }), [booting])
   if (booting) return <Splash />
   return <>{children}</>
+}
+
+/** The home-screen shortcut's New chat (public/manifest.webmanifest): a blank chat with the main agent. */
+function NewChat() {
+  const main = useAgents().data?.find((a) => a.isDefault)
+  const [, navigate] = useLocation()
+  useEffect(() => {
+    if (main) navigate(`/chat/${main.id}/new`, { replace: true })
+  }, [main, navigate])
+  return null
 }
 
 /** Phones: a pushed page can be dragged back from the left edge to the page beneath. */

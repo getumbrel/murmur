@@ -14,5 +14,22 @@
     { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
     { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" },
     { "src": "/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "share_target": {
+    "action": "/share",
+    "method": "GET",
+    "enctype": "application/x-www-form-urlencoded",
+    "params": { "title": "title", "text": "text", "url": "url" }
+  },
+  "shortcuts": [
+    {
+      "name": "New chat",
+      "description": "Start a chat with your main agent",
+      "url": "/new",
+      "icons": [
+        { "src": "/shortcut-new-chat.png", "sizes": "192x192", "type": "image/png" },
+        { "src": "/shortcut-new-chat-maskable.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" }
+      ]
+    }
   ]
 }

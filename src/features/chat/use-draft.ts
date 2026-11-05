@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useState, type RefObject } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useState, type RefObject } from 'react'
 import { scoped } from '@/hermes/instance'
 
 // What every message box shares: unsent text that survives a reload, and a
@@ -24,6 +24,22 @@ function writeDraft(key: string, text: string) {
   }
 }
 
+/** Where an agent's next blank chat keeps what's typed into it. */
+export const newChatDraft = (agentId: string) => `${agentId}:new`
+/** Where a group keeps what's typed into it. */
+export const groupDraft = (groupId: string) => `group:${groupId}`
+
+// The boxes on screen now, by key, so text put in from elsewhere shows at once.
+const showing = new Map<string, Set<(text: string) => void>>()
+
+/** Puts `text` in a message box, a blank line under whatever's there already, and shows it if the box is on screen. */
+export function addToDraft(key: string, text: string) {
+  const before = readDraft(key).trimEnd()
+  const next = before ? `${before}\n\n${text}` : text
+  writeDraft(key, next)
+  showing.get(key)?.forEach((show) => show(next))
+}
+
 /** Unsent text, kept per key (a chat, a group) across reloads. `clear` forgets it at once. */
 export function useDraft(key?: string) {
   const [text, setText] = useState(() => readDraft(key))
@@ -32,6 +48,15 @@ export function useDraft(key?: string) {
     setShown(key)
     setText(readDraft(key))
   }
+  useEffect(() => {
+    if (!key) return
+    const boxes = showing.get(key) ?? new Set()
+    showing.set(key, boxes.add(setText))
+    return () => {
+      boxes.delete(setText)
+      if (!boxes.size) showing.delete(key)
+    }
+  }, [key])
   // Saved with every change (a write takes microseconds), so leaving the
   // moment you stop typing loses nothing.
   const change = useCallback(

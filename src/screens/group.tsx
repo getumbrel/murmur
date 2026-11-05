@@ -3,6 +3,7 @@ import { useLocation } from 'wouter'
 import { MotionConfig } from 'motion/react'
 import { Thread } from '@/features/chat/thread'
 import { useKeyboardInset } from '@/features/chat/use-keyboard-inset'
+import { groupDraft } from '@/features/chat/use-draft'
 import { GroupHeader } from '@/features/group/group-header'
 import { GroupComposer } from '@/features/group/group-composer'
 import { GroupEmpty } from '@/features/group/group-empty'
@@ -92,7 +93,7 @@ export function GroupScreen({ groupId }: { groupId: string }) {
               busy={working}
               disabled={!group}
               hue={active?.member.hue}
-              draftKey={`group:${groupId}`}
+              draftKey={groupDraft(groupId)}
               onDraftChange={onDraftChange}
               autoFocus={fine}
             />
