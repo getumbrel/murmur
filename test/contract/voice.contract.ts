@@ -13,7 +13,7 @@ import { startGateway, stopGateway } from '@/hermes/gateway'
 import { signOutChatGPT } from '@/state/models'
 import { LANGUAGES, checkVoiceKey, chooseVoice, readVoice, removeVoiceKey, sampleVoice, voiceSetupError } from '@/features/talk/voice-setup'
 import { liveStatus } from '@/features/talk/live'
-import { agentName, api, connect, newChat, q, type Socket } from './client'
+import { agentName, api, connect, newChat, q, removeAgent, type Socket } from './client'
 
 let socket: Socket
 const agent = agentName('voice')
@@ -25,7 +25,7 @@ beforeAll(async () => {
   await socket.request('profiles.create', { name: agent, share_auth: true }, 120_000)
 })
 afterAll(async () => {
-  await api.call('DELETE', `/api/profiles/${agent}`)
+  await removeAgent(agent)
   socket?.close()
   stopGateway()
 })
@@ -56,7 +56,7 @@ describe('taking a voice’s key away', () => {
   const keyed = agentName('voice-keys')
   const env = () => inHermes(`cat /opt/data/profiles/${keyed}/.env`)
   beforeAll(() => socket.request('profiles.create', { name: keyed, share_auth: true }, 120_000))
-  afterAll(() => api.call('DELETE', `/api/profiles/${keyed}`))
+  afterAll(() => removeAgent(keyed))
 
   it('removes it from the agent’s .env and says the voice needs one again', async () => {
     await chooseVoice(keyed, 'elevenlabs', { key: 'sk_contract_fake_elevenlabs' })
@@ -113,7 +113,7 @@ http.server.HTTPServer(('127.0.0.1', ${PORT}), H).serve_forever()
     await api.put(`/api/config?${q(swapped)}`, { config: { tts: { openai: { base_url: `http://127.0.0.1:${PORT}/v1` } } } })
     await chooseVoice(swapped, 'openai', { key: 'sk-contract-fake-working' })
   })
-  afterAll(() => api.call('DELETE', `/api/profiles/${swapped}`))
+  afterAll(() => removeAgent(swapped))
 
   it('turns down a key the service refuses, and nothing changes', async () => {
     expect(await sampleVoice(swapped, 'Before.')).toMatch(/^data:/)

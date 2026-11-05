@@ -24,7 +24,7 @@ import { startGateway } from '@/state/hermes-gateway'
 import { fetchRoutineRuns, fetchRunResult, runOf } from '@/state/routines'
 import { placeLastChats, toAgent, type Profile } from '@/state/agents'
 import { parseUserMessage } from '@/features/media/parse'
-import { agentName, api, connect, modelRequests, newChat, q, sleep, turn, type Socket } from './client'
+import { agentName, api, connect, modelRequests, newChat, q, removeAgent, sleep, turn, type Socket } from './client'
 import { toolsTag } from './fake-model'
 
 const agent = agentName('routines')
@@ -41,7 +41,7 @@ beforeAll(async () => {
   await socket.request('profiles.create', { name: agent, share_auth: true }, 120_000)
 })
 afterAll(async () => {
-  await api.call('DELETE', `/api/profiles/${agent}`)
+  await removeAgent(agent)
   socket?.close()
 })
 

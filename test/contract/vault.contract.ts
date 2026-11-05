@@ -12,7 +12,7 @@ import { startGateway, stopGateway } from '@/hermes/gateway'
 import { composeSoul, createAgent } from '@/state/agents'
 import { approvalText } from '@/features/chat/approval-text'
 import { readVault, readVaultList, vaultActions } from '@/state/vault'
-import { api, connect, newChat, turn, type Socket } from './client'
+import { connect, newChat, removeAgent, turn, type Socket } from './client'
 import { toolsTag } from './fake-model'
 
 const run = promisify(execFile)
@@ -41,7 +41,7 @@ let other: string | undefined
 beforeAll(() => startGateway())
 afterAll(async () => {
   for (const entry of await readVault('default')) await vault.remove(entry).catch(() => {})
-  if (other) await api.call('DELETE', `/api/profiles/${other}`)
+  if (other) await removeAgent(other)
   stopGateway()
 })
 

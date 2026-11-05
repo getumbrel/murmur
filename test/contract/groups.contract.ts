@@ -2,7 +2,7 @@
 // talked to, read back as a log, renamed and disbanded.
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { agentName, api, connect, sleep, type Socket } from './client'
+import { agentName, connect, removeAgent, sleep, type Socket } from './client'
 
 let socket: Socket
 const member = agentName('member')
@@ -19,7 +19,7 @@ beforeAll(async () => {
   await socket.request('profiles.create', { name: member, share_auth: true }, 120_000)
 })
 afterAll(async () => {
-  await api.call('DELETE', `/api/profiles/${member}`)
+  await removeAgent(member)
   socket?.close()
 })
 

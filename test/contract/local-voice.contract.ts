@@ -11,7 +11,7 @@ import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest'
 import { startGateway, stopGateway } from '@/hermes/gateway'
 import { LANGUAGES, chooseVoice, pickVoice, readVoice } from '@/features/talk/voice-setup'
 import { installLocal, readLocal, type LocalVoice } from '@/features/talk/local-voice'
-import { MURMUR, agentName, api, connect, modelRequests, newChat, q, turn, type Socket } from './client'
+import { MURMUR, agentName, api, connect, modelRequests, newChat, q, removeAgent, turn, type Socket } from './client'
 
 const hermes = inject('hermes')
 let socket: Socket
@@ -31,7 +31,7 @@ beforeAll(async () => {
     )
 }, 180_000)
 afterAll(async () => {
-  await api.call('DELETE', `/api/profiles/${agent}`)
+  await removeAgent(agent)
   socket?.close()
   stopGateway()
 })

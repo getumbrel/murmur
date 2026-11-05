@@ -114,6 +114,20 @@ export async function connect(answer?: (request: ServerRequest) => Record<string
   return socket
 }
 
+/** Deletes an agent as Murmur's deleteAgent does (src/state/agents.ts), its chats open in Hermes closed
+ *  first: Hermes 0.22.6 on keeps a deleted agent's open chats, and reload.mcp then fails for every agent
+ *  in the rest of the run. */
+export async function removeAgent(agent: string) {
+  const socket = await connect()
+  try {
+    const open = await socket.request<{ sessions: { id: string }[] }>('session.active_list', { profile: agent }).catch(() => ({ sessions: [] }))
+    for (const s of open.sessions) await socket.request('session.close', { session_id: s.id, profile: agent }).catch(() => {})
+  } finally {
+    socket.close()
+  }
+  return api.call('DELETE', `/api/profiles/${agent}`)
+}
+
 /** A new chat with `agent`, made the way the app makes one. */
 export async function newChat(socket: Socket, agent = 'default') {
   const created = await socket.request<{ session_id: string; stored_session_id: string; info: Json }>('session.create', {

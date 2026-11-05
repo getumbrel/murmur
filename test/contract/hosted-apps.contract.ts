@@ -21,7 +21,7 @@ import type { CatalogApp } from '@/state/apps'
 import { arrangeApps, readHostedAccounts, readHostedCatalog, reasonOf } from '@/state/hosted-apps'
 import { CONSENT_KEY, forgetHostedConsent, hostedConsent, recordHostedConsent } from '@/state/hosted-apps-consent'
 import { allowHostedApps, hideDesktopToolsets, HOSTED_TOOLSET } from '@/state/toolsets'
-import { agentName, api, connect, modelRequests, newChat, q, turn, type Socket } from './client'
+import { agentName, api, connect, modelRequests, newChat, q, removeAgent, turn, type Socket } from './client'
 
 const run = promisify(execFile)
 const ACCOUNT = { type: 'account' }
@@ -36,7 +36,7 @@ beforeAll(async () => {
 })
 afterAll(async () => {
   await socket.request('profiles.configure', { name: 'default', ui_meta: { [CONSENT_KEY]: null } }).catch(() => {})
-  for (const agent of made) await api.call('DELETE', `/api/profiles/${agent}`)
+  for (const agent of made) await removeAgent(agent)
   socket?.close()
   stopGateway()
 })

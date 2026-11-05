@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { startGateway, stopGateway } from '@/hermes/gateway'
 import { listProfiles } from '@/hermes/compat'
 import { composeSoul, createAgent, deleteAgent, fetchAgentChats, fetchSoul, readSoul, toAgent, updateAgent, type Profile } from '@/state/agents'
-import { api, connect, newChat, sleep, turn, type Socket } from './client'
+import { api, connect, newChat, removeAgent, sleep, turn, type Socket } from './client'
 
 let socket: Socket
 let id: string
@@ -19,7 +19,7 @@ beforeAll(async () => {
   socket = await connect()
 })
 afterAll(async () => {
-  if (id) await api.call('DELETE', `/api/profiles/${id}`)
+  if (id) await removeAgent(id)
   socket?.close()
   stopGateway()
 })

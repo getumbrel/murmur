@@ -11,7 +11,7 @@ import { importAgent } from '@/state/backups'
 import { chatUsageOf, slicesOf, summarizeWeek } from '@/state/insights'
 import { ensureAgentTimezone, readTimezone } from '@/state/timezone'
 import { HIDDEN_TOOLSETS, hideDesktopToolsets } from '@/state/toolsets'
-import { agentName, api, connect, newChat, q, turn, type Socket } from './client'
+import { agentName, api, connect, newChat, q, removeAgent, turn, type Socket } from './client'
 
 let socket: Socket
 const agent = agentName('settings')
@@ -23,7 +23,7 @@ beforeAll(async () => {
   await socket.request('profiles.create', { name: agent, share_auth: true }, 120_000)
 })
 afterAll(async () => {
-  await api.call('DELETE', `/api/profiles/${agent}`)
+  await removeAgent(agent)
   socket?.close()
   stopGateway()
 })
@@ -197,7 +197,7 @@ describe('backups', () => {
       const { profiles } = await socket.request('profiles.list', {})
       expect(profiles.find((x: { name: string }) => x.name === id)?.ui_meta).toMatchObject({ murmur: { hue: 120 } })
     } finally {
-      await api.call('DELETE', `/api/profiles/${id}`)
+      await removeAgent(id)
     }
   })
 })

@@ -32,7 +32,7 @@ import {
   setMailEnabled,
   type MailConnectInput,
 } from '@/state/mail'
-import { agentName, api, connect, MURMUR, modelRequests, newChat, q, sleep, turn, type Socket } from './client'
+import { agentName, api, connect, MURMUR, modelRequests, newChat, q, removeAgent, sleep, turn, type Socket } from './client'
 import { toolsTag } from './fake-model'
 import { MAIL_HOST, MAILBOXES, PORTS, startGreenMail, type GreenMail } from './greenmail'
 import { MAIL_PLUGIN } from './harness'
@@ -81,7 +81,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await disconnectMail(qc, 'default').catch(() => {})
-  if (other) await api.call('DELETE', `/api/profiles/${other}`)
+  if (other) await removeAgent(other)
   socket?.close()
   stopGateway()
   await mail?.stop()
@@ -198,7 +198,7 @@ describe('connecting', () => {
       expect(await fetchMailStatus(copy)).toMatchObject({ enabled: MAIL_PLUGIN === 'add', configured: false, account: null })
       expect(await envFile(copy)).not.toMatch(/MURMUR_MAIL_/)
     } finally {
-      await api.call('DELETE', `/api/profiles/${copy}`)
+      await removeAgent(copy)
     }
     // An agent Murmur makes doesn't keep the copy even that long (createAgent clears it).
     other = await createAgent({ name: `Contract Mail ${Date.now().toString(36)}`, hue: 120, role: 'Mail' })

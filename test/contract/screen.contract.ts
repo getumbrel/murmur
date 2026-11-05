@@ -38,7 +38,7 @@ import {
   type Screen,
 } from '@/state/screen'
 import { tookFor } from '@/features/chat/tool-labels'
-import { agentName, api, connect, modelRequests, newChat, q, sleep, turn, type Socket } from './client'
+import { agentName, api, connect, modelRequests, newChat, q, removeAgent, sleep, turn, type Socket } from './client'
 import { toolsTag } from './fake-model'
 
 const run = promisify(execFile)
@@ -87,7 +87,7 @@ beforeAll(async () => {
 }, 180_000)
 
 afterAll(async () => {
-  if (other) await api.call('DELETE', `/api/profiles/${other}`)
+  if (other) await removeAgent(other)
   socket?.close()
   stopGateway()
 })

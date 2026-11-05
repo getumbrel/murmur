@@ -12,7 +12,7 @@ import { startGateway, stopGateway } from '@/hermes/gateway'
 import { listProfiles } from '@/hermes/compat'
 import { agentsKey, toAgent, updateAgent, type Agent, type Profile } from '@/state/agents'
 import { createSection, deleteSection, editSection, file, sectionOf, sectionsOf, type Section } from '@/state/sections'
-import { agentName, api, connect, type Socket } from './client'
+import { agentName, connect, removeAgent, type Socket } from './client'
 
 type Meta = Record<string, unknown>
 
@@ -72,7 +72,7 @@ beforeAll(async () => {
   }
 })
 afterAll(async () => {
-  for (const id of made) await api.call('DELETE', `/api/profiles/${id}`)
+  for (const id of made) await removeAgent(id)
   if (main) await socket.request('profiles.configure', { name: main, ui_meta: mainBefore })
   socket?.close()
   stopGateway()

@@ -8,7 +8,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { openSocket, type HermesSocket } from '../../server/socket.ts'
 import { createWatcher, type Moment } from '../../server/watch.ts'
-import { agentName, api, connect, MURMUR, newChat, q, sleep, turn, type Socket } from './client'
+import { agentName, api, connect, MURMUR, newChat, q, removeAgent, sleep, turn, type Socket } from './client'
 import { toolsTag } from './fake-model'
 
 const agent = agentName('notify')
@@ -26,7 +26,7 @@ beforeAll(async () => {
   })
 })
 afterAll(async () => {
-  await api.call('DELETE', `/api/profiles/${agent}`)
+  await removeAgent(agent)
   watching?.close()
   server?.close()
 })
