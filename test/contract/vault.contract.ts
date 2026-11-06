@@ -12,7 +12,7 @@ import { startGateway, stopGateway } from '@/hermes/gateway'
 import { composeSoul, createAgent } from '@/state/agents'
 import { approvalText } from '@/features/chat/approval-text'
 import { readVault, readVaultList, vaultActions } from '@/state/vault'
-import { connect, newChat, removeAgent, turn, type Socket } from './client'
+import { api, connect, newChat, removeAgent, turn, type Socket } from './client'
 import { toolsTag } from './fake-model'
 
 const run = promisify(execFile)
@@ -110,6 +110,7 @@ describe('the agent’s browser', () => {
   // One chat for both tests. Once a second agent exists, Hermes 0.22.5 starts a later chat's browser apart
   // from the one its fills reach, so a fill in a new chat finds no page.
   let chat: { socket: Socket; runtime: string } | undefined
+  let cardFilled = false
   afterAll(() => chat?.socket.close())
   const open = async () => {
     if (chat) return chat
@@ -170,6 +171,27 @@ describe('the agent’s browser', () => {
     // Name, number, MM/YY and the code. (Read back as lengths: Hermes blanks out any secret the browser echoes.)
     expect(typed(socket, runtime)[1]).toBe('3,16,5,3')
     expect(socket.requests.find((r) => r.method === 'approval')?.params).toMatchObject({ pattern_keys: ['mcp_elicitation'] })
+    cardFilled = true
+  })
+
+  // Hermes keeps a filled card's values, down to its month "12" and the name "Ada", to scrub them from what the
+  // browser hands the model. Until hermes-agent#149596 is fixed it scrubs every export with them too, and the image's
+  // patch for it gives redact_sensitive_text a vault_values keyword. Look for Hermes's own fix here once it has one.
+  const exportsAsItIs = async () => {
+    const check = 'import inspect\nfrom agent.redact import redact_sensitive_text\nprint("vault_values" in inspect.signature(redact_sensitive_text).parameters)'
+    return (await inHermes('python', '-c', check)).stdout.trim() === 'True'
+  }
+
+  it('exports an agent as it is after its browser filled a card', async ({ skip }) => {
+    if (!cardFilled || !(await exportsAsItIs())) return skip()
+    const look = JSON.stringify({ name: 'Ada', hue: 120 })
+    const { archive } = await api.post<{ archive: string }>('/api/profiles/default/export', { extra_files: { 'murmur.json': look } })
+    const read = ['import sys, tarfile', 'sys.stdout.write(tarfile.open(sys.argv[1]).extractfile("default/murmur.json").read().decode())'].join('\n')
+    try {
+      expect((await inHermes('python', '-c', read, archive)).stdout).toBe(look)
+    } finally {
+      await inHermes('rm', '-f', archive)
+    }
   })
 
   it('pays with a card for any website, into the checkout’s card frame, and keeps where it was used', async ({ skip }) => {
