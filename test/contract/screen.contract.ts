@@ -260,6 +260,95 @@ async function pastes() {
   }
 }
 
+/** The sign-in page, marked as this chat's: a browser opened again shows it with nothing on it. */
+const MINE = step(
+  'Opening the sign-in page',
+  `new_tab("${PAGE}sign-in.html")\nwait_for_load()\njs("window.mine = 'still mine'")`,
+)
+const WHERE = step('Checking where I am', `print(js("[window.mine, location.href].join(' ')"))`)
+
+/** Whether an agent's browser is open on its screen (each agent has a screen, and a browser, of its own). */
+async function browserOpen(agent: string) {
+  const { stdout } = await run('docker', [
+    ...['exec', hermes.container, 'sh', '-c'],
+    `for p in $(pgrep -x chrome); do grep -q "profiles/${agent}/bot-desktop/" /proc/$p/cmdline && echo $p; done; true`,
+  ])
+  return stdout.trim() !== ''
+}
+
+/** Waits for Hermes to close a chat's browser for sitting idle (browser.inactivity_timeout, 2 minutes). */
+async function idledOut(agent: string, chat: string) {
+  const logs = `/opt/data/logs/agent.log /opt/data/profiles/${agent}/logs/agent.log`
+  for (const until = Date.now() + 240_000; Date.now() < until; await sleep(2000)) {
+    // "Cleaning up inactive session for task: <chat>@…" on 0.22.5, "… session <chat>@…" from 0.22.6.
+    const { stdout } = await run('docker', [
+      ...['exec', hermes.container, 'sh', '-c'],
+      `grep -h "Cleaning up inactive session.*${chat}" ${logs} 2>/dev/null; true`,
+    ])
+    if (stdout.trim()) return
+  }
+  throw new Error(`Hermes didn’t close ${chat}’s idle browser in 4 minutes`)
+}
+
+/**
+ * Every chat's agent browses in the one browser on the screen. The chat that
+ * opened it letting go of it (Hermes closes a chat's browser a little after
+ * the chat is left, or, for an agent other than the main one, once it has sat
+ * idle) used to close it under another chat waiting for a sign-in: the person
+ * came to an empty screen. It stays for that chat now, on its page, and closes
+ * once no chat has it. With an agent of its own, so no other chat here has
+ * that browser.
+ */
+async function sharesTheBrowser() {
+  const agent = await createAgent({ name: agentName('browser'), hue: 140, role: 'Shopping' })
+  try {
+    await api.put(`/api/config?${q(agent)}`, { config: { browser: { allow_private_urls: true } } })
+    await syncScreens([agent])
+    // On a Hermes without murmur-screen, joins the install the sync started (one with it has it on already).
+    if (!(await pluginOn(agent))) await addScreenPlugin(agent)
+    expect(await pluginOn(agent)).toBe(true)
+
+    const first = await newChat(socket, agent)
+    await turn(socket, first.runtime, toolsTag([OPEN]), agent)
+    expect(printed(first.runtime)[0]).toContain(TITLE)
+    const { direct } = await lastAsk()
+
+    // Another chat opens the sign-in page and asks for a hand; the first sits idle until Hermes lets its browser go.
+    const second = await newChat(socket, agent)
+    const reason = 'Sign in to the shop'
+    const asked = next('the ask', (e) =>
+      e.type === 'tool.start' && e.session_id === second.runtime && JSON.stringify(e.payload).includes(ASK_TOOL)
+        ? e
+        : undefined,
+    )
+    const done = next(
+      'the second chat to carry on',
+      (e) => (e.type === 'message.complete' && e.session_id === second.runtime ? e : undefined),
+      300_000,
+    )
+    const text = toolsTag([MINE, reach(ASK_TOOL, { reason }, direct), WHERE])
+    await socket.request('prompt.submit', { session_id: second.runtime, text, profile: agent })
+    await asked()
+    await idledOut(agent, first.stored)
+    await sleep(5000) // Hermes notes it, then closes it
+    expect(await browserOpen(agent)).toBe(true)
+
+    // The person signs in, and the chat carries on, on its page as it left it.
+    await takeOver(agent, reason)
+    await sleep(1000)
+    await handBack(agent)
+    await done()
+    expect(printed(second.runtime)[0].trim()).toBe(`still mine ${PAGE}sign-in.html`)
+
+    // Once that chat lets its browser go too, nothing's left using it: it closes.
+    await idledOut(agent, second.stored)
+    for (let i = 0; i < 30 && (await browserOpen(agent)); i++) await sleep(1000)
+    expect(await browserOpen(agent)).toBe(false)
+  } finally {
+    await removeAgent(agent)
+  }
+}
+
 /** What browser_exec printed in a chat, latest first. */
 const printed = (runtime: string) =>
   socket
@@ -455,6 +544,11 @@ describe('a Hermes made for this (the screen and murmur-screen)', () => {
     await pastes()
   })
 
+  it('keeps one chat’s browser open when another chat ends', async (ctx) => {
+    if (!ready()) return ctx.skip()
+    await sharesTheBrowser()
+  }, 600_000)
+
   it('goes by each agent’s own setting', async (ctx) => {
     if (!ready() || !other) return ctx.skip()
     await api.put(`/api/config?${q(other)}`, { config: { browser: { headed: false } } })
@@ -556,6 +650,11 @@ describe('a Hermes of someone’s own, with the screen (Nous’s desktop image)'
     if (!own()) return ctx.skip()
     await pastes()
   })
+
+  it('keeps one chat’s browser open when another chat ends', async (ctx) => {
+    if (!own()) return ctx.skip()
+    await sharesTheBrowser()
+  }, 600_000)
 })
 
 describe('a Hermes without the screen (Linux, not set up for it)', () => {
