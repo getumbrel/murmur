@@ -4,7 +4,7 @@ storage:
   dataRoot: data
 category: ai
 name: Murmur
-version: "0.11.1"
+version: "0.12.0"
 tagline: A beautiful home for your Hermes agents
 description: >-
   Murmur is a calm, beautiful home for your Hermes agents. Open it on your phone or computer and just talk. Murmur comes with Hermes built in, so there's nothing else to install.
@@ -42,13 +42,22 @@ description: >-
 
   Call your agents to talk out loud, with voices on your Umbrel, on your ChatGPT plan, or from OpenAI or ElevenLabs. Calls need a secure connection, so Murmur reopens itself over https when you start. Reading replies aloud works everywhere.
 releaseNotes: >-
-  Every agent's browser now shows in the chat by itself, with no switch to turn on. While it opens, you see the site loading instead of a black screen.
+  When an agent needs your OK to run a command, the notification now says which command. A question buzzes your phone once, not twice.
 
 
-  Pinned models stay in their service's list too, so you can compare a service's whole range with your pins among them.
+  Ask an agent to keep an eye on something, and the routine it sets up reports back in that same chat, where the agent can see what it found.
 
 
-  Menus open right where you asked for them, instead of flying in from the corner. On phones, touch and hold no longer picks a menu's first item by accident.
+  While an agent thinks, you can see what it's thinking about, like “Checking the visa site”, with models that share it, such as ChatGPT and Gemini.
+
+
+  When you take over an agent's browser, you can paste with ⌘V or Ctrl+V, or with the Paste key on a phone.
+
+
+  On Android, share a link or a few words into Murmur from any app, and touch and hold Murmur's icon to start a new chat.
+
+
+  Murmur now comes with Hermes 0.23.0, and can sign in to a Hermes that uses single sign-on.
 developer: Umbrel
 website: https://umbrel.com
 dependencies: []
