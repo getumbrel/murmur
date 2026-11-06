@@ -467,24 +467,40 @@ describe('a Hermes made for this (the screen and murmur-screen)', () => {
   it('has what murmur-screen uses from Hermes where it looks for it', async (ctx) => {
     if (!plugin) return ctx.skip()
     // The plugin looks each one up when it's used and fails soft without it; this is where a Hermes
-    // update that moved one shows up.
+    // update that moved one shows up. The browser's are a Hermes's that starts Chromium itself (0.22.6
+    // on) or agent-browser's, found the way the plugin finds them: by tools.browser_launcher.
     const needs = {
-      'tools.environments.base': ['touch_activity_if_due'],
-      'tools.browser_tool': ['_cleanup_lock', '_session_last_activity'],
-      'tools.browser_tool_lifecycle': ['_update_session_activity'],
-      'tools.bot_desktop.runtime': ['touch_activity', 'published_env', 'is_supported_host', 'missing_binaries'],
-      'tools.bot_desktop.lease': ['get', 'HUMAN'],
-      'gateway.session_context': ['get_session_env'],
-      'tools.interrupt': ['is_interrupted'],
-      'tools.registry': ['no_cache_check_fn'],
-      'hermes_cli.config': ['read_raw_config'],
-      'tools.bot_desktop.browser': ['executable', 'profile_dir', 'running_instance_cdp_port'],
+      always: {
+        'tools.environments.base': ['touch_activity_if_due'],
+        'tools.bot_desktop.runtime': ['touch_activity', 'published_env', 'is_supported_host', 'missing_binaries'],
+        'tools.bot_desktop.lease': ['get', 'HUMAN'],
+        'gateway.session_context': ['get_session_env'],
+        'tools.interrupt': ['is_interrupted'],
+        'tools.registry': ['no_cache_check_fn'],
+        'hermes_cli.config': ['read_raw_config'],
+        'tools.bot_desktop.browser': ['executable', 'profile_dir'],
+      },
+      chromium: {
+        'tools.browser_launcher': ['build_chromium_argv', 'get_browser'],
+        'tools.browser_session': ['_cleanup_lock', '_session_last_activity'],
+        'tools.browser_session_lifecycle': ['update_session_activity'],
+        'tools.browser_session_cloud': ['is_headed_mode'],
+        'tools.bot_desktop.browser': ['dock_argv'],
+        'hermes_cli.browser_runtime': ['chromium_executable'],
+        hermes_constants: ['get_hermes_home'],
+      },
+      agentBrowser: {
+        'tools.browser_tool': ['_cleanup_lock', '_session_last_activity'],
+        'tools.browser_tool_lifecycle': ['_update_session_activity'],
+        'tools.bot_desktop.browser': ['running_instance_cdp_port'],
+      },
     }
     const script = [
-      'import importlib, json, sys',
+      'import importlib, importlib.util, json, sys',
       'needs = json.loads(sys.argv[1])',
+      'browser = needs["chromium" if importlib.util.find_spec("tools.browser_launcher") else "agentBrowser"]',
       'missing = []',
-      'for module, names in needs.items():',
+      'for module, names in [*needs["always"].items(), *browser.items()]:',
       '    try:',
       '        found = importlib.import_module(module)',
       '        missing += [f"{module}.{n}" for n in names if not hasattr(found, n)]',
