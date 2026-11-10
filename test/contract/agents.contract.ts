@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { startGateway, stopGateway } from '@/hermes/gateway'
 import { listProfiles } from '@/hermes/compat'
 import { composeSoul, createAgent, deleteAgent, fetchAgentChats, fetchSoul, readSoul, toAgent, updateAgent, type Profile } from '@/state/agents'
+import { updateChat } from '@/state/chats'
 import { api, connect, newChat, removeAgent, sleep, turn, type Socket } from './client'
 
 let socket: Socket
@@ -64,6 +65,32 @@ describe('an agent', () => {
     // The chat list previews how a chat began; Home, what was said last.
     const chats = await fetchAgentChats(id)
     expect(chats[0]).toMatchObject({ id: stored, preview: 'Plan the trip [[say: Packed]]', messageCount: 2, source: 'desktop' })
+  })
+
+  it('keeps its chats in the list however often a routine of its runs', async () => {
+    const { runtime, stored } = await newChat(socket, id)
+    await turn(socket, runtime, 'Any post? [[say: None]]', id)
+    const job = await api.post(`/api/cron/jobs?profile=${id}`, { name: 'Inbox watch', prompt: 'Check [[say: Nothing new]]', schedule: 'every 1h', deliver: 'local' })
+    // Up to Hermes 0.22.2 two runs that start in the same second share one chat.
+    await api.post(`/api/cron/jobs/${job.id}/trigger?profile=${id}`)
+    await sleep(1100)
+    await api.post(`/api/cron/jobs/${job.id}/trigger?profile=${id}`)
+
+    // Both runs are newer than the chat, and the list has room for one row.
+    expect((await fetchAgentChats(id, 1)).map((c) => c.id)).toEqual([stored])
+    await api.delete(`/api/cron/jobs/${job.id}?profile=${id}`)
+  })
+
+  it('leaves a chat that is pinned and archived out of the list', async () => {
+    const { runtime, stored } = await newChat(socket, id)
+    await turn(socket, runtime, 'Keep this [[say: Kept]]', id)
+    // Hermes Desktop archives a chat without unpinning it, and Hermes lists every pin.
+    await updateChat(stored, id, { pinned: true })
+    await updateChat(stored, id, { archived: true })
+    const { sessions } = await api.get(`/api/sessions?profile=${id}&limit=60&order=recent`)
+    expect(sessions.find((s: { id: string }) => s.id === stored)).toMatchObject({ pinned: true, archived: true })
+
+    expect((await fetchAgentChats(id)).some((c) => c.id === stored)).toBe(false)
   })
 
   it('is listed over REST too, for older Hermes and the group picker', async () => {

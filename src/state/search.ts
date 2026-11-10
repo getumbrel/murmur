@@ -6,8 +6,7 @@ import { create } from 'zustand'
 import { keepPreviousData, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { api } from '@/hermes/rest'
-import { rpc } from '@/hermes/gateway'
-import { readable, useAgents, type Agent } from '@/state/agents'
+import { fetchChatRows, readable, useAgents, type Agent } from '@/state/agents'
 import { plainLine } from '@shared/message.ts'
 import type { Found } from '@/state/seek'
 
@@ -145,11 +144,18 @@ type Session = {
   message_count?: number
 }
 
+/** How many of an agent's chats are searched by name: the most recently active, two pages of them. */
+const TITLES = 200
+
 /** Chats whose name matches: people search by what they called a chat. Lists are cached briefly. */
 async function searchTitles(qc: QueryClient, agent: Agent, q: string): Promise<SearchResult[]> {
-  const { sessions } = await qc.fetchQuery({
+  const sessions = await qc.fetchQuery({
     queryKey: ['chat-titles', agent.id],
-    queryFn: () => rpc<{ sessions: Session[] }>('session.list', { profile: agent.id, limit: 200 }),
+    queryFn: async (): Promise<Session[]> => {
+      const pages = await Promise.all([0, TITLES / 2].map((offset) => fetchChatRows(agent.id, TITLES / 2, offset)))
+      // A pinned chat comes with every page.
+      return [...new Map(pages.flat().map((s) => [s.id, s])).values()]
+    },
     staleTime: 30_000,
   })
   const needle = q.toLowerCase()
