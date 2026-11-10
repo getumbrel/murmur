@@ -1,5 +1,5 @@
-Vendored from NousResearch/hermes-agent `apps/shared/src` at tag **v0.23.0**
-(Hermes v0.23.0, the version Murmur bundles). MIT licensed,
+Vendored from NousResearch/hermes-agent `apps/shared/src` at tag **v0.23.1**
+(Hermes v0.23.1, the version Murmur bundles). MIT licensed,
 © Nous Research: `LICENSE` is upstream's notice and must stay with these files.
 
 These are Hermes's own typed JSON-RPC client and the generated wire contract
