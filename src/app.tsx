@@ -299,7 +299,7 @@ function Background() {
   useDocumentTitle()
   // Notifications on this device: kept signed up, told where you are, opened where they point.
   useNotifier()
-  // ⌘⇧O, ⌥↑/⌥↓, ⌘, and "?" (src/features/commands/shortcuts.tsx); not during the welcome.
+  // ⌘⇧O, ⌥↑/⌥↓, ⌘, and "?", and typing with nothing focused (src/features/commands/shortcuts.tsx); not during the welcome.
   useShortcuts(!useLocation()[0].startsWith('/welcome'))
   // Routines fire on the person's clock, not the server's UTC.
   useEffect(() => {

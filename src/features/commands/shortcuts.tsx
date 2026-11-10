@@ -3,11 +3,13 @@ import { create } from 'zustand'
 import { Sheet } from '@/ui/sheet'
 import { cn } from '@/lib/cn'
 import { navigate, mainAgentId } from '@/lib/transitions'
+import { typesText } from './typing'
 
 // Keyboard shortcuts, for people with a keyboard. Every one is listed in the
 // Shortcuts sheet ("?") and, where it makes sense, in the composer's command
 // palette. ⌘ on a Mac, Ctrl everywhere else. While you're typing only the ⌘
 // combos act (⌥↑/⌥↓ too, in an empty box, where they'd have nothing to move).
+// And with nothing focused, typing (or pasting) goes to the chat's message box.
 
 export const isMac =
   typeof navigator !== 'undefined' &&
@@ -81,6 +83,9 @@ const isField = (el: EventTarget | null): el is HTMLElement =>
 const hasText = (el: HTMLElement) =>
   el.isContentEditable ? !!el.textContent : 'value' in el && String((el as HTMLInputElement).value) !== ''
 
+/** Nothing has focus: the key went to the page itself. */
+const nowhere = (el: EventTarget | null) => el === document.body || el === document.documentElement
+
 /** A dialog other than the shortcuts sheet is up: keys belong to it. */
 const otherDialog = () =>
   [...document.querySelectorAll('[role="dialog"], [role="alertdialog"], [role="menu"]')].some(
@@ -97,7 +102,11 @@ export function newChat() {
   requestAnimationFrame(() => requestAnimationFrame(() => focusComposer()))
 }
 
-const focusComposer = () => document.querySelector<HTMLTextAreaElement>('[role="main"] textarea, main textarea, textarea[aria-label="Message"]')?.focus()
+/** The message box of the chat on screen, when there's one to type in. */
+const composer = () =>
+  [...document.querySelectorAll<HTMLTextAreaElement>('textarea[data-composer]:enabled')].find((el) => el.checkVisibility())
+
+const focusComposer = () => composer()?.focus()
 
 /**
  * The sidebar's chats in the order you see them: each agent, or the chats
@@ -155,8 +164,13 @@ export function useShortcuts(enabled: boolean) {
       }
       if (e.key === '?' && !e.metaKey && !e.ctrlKey && !e.altKey && !field) {
         e.preventDefault()
-        useSheet.setState({ open: !sheet })
+        return useSheet.setState({ open: !sheet })
       }
+
+      // Just start typing: with nothing focused, the chat's message box takes the key (the browser
+      // sends it on to whatever has focus by the time we're done here). "/" stays search's, where there's one.
+      if (sheet || !nowhere(e.target) || !typesText(e, isMac) || (e.key === '/' && searchField)) return
+      composer()?.focus({ preventScroll: true })
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)

@@ -301,6 +301,8 @@ export function Composer({
       onPaste={onPaste}
       placeholder={placeholder}
       disabled={disabled}
+      // Where typing with nothing focused goes, and New chat's ⌘⇧O (src/features/commands/shortcuts.tsx).
+      data-composer=""
       aria-label={editing ? 'Edit your message' : 'Message'}
       enterKeyHint={touch ? 'enter' : 'send'}
       role={commands ? 'combobox' : undefined}

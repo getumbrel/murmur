@@ -244,6 +244,7 @@ export function GroupComposer({
                 }}
                 placeholder={placeholder}
                 disabled={disabled}
+                data-composer=""
                 aria-label="Message"
                 role="combobox"
                 aria-autocomplete="list"
