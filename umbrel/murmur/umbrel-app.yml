@@ -4,7 +4,7 @@ storage:
   dataRoot: data
 category: ai
 name: Murmur
-version: "0.12.0"
+version: "0.13.0"
 tagline: A beautiful home for your Hermes agents
 description: >-
   Murmur is a calm, beautiful home for your Hermes agents. Open it on your phone or computer and just talk. Murmur comes with Hermes built in, so there's nothing else to install.
@@ -42,22 +42,34 @@ description: >-
 
   Call your agents to talk out loud, with voices on your Umbrel, on your ChatGPT plan, or from OpenAI or ElevenLabs. Calls need a secure connection, so Murmur reopens itself over https when you start. Reading replies aloud works everywhere.
 releaseNotes: >-
-  When an agent needs your OK to run a command, the notification now says which command. A question buzzes your phone once, not twice.
+  Find anything said in a chat, however far back: press ⌘F or Ctrl+F, or choose Find in chat from the chat's menu. Copy chat and Share now give the whole chat, and Download chat saves it as a file.
 
 
-  Ask an agent to keep an eye on something, and the routine it sets up reports back in that same chat, where the agent can see what it found.
+  A group can have more than one chat: New chat in a group's header, or in its menu on Home, starts a fresh one with the same agents, and its chats fold open under it in the list, the way an agent's do.
 
 
-  While an agent thinks, you can see what it's thinking about, like “Checking the visa site”, with models that share it, such as ChatGPT and Gemini.
+  Chats show when things were said, the way Messages does, and Settings > Appearance has a text size.
 
 
-  When you take over an agent's browser, you can paste with ⌘V or Ctrl+V, or with the Paste key on a phone.
+  When an agent asks you a question, you can also just reply in the chat: your message reaches it straight away as your answer. If an agent stops waiting for an answer, its question stays in the chat and says so.
 
 
-  On Android, share a link or a few words into Murmur from any app, and touch and hold Murmur's icon to start a new chat.
+  Just start typing: with nothing else selected, what you type goes into the message box.
 
 
-  Murmur now comes with Hermes 0.23.0, and can sign in to a Hermes that uses single sign-on.
+  An agent's chats stay in its list however often its routines run, and All chats opens straight to them.
+
+
+  In Murmur's Home Screen app on an iPhone, saving a file opens the share sheet, so you can save it to Files or send it.
+
+
+  A chat that can't be opened for a moment says so and keeps trying, instead of saying it's gone.
+
+
+  The first time an agent opens its browser in a while, you see the page as soon as it's there.
+
+
+  Murmur now comes with Hermes 0.23.1.
 developer: Umbrel
 website: https://umbrel.com
 dependencies: []
