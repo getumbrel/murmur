@@ -66,6 +66,9 @@ releaseNotes: >-
   A chat that can't be opened for a moment says so and keeps trying, instead of saying it's gone.
 
 
+  A chat with a photo sent from Hermes Desktop opens in Murmur, and the photo shows.
+
+
   The first time an agent opens its browser in a while, you see the page as soon as it's there.
 
 
