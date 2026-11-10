@@ -682,14 +682,26 @@ export const toSummary = (s: SessionRow): ChatSummary => ({
   source: s.source ?? '',
 })
 
+/** Sources nobody talked in: routines' runs, and the plumbing `session.list` drops by itself. */
+const NOT_CHATS = 'cron,kanban,tool,oneshot'
+
 /**
  * An agent's chats, most recent first. Hermes hides the main chat that Hermes
  * Desktop keeps ("Bot Chat") from its lists, so it's looked up by title and
  * slotted in by recency; other hidden chats (group plumbing) stay out.
+ *
+ * The list is read over REST, where Hermes leaves routines' runs out before it
+ * counts to the limit. `session.list` counts them and leaves dropping them to
+ * us, so a routine that runs every minute would fill the window by itself and
+ * an agent's chats would all go missing.
  */
 export async function fetchAgentChats(profile: string, limit = 60): Promise<ChatSummary[]> {
   const [shown, all, main] = await Promise.all([
-    rpc<{ sessions: SessionRow[] }>('session.list', { profile, limit }),
+    api
+      .get<{ sessions?: SessionRow[] }>(
+        `/api/sessions?profile=${encodeURIComponent(profile)}&limit=${limit}&order=recent&min_messages=1&exclude_sources=${NOT_CHATS}`,
+      )
+      .then((res) => ({ sessions: res.sessions ?? [] })),
     // Only for where the main chat sits: this list is in order of last activity.
     rpc<{ sessions: SessionRow[] }>('session.list', { profile, limit, include_hidden: true }).catch(() => ({ sessions: [] })),
     rpc<{ sessions: SessionRow[] }>('session.list', { profile, title: BOT_CHAT, include_hidden: true }).catch(() => ({ sessions: [] })),

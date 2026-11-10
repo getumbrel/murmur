@@ -66,6 +66,20 @@ describe('an agent', () => {
     expect(chats[0]).toMatchObject({ id: stored, preview: 'Plan the trip [[say: Packed]]', messageCount: 2, source: 'desktop' })
   })
 
+  it('keeps its chats in the list however often a routine of its runs', async () => {
+    const { runtime, stored } = await newChat(socket, id)
+    await turn(socket, runtime, 'Any post? [[say: None]]', id)
+    const job = await api.post(`/api/cron/jobs?profile=${id}`, { name: 'Inbox watch', prompt: 'Check [[say: Nothing new]]', schedule: 'every 1h', deliver: 'local' })
+    // Up to Hermes 0.22.2 two runs that start in the same second share one chat.
+    await api.post(`/api/cron/jobs/${job.id}/trigger?profile=${id}`)
+    await sleep(1100)
+    await api.post(`/api/cron/jobs/${job.id}/trigger?profile=${id}`)
+
+    // Both runs are newer than the chat, and the list has room for one row.
+    expect((await fetchAgentChats(id, 1)).map((c) => c.id)).toEqual([stored])
+    await api.delete(`/api/cron/jobs/${job.id}?profile=${id}`)
+  })
+
   it('is listed over REST too, for older Hermes and the group picker', async () => {
     const { profiles } = await api.get('/api/profiles')
     expect(profiles.find((p: { name: string }) => p.name === id)).toMatchObject({ is_default: false, description: 'Finds more', model: expect.any(String) })
