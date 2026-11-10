@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import * as Popover from '@radix-ui/react-popover'
 import { AnimatePresence, motion, useIsPresent } from 'motion/react'
-import { Link, useLocation } from 'wouter'
+import { Link, useLocation, useRoute } from 'wouter'
 import { ArrowRight, MoreHorizontal, Pin, Repeat, SquarePen } from 'lucide-react'
 import { create } from 'zustand'
 import type { Agent } from '@/state/agents'
@@ -14,7 +14,7 @@ import { RenameChatSheet } from '@/features/agent-page/rename-chat'
 import { RowMenu, useLongPress } from './row-menu'
 
 // An agent's pinned and latest chats, tucked under its row in the sidebar,
-// with a way through to all of them on its page. Text only, on the row's name
+// with a way through to all of them (screens/chats.tsx). Text only, on the row's name
 // column, so the list stays calm: a chat the agent is working in keeps its
 // place, its title aglow, and moves up when the reply lands. Right-click a
 // chat, or its "…", to pin, rename, archive or delete it. An agent alone in the
@@ -69,11 +69,19 @@ export function NestedChats({
   )
 }
 
-/** Does the sidebar show this chat under its agent (so the agent's own row needn't be highlighted)? */
+/** Is the page of all this agent's chats the one that's open? */
+const useOnAllChats = (agentId: string) => useRoute('/chats/:agent')[1]?.agent === agentId
+
+/**
+ * Does the sidebar show what's open under its agent, this chat or "All chats"
+ * for the page of them (so the agent's own row needn't be highlighted)?
+ */
 export function useShowsChat(agentId: string, open: boolean, chatId: string | undefined) {
-  const { data } = useAgentChatList(open && chatId ? agentId : undefined)
+  const all = useOnAllChats(agentId)
+  const { data } = useAgentChatList(open && (chatId || all) ? agentId : undefined)
   const room = useRoom((s) => s[agentId])
-  return !!chatId && !!data && sidebarChats(data, room).some((c) => c.id === chatId)
+  if (!data) return false
+  return all ? data.length > 0 : !!chatId && sidebarChats(data, room).some((c) => c.id === chatId)
 }
 
 /**
@@ -120,6 +128,7 @@ function List({ agent, openChatId, fill = false }: { agent: Agent; openChatId?: 
   const [renaming, setRenaming] = useState<AgentChat | null>(null)
   const [, navigate] = useLocation()
   const list = useRef<HTMLUListElement>(null)
+  const all = useOnAllChats(agent.id)
   useFill(agent.id, fill, list)
   // Folding away: out of reach (and out of ⌥↑/⌥↓'s walk) while it goes.
   const leaving = !useIsPresent()
@@ -167,7 +176,7 @@ function List({ agent, openChatId, fill = false }: { agent: Agent; openChatId?: 
         )}
         {!isPending && chats.length > 0 && (
           <li>
-            <Item href={`/agent/${agent.id}`} muted>
+            <Item href={`/chats/${agent.id}`} selected={all} muted>
               <span className="truncate">All chats</span>
               <ArrowRight size={13} strokeWidth={2} aria-hidden className="flex-none" />
             </Item>

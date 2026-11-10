@@ -287,6 +287,7 @@ export function Sidebar() {
   const [, navigate] = useLocation()
   const [, chat] = useRoute('/chat/:agent/:chat?')
   const [, agentPage] = useRoute('/agent/:agent')
+  const [, chatsPage] = useRoute('/chats/:agent')
   const [, group] = useRoute('/group/:group')
   const [inSettings] = useRoute('/settings/:section?')
   const [inAgents] = useRoute('/agents')
@@ -370,7 +371,7 @@ export function Sidebar() {
               />
               <Roster
                 density="compact"
-                selectedId={group ? `group:${group.group}` : (chat?.agent ?? agentPage?.agent)}
+                selectedId={group ? `group:${group.group}` : (chat?.agent ?? agentPage?.agent ?? chatsPage?.agent)}
                 openChatId={chat?.chat}
                 onEdit={actions.edit}
                 onDelete={actions.remove}

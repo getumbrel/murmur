@@ -62,7 +62,7 @@ export function App() {
     // then the other screens. Markdown comes at once only when the app opens
     // straight into a chat, where the first messages need it.
     if (/^\/(chat|group)\//.test(location.pathname)) void Markdown.preload().catch(() => {})
-    preloadWhenIdle(Markdown, AgentScreen, AgentsScreen, GroupScreen, SettingsScreen, OnboardingScreen)
+    preloadWhenIdle(Markdown, AgentScreen, ChatsScreen, AgentsScreen, GroupScreen, SettingsScreen, OnboardingScreen)
   }, [])
 
   return (
@@ -357,10 +357,10 @@ function useDocumentTitle() {
   const groups = useGroupSummaries().data
   const chats = (agents ?? []).flatMap((a) => (a.lastChat ? [{ id: a.lastChat.id, at: a.lastChat.at }] : []))
   const count = useUnreadCount(chats) + (groups?.filter((g) => g.unread).length ?? 0)
-  const [, kind, id] = /^\/(chat|agents|agent|group|settings)(?:\/([^/]+))?/.exec(location) ?? []
+  const [, kind, id] = /^\/(chats|chat|agents|agent|group|settings)(?:\/([^/]+))?/.exec(location) ?? []
   const key = id && decodeURIComponent(id)
   const place =
-    kind === 'chat' || kind === 'agent'
+    kind === 'chat' || kind === 'chats' || kind === 'agent'
       ? agents?.find((a) => a.id === key)?.name
       : kind === 'group'
         ? groups?.find((g) => g.id === key)?.name

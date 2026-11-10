@@ -1,4 +1,4 @@
-import { useEffect, type CSSProperties } from 'react'
+import type { CSSProperties } from 'react'
 import { Link, useLocation } from 'wouter'
 import { MotionConfig } from 'motion/react'
 import { ChevronRight, SquarePen } from 'lucide-react'
@@ -14,10 +14,10 @@ import { PageBar } from '@/features/agent-page/page-bar'
 import { usePageScroll } from '@/features/agent-page/scroll'
 import { useAgentChatList } from '@/features/agent-page/chats'
 
-// One agent's chats and nothing else, for a phone's Home: tap an agent with
-// more than one chat and pick which, as in Messages. Its name leads to the
-// agent's own page (routines, memory, Telegram, its look); wide screens list
-// chats in the sidebar instead, so they go there.
+// One agent's chats and nothing else. A phone's Home opens it for an agent
+// with more than one chat, to pick which, as in Messages; the sidebar's
+// "All chats" opens it beside the few it lists. Its name leads to the agent's
+// own page (routines, memory, Telegram, its look).
 
 export function ChatsScreen({ agentId }: { agentId: string }) {
   const agents = useAgents()
@@ -28,10 +28,6 @@ export function ChatsScreen({ agentId }: { agentId: string }) {
   const status = useAgentStatus(agentId)
   const chats = useAgentChatList(agent)
   const { page, title, scrolled, under, onScroll } = usePageScroll<HTMLHeadingElement>(`chats:${agentId}`)
-
-  useEffect(() => {
-    if (wide) navigate(`/agent/${agentId}`, { replace: true })
-  }, [wide, agentId, navigate])
 
   if (gone)
     return (
@@ -60,7 +56,7 @@ export function ChatsScreen({ agentId }: { agentId: string }) {
           title={agent.name}
           scrolled={scrolled}
           under={under}
-          back={{ href: '/', label: 'Back' }}
+          back={wide ? undefined : { href: '/', label: 'Back' }}
           trailing={
             <IconButton size="lg" label="New chat" onClick={() => navigate(`/chat/${agentId}/new`)}>
               <SquarePen size={20} strokeWidth={1.85} />
