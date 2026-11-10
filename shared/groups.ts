@@ -66,3 +66,22 @@ export function lastLine(events: RoomEvent[], roster: Mentionable[]) {
   const who = said.kind === 'message.user' ? 'You' : (roster.find((m) => m.id === memberOf(said))?.name ?? 'Someone')
   return `${who}: ${plain(toNames(String(said.payload.text ?? ''), roster))}`.slice(0, 140)
 }
+
+/** What makes two chats the same group: the same agents, under the same name. */
+export const teamKey = (name: string, profiles: string[]) => JSON.stringify([name, [...profiles].sort()])
+
+/**
+ * Chats gathered by group, each group's newest first, and the groups by their
+ * latest chat. Hermes keeps one memory per agent per room, so a group's every
+ * fresh start is a room of its own; this is what makes them one group again.
+ */
+export function foldChats<T extends { name: string; memberIds: string[]; lastActivityAt: number }>(chats: T[]): T[][] {
+  const groups = new Map<string, T[]>()
+  for (const chat of chats) {
+    const key = teamKey(chat.name, chat.memberIds)
+    groups.set(key, [...(groups.get(key) ?? []), chat])
+  }
+  return [...groups.values()]
+    .map((all) => all.sort((a, b) => b.lastActivityAt - a.lastActivityAt))
+    .sort((a, b) => b[0].lastActivityAt - a[0].lastActivityAt)
+}

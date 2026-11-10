@@ -143,7 +143,8 @@ export function useAgentActions() {
     try {
       await deleteAgent(deleting)
       // Its chats and its page are gone with it.
-      if (location.startsWith(`/chat/${deleting.id}`) || location === `/agent/${deleting.id}`) navigate('/', { replace: true })
+      if (location.startsWith(`/chat/${deleting.id}`) || location === `/agent/${deleting.id}`)
+        navigate('/', { replace: true })
       qc.setQueryData<Agent[]>(agentsKey, (list) => list?.filter((a) => a.id !== deleting.id))
       qc.removeQueries({ queryKey: ['chats', deleting.id] })
       setDeleteOpen(false)
@@ -194,8 +195,8 @@ export function useAgentActions() {
     if (!group) return
     setBusy(true)
     try {
-      await deleteGroup(group.row.id)
-      if (location.startsWith(`/group/${group.row.id}`)) navigate('/', { replace: true })
+      await Promise.all(group.row.chats.map((c) => deleteGroup(c.id)))
+      if (group.row.chats.some((c) => location.startsWith(`/group/${c.id}`))) navigate('/', { replace: true })
       setGroupOpen(false)
     } catch {
       toast.error('Couldn’t delete the group. Try again.')
@@ -329,7 +330,10 @@ export function useAgentActions() {
             style={{ '--hue': deleting.hue } as CSSProperties}
           >
             <Orb hue={deleting.hue} size={64} seed={deleting.id} />
-            <p aria-hidden className="mt-4 w-full text-title font-semibold tracking-[-0.02em] text-balance [overflow-wrap:anywhere]">
+            <p
+              aria-hidden
+              className="mt-4 w-full text-title font-semibold tracking-[-0.02em] text-balance [overflow-wrap:anywhere]"
+            >
               Delete {deleting.name}?
             </p>
             <p className="mt-1 text-subhead text-pretty text-ink-2">Its chats and memory will be gone for good.</p>
@@ -383,10 +387,16 @@ export function useAgentActions() {
             <span className="[&_.buddy]:block">
               <OrbStack hues={group.row.memberHues} seeds={group.row.memberIds} size={64} />
             </span>
-            <p aria-hidden className="mt-4 w-full text-title font-semibold tracking-[-0.02em] text-balance [overflow-wrap:anywhere]">
+            <p
+              aria-hidden
+              className="mt-4 w-full text-title font-semibold tracking-[-0.02em] text-balance [overflow-wrap:anywhere]"
+            >
               Delete {group.row.name}?
             </p>
-            <p className="mt-1 text-subhead text-pretty text-ink-2">The conversation will be gone for good. Your agents stay.</p>
+            <p className="mt-1 text-subhead text-pretty text-ink-2">
+              {group.row.chats.length > 1 ? `All ${group.row.chats.length} chats` : 'The conversation'} will be gone for
+              good. Your agents stay.
+            </p>
             <div className="mt-7 w-full space-y-2">
               <Button variant="danger" size="lg" loading={busy} onClick={confirmDeleteGroup}>
                 Delete

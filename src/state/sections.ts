@@ -114,6 +114,12 @@ const isOn = (agent: Agent, to: Section | null) =>
 /** Agents on `id` now. */
 const membersOf = (qc: QueryClient, id: string) => agentsIn(qc).filter((a) => sectionOf(a) === id)
 
+/** A group's first chat is going: the section it's filed on knows the group by `to` from here on. */
+export async function passGroupPlace(qc: QueryClient, from: string, to: string) {
+  if (!sectionsOf(agentsIn(qc)).some((s) => s.groups?.includes(from))) return
+  await writeList(qc, (list) => list.map((s) => ({ ...s, groups: s.groups?.map((g) => (g === from ? to : g)) })))
+}
+
 /** File agents and groups on a section (null takes them off any). */
 export async function file(qc: QueryClient, items: { agents?: string[]; groups?: string[] }, to: Section | null) {
   await qc.cancelQueries({ queryKey: agentsKey })

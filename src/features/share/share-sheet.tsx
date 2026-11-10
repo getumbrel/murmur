@@ -42,8 +42,9 @@ export function ShareSheet() {
       addToDraft(newChatDraft(to.agent.id), what.text)
       navigate(`/chat/${to.agent.id}/new`)
     } else {
-      addToDraft(groupDraft(to.group.id), what.text)
-      navigate(`/group/${to.group.id}`)
+      // Its latest chat; a blank one first, if it's waiting.
+      addToDraft(groupDraft(to.group.chats[0].id), what.text)
+      navigate(`/group/${to.group.chats[0].id}`)
     }
   }
   useEffect(() => {

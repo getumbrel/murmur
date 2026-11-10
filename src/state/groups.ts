@@ -16,7 +16,18 @@ import { friendlyError, resumeHolding } from '@/state/chats'
 import { toolLabel } from '@/features/chat/tool-labels'
 import type { ApprovalChoice, ChatItem, Speaker } from '@/features/chat/types'
 import { mentionedIds, toHandles, toNames } from '@shared/mentions.ts'
-import { joinNames, lastLine, liveFromLog, memberOf, TERMINAL, visibleText, type RoomEvent } from '@shared/groups.ts'
+import {
+  foldChats,
+  joinNames,
+  lastLine,
+  liveFromLog,
+  memberOf,
+  plain,
+  teamKey,
+  TERMINAL,
+  visibleText,
+  type RoomEvent,
+} from '@shared/groups.ts'
 import { scoped } from '@/hermes/instance'
 import { isMissingMethod } from '@/hermes/compat'
 import { approvalText } from '@/features/chat/approval-text'
@@ -76,7 +87,32 @@ export type GroupSummary = {
   lastLine: string
   /** Someone said something since you last looked. */
   unread: boolean
+  createdAt: number
+  /** What this chat is about: how it opened. Empty until something's said. */
+  title: string
 }
+
+/**
+ * A group as you know it: the same agents under the same name, and every chat
+ * you've had with them. Each chat is a Hermes room of its own, since that's
+ * where each agent's memory of a conversation lives.
+ */
+export type GroupTeam = {
+  /** The first chat's id: the group's own, however many chats follow. */
+  id: string
+  name: string
+  memberIds: string[]
+  memberHues: number[]
+  /** Newest first. */
+  chats: GroupSummary[]
+}
+
+/** Chats with the same agents under the same name, gathered into their group. Most recent group first. */
+export const foldGroups = (chats: GroupSummary[]): GroupTeam[] =>
+  foldChats(chats).map((all) => {
+    const first = all.reduce((a, b) => (b.createdAt < a.createdAt ? b : a))
+    return { id: first.id, name: first.name, memberIds: first.memberIds, memberHues: first.memberHues, chats: all }
+  })
 
 export const MIN_MEMBERS = 2
 export const MAX_MEMBERS = 6
@@ -163,10 +199,12 @@ export function useGroupsAvailable() {
   const q = useQuery({
     queryKey: ['group-capabilities'],
     queryFn: async () =>
-      (await rpc<{ driver?: boolean }>('groups.capabilities', {}).catch((error) => {
-        if (isMissingMethod(error)) return { driver: false }
-        throw error
-      })).driver === true,
+      (
+        await rpc<{ driver?: boolean }>('groups.capabilities', {}).catch((error) => {
+          if (isMissingMethod(error)) return { driver: false }
+          throw error
+        })
+      ).driver === true,
     staleTime: Infinity,
     retry: 1,
   })
@@ -201,15 +239,66 @@ export async function createGroup({ name, memberIds }: { name?: string; memberId
   return id
 }
 
+/** The same agents, by whatever ids each room gave them. */
+const sameTeam = (a: WireRoom, b: WireRoom) =>
+  teamKey(
+    a.name,
+    a.members.map((m) => m.profile),
+  ) ===
+  teamKey(
+    b.name,
+    b.members.map((m) => m.profile),
+  )
+
+const spoken = (events: RoomEvent[]) => events.some((e) => e.kind === 'message.user' || e.kind === 'message.member')
+
+/**
+ * A new chat with a group: the same agents under the same name, starting clean.
+ * Hermes keeps one memory per agent per room, so a clean start is a room of its
+ * own. Resolves to the chat to open: a blank one if the group already has one
+ * (this one included), so tapping twice doesn't leave empties behind.
+ */
+export async function newGroupChat(id: string) {
+  const rooms = await fetchRooms()
+  const from = rooms.find((r) => r.room_id === id)
+  if (!from) throw new Error('This group no longer exists.')
+  for (const room of [from, ...rooms.filter((r) => r !== from && sameTeam(r, from))]) {
+    // The tail is the whole log only while the log is that short.
+    if ((room.latest_seq ?? 0) <= 16 && !spoken(await fetchTail(room))) return room.room_id
+  }
+  const next = roomId()
+  await rpc('groups.create', {
+    room_id: next,
+    name: from.name,
+    members: from.members.map((m) => ({
+      member_id: m.member_id,
+      profile: m.profile,
+      handle: m.handle,
+      ...(m.display_name && { display_name: m.display_name }),
+    })),
+  })
+  markSeen(next, 0)
+  refreshLists()
+  return next
+}
+
+/** Rename a group: every chat with it, so they stay together. */
 export async function renameGroup(id: string, name: string) {
   const next = name.trim().slice(0, 200)
   if (!next) return
-  const res = await rpc<{ room: WireRoom }>('groups.rename', {
-    room_id: id,
-    event_id: `rn-${Date.now().toString(36)}`,
-    name: next,
-  })
-  patch(id, (l) => ({ room: l.room ? { ...l.room, name: res.room?.name ?? next } : l.room }))
+  const rooms = await fetchRooms()
+  const from = rooms.find((r) => r.room_id === id)
+  const ids = from ? rooms.filter((r) => sameTeam(r, from)).map((r) => r.room_id) : [id]
+  await Promise.all(
+    ids.map(async (room, i) => {
+      const res = await rpc<{ room: WireRoom }>('groups.rename', {
+        room_id: room,
+        event_id: `rn-${Date.now().toString(36)}-${i}`,
+        name: next,
+      })
+      patch(room, (l) => ({ room: l.room ? { ...l.room, name: res.room?.name ?? next } : l.room }))
+    }),
+  )
   refreshLists()
   void poll(id)
 }
@@ -1313,19 +1402,49 @@ async function fetchTail(room: WireRoom) {
   return res.events
 }
 
-function summarize(room: WireRoom, events: RoomEvent[], agents: Agent[] | undefined, working?: boolean): GroupSummary {
+/** How each chat opened; it never changes, so it's read once. */
+const heads = new Map<string, string>()
+const opening = (events: RoomEvent[]) => String(events.find((e) => e.kind === 'message.user')?.payload.text ?? '')
+
+async function fetchHead(room: WireRoom, tail: RoomEvent[]) {
+  const known = heads.get(room.room_id)
+  if (known) return known
+  // A short log's tail is all of it.
+  const whole = (tail[0]?.seq ?? 1) <= 1
+  const events = whole
+    ? tail
+    : ((await rpc<LogResult>('groups.log', { room_id: room.room_id, since_seq: 0, limit: 16 }).catch(() => null))
+        ?.events ?? [])
+  const text = opening(events)
+  if (text) heads.set(room.room_id, text)
+  return text
+}
+
+function summarize(
+  room: WireRoom,
+  events: RoomEvent[],
+  agents: Agent[] | undefined,
+  working?: boolean,
+  head = '',
+): GroupSummary {
   const group = toGroup(room, agents)
   const seen = seenMap()[room.room_id]
   const lastMember = events.findLast((e) => e.kind === 'message.member')
+  const said = events.findLast((e) => e.kind !== 'room.renamed')
+  const renamed = events.some((e) => e.kind === 'room.renamed')
   return {
     id: group.id,
     name: group.name,
     memberIds: group.members.map((m) => m.profile),
     memberHues: group.members.map((m) => m.hue),
-    lastActivityAt: Math.max(group.updatedAt, (events.at(-1)?.created_at ?? 0) * 1000),
+    // When something was last said or done. A new name isn't that (Hermes stamps the room
+    // with it), or renaming a group would shuffle its chats.
+    lastActivityAt: said ? said.created_at * 1000 : renamed ? group.createdAt : group.updatedAt,
     live: working ?? liveFromLog(events),
     lastLine: lastLine(events, group.members),
     unread: Boolean(lastMember && lastMember.seq > (seen ?? 0) && !watchers.has(room.room_id)),
+    createdAt: group.createdAt,
+    title: plain(toNames(head || opening(events), group.members)).slice(0, 80),
   }
 }
 
@@ -1341,7 +1460,12 @@ export function useGroupSummaries() {
     queryFn: async () => {
       const rooms = await fetchRooms()
       qc?.setQueryData(LIST, rooms)
-      return Promise.all(rooms.map(async (room) => ({ room, events: await fetchTail(room) })))
+      return Promise.all(
+        rooms.map(async (room) => {
+          const events = await fetchTail(room)
+          return { room, events, head: await fetchHead(room, events) }
+        }),
+      )
     },
     staleTime: 2_000,
     refetchInterval: (query) => (query.state.data?.some((r) => liveFromLog(r.events)) ? 3_000 : 20_000),
@@ -1356,7 +1480,7 @@ export function useGroupSummaries() {
   const data = useMemo(
     () =>
       q.data
-        ?.map(({ room, events }) => {
+        ?.map(({ room, events, head }) => {
           const live = useGroupLive.getState().rooms[room.room_id]
           const own = live?.loaded && !live.missing ? live : undefined
           return summarize(
@@ -1364,6 +1488,7 @@ export function useGroupSummaries() {
             own ? own.events.slice(-16) : events,
             agents,
             own ? isBusy(own) : undefined,
+            head || (own ? opening(own.events) : ''),
           )
         })
         .sort((a, b) => b.lastActivityAt - a.lastActivityAt),
@@ -1371,4 +1496,10 @@ export function useGroupSummaries() {
     [q.data, pulse, agents],
   )
   return { ...q, data }
+}
+
+/** Every chat with the group this one belongs to, newest first (just this one until the list arrives). */
+export function useGroupChats(id: string): GroupSummary[] {
+  const { data } = useGroupSummaries()
+  return useMemo(() => foldGroups(data ?? []).find((t) => t.chats.some((c) => c.id === id))?.chats ?? [], [data, id])
 }

@@ -290,7 +290,8 @@ function ChatItem({
   )
 }
 
-function Item({
+/** One line under a row in the sidebar: a chat, or a way on to more of them. */
+export function Item({
   href,
   selected,
   open,

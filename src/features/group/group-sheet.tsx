@@ -8,20 +8,38 @@ import { ListGroup, ListRow } from '@/ui/list'
 import { Buddy } from '@/ui/buddy'
 import { Grow } from '@/ui/grow'
 import { ConfirmCard } from '@/ui/confirm-card'
-import type { Group } from '@/state/groups'
+import { Check } from 'lucide-react'
+import type { Group, GroupSummary } from '@/state/groups'
+import { shortTime } from '@/features/home/time'
+import { cn } from '@/lib/cn'
 import { MemberRow } from './member-row'
+
+const RECENT = 3
 
 type Props = {
   open: boolean
   onOpenChange: (open: boolean) => void
   group: Group
+  /** Every chat with this group, newest first, this one among them. */
+  chats: GroupSummary[]
+  onOpenChat: (id: string) => void
   onRename: (name: string) => Promise<void>
   onDelete: () => Promise<void>
   onOpenMember: (id: string) => void
 }
 
-/** Who's in the group, its name, and the way out. */
-export function GroupSheet({ open, onOpenChange, group, onRename, onDelete, onOpenMember }: Props) {
+/** Who's in the group, its name, your chats with it, and the way out. */
+export function GroupSheet({ open, onOpenChange, group, chats, onOpenChat, onRename, onDelete, onOpenMember }: Props) {
+  const several = chats.length > 1
+  // The latest few, this one always among them; the rest are a tap away.
+  const [all, setAll] = useState(false)
+  const recent = chats.slice(0, RECENT)
+  const shown =
+    all || chats.length <= RECENT + 1
+      ? chats
+      : recent.some((c) => c.id === group.id)
+        ? recent
+        : [...recent.slice(0, RECENT - 1), ...chats.filter((c) => c.id === group.id)]
   const [name, setName] = useState(group.name)
   const [saving, setSaving] = useState(false)
   const nameId = useId()
@@ -32,6 +50,7 @@ export function GroupSheet({ open, onOpenChange, group, onRename, onDelete, onOp
     setWasOpen(open)
     if (open) {
       setName(group.name)
+      setAll(false)
     }
   }
 
@@ -124,11 +143,45 @@ export function GroupSheet({ open, onOpenChange, group, onRename, onDelete, onOp
           ))}
         </ListGroup>
 
+        {several && (
+          <ListGroup title="Chats" className="mt-7">
+            {shown.map((c) => (
+              <ListRow
+                key={c.id}
+                title={<span className={cn(!c.title && 'text-ink-2')}>{c.title || 'New chat'}</span>}
+                detail={c.id === group.id ? undefined : c.live ? 'now' : shortTime(c.lastActivityAt)}
+                trailing={
+                  c.id === group.id ? (
+                    <Check
+                      size={18}
+                      strokeWidth={2.25}
+                      role="img"
+                      aria-label="This chat"
+                      className="flex-none text-accent"
+                    />
+                  ) : undefined
+                }
+                onClick={c.id === group.id ? undefined : () => onOpenChat(c.id)}
+              />
+            ))}
+            {shown.length < chats.length && (
+              <ListRow
+                title={<span className="text-accent">Show all {chats.length}</span>}
+                onClick={() => setAll(true)}
+              />
+            )}
+          </ListGroup>
+        )}
+
         <ConfirmCard
           className="mt-7"
-          label="Delete group"
-          title="Delete this group?"
-          body="The conversation will be gone for good. Your agents stay."
+          label={several ? 'Delete chat' : 'Delete group'}
+          title={several ? 'Delete this chat?' : 'Delete this group?'}
+          body={
+            several
+              ? 'This conversation will be gone for good. Your other chats with the group stay.'
+              : 'The conversation will be gone for good. Your agents stay.'
+          }
           confirm="Delete"
           onConfirm={remove}
         />

@@ -1,7 +1,8 @@
 import * as Popover from '@radix-ui/react-popover'
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from 'react'
-import { Link } from 'wouter'
+import { Link, useLocation } from 'wouter'
+import { toast } from 'sonner'
 import { useQueryClient } from '@tanstack/react-query'
 import {
   ArrowDown,
@@ -15,6 +16,7 @@ import {
   Pencil,
   PencilLine,
   Plus,
+  SquarePen,
   Trash2,
 } from 'lucide-react'
 import { Orb, OrbStack } from '@/ui/orb'
@@ -23,7 +25,7 @@ import { Button } from '@/ui/button'
 import { fetchAgentChats, useAgentChats, useAgents, type Agent } from '@/state/agents'
 import { settledAt, useAgentStatus, useBusyAgents, useChatUnread, useNeedsYou, useUnreadCount } from '@/state/status'
 import { sectionOf, setFolded, useFoldedMap, type Section } from '@/state/sections'
-import { prefetchGroup, useGroupSummaries } from '@/state/groups'
+import { newGroupChat, prefetchGroup, useGroupSummaries } from '@/state/groups'
 import { useAccessRequests } from '@/state/access'
 import { RequestCard } from '@/features/access/request-card'
 import { useAgentChatList } from '@/features/agent-page/chats'
@@ -35,6 +37,7 @@ import { RowMenu, useLongPress, type MenuItem } from './row-menu'
 import type { SectionActions } from './actions'
 import { setExpanded, useExpanded } from './expanded'
 import { NestedChats, useShowsChat } from './nested-chats'
+import { NestedGroupChats } from './nested-group-chats'
 
 // The roster: one row per agent and per group, newest activity first.
 // Roomy rows for the phone home screen, compact ones for the sidebar.
@@ -133,9 +136,16 @@ export function Roster({
   // With sections: the agents on none first, as the list always was, then each
   // section under its name, everyone in it still newest first.
   const sections = shelves?.sections ?? []
+  // A group is selected while any of its chats is open.
+  const openGroupChat = selectedId?.startsWith('group:') ? selectedId.slice('group:'.length) : undefined
+  const isSelected = (e: Entry) =>
+    e.kind === 'agent' ? e.key === selectedId : e.group.chats.some((c) => c.id === openGroupChat)
   const listed = new Set(sections.map((sec) => sec.id))
   const placeOf = (e: Entry) => {
-    const id = e.kind === 'agent' ? sectionOf(e.agent) : sections.find((sec) => sec.groups?.includes(e.group.id))?.id
+    const id =
+      e.kind === 'agent'
+        ? sectionOf(e.agent)
+        : sections.find((sec) => e.group.chats.some((c) => sec.groups?.includes(c.id)))?.id
     return id && listed.has(id) ? id : LOOSE
   }
   const items: Item[] = entries.filter((e) => placeOf(e) === LOOSE).map((e) => ({ ...e, place: LOOSE }))
@@ -147,7 +157,7 @@ export function Roster({
     const members = entries.filter((e) => placeOf(e) === section.id)
     items.push({ kind: 'section', key: `section:${section.id}`, section, members, place: section.id })
     // Folded, it still shows the one that's open beside it, so you never lose your place.
-    const shown = members.filter((e) => !folded[section.id] || e.key === selectedId)
+    const shown = members.filter((e) => !folded[section.id] || isSelected(e))
     if (!members.length && !folded[section.id])
       items.push({ kind: 'empty', key: `empty:${section.id}`, place: section.id })
     items.push(...shown.map((e) => ({ ...e, place: section.id })))
@@ -349,7 +359,8 @@ export function Roster({
                   <GroupRowView
                     group={entry.group}
                     density={density}
-                    selected={entry.key === selectedId}
+                    selected={isSelected(entry)}
+                    openChatId={isSelected(entry) ? openGroupChat : undefined}
                     last={last}
                     fresh={freshArrival(entry.key)}
                     onRename={() => onRenameGroup(entry.group)}
@@ -476,7 +487,12 @@ function AgentRow({
   const expanded = useExpanded(agent.id, !!selected) && !roomy
   const chatsId = useId()
   const qc = useQueryClient()
-  const warm = () => void qc.prefetchQuery({ queryKey: ['chats', agent.id], queryFn: () => fetchAgentChats(agent.id), staleTime: 10_000 })
+  const warm = () =>
+    void qc.prefetchQuery({
+      queryKey: ['chats', agent.id],
+      queryFn: () => fetchAgentChats(agent.id),
+      staleTime: 10_000,
+    })
   // With the open chat listed beneath, the highlight belongs to it rather than the agent.
   const showsChat = useShowsChat(agent.id, expanded, openChatId)
   // On a phone's Home, an agent with several chats opens on the list of them; with one it opens straight
@@ -508,7 +524,9 @@ function AgentRow({
     </span>
   ) : expanded ? (
     // Its latest chat is listed just below; say what it's for instead (in the card's and the page's words).
-    <span className={cn(!agent.role && 'text-ink-3')}>{agent.role || (agent.isDefault ? 'Your main agent' : 'Your agent')}</span>
+    <span className={cn(!agent.role && 'text-ink-3')}>
+      {agent.role || (agent.isDefault ? 'Your main agent' : 'Your agent')}
+    </span>
   ) : (
     <span className={cn(!agent.lastChat && 'text-ink-3')}>
       {agent.lastChat?.title ?? (agent.role || 'No chats yet')}
@@ -551,9 +569,7 @@ function AgentRow({
             last={last}
             newChat={`/chat/${agent.id}/new`}
           />
-          {!roomy && (
-            <NestedChats id={chatsId} agent={agent} open={expanded} openChatId={openChatId} fill={alone} />
-          )}
+          {!roomy && <NestedChats id={chatsId} agent={agent} open={expanded} openChatId={openChatId} fill={alone} />}
         </div>
       </Popover.Anchor>
       <RowMenu
@@ -577,12 +593,13 @@ function GroupRowView({
   group,
   density,
   selected,
+  openChatId,
   last,
   fresh,
   onRename,
   onDelete,
   move,
-}: Shared & { group: GroupRow; onRename: () => void; onDelete: () => void; move?: MenuItem }) {
+}: Shared & { group: GroupRow; openChatId?: string; onRename: () => void; onDelete: () => void; move?: MenuItem }) {
   const [menu, setMenu] = useState(false)
   const press = useLongPress(() => setMenu(true))
   const [halo] = useState(fresh)
@@ -590,10 +607,23 @@ function GroupRowView({
   const size = roomy ? 52 : 40
   const unread = group.unread && !group.live
   // Start loading on press, so the conversation is there when the screen is.
-  const warm = () => prefetchGroup(group.id)
+  const warm = () => prefetchGroup(group.lead)
+  // With more than one chat, the sidebar's groups fold open to them, as its agents do.
+  const several = group.chats.length > 1 && !roomy
+  const expanded = useExpanded(`group:${group.id}`, !!selected) && several
+  const chatsId = useId()
+  const [, navigate] = useLocation()
+  const newChat = () =>
+    newGroupChat(group.lead).then(
+      (id) => navigate(`/group/${id}`),
+      () => toast.error('Couldn’t start a new chat. Try again.'),
+    )
 
   const subtitle = group.live ? (
     <span className="text-shimmer">Talking it over</span>
+  ) : expanded ? (
+    // Its chats are listed just below; say who's here instead.
+    <span className="text-ink-3">{group.memberIds.length} agents</span>
   ) : (
     <span className={cn(!group.subtitle && 'text-ink-3')}>{group.subtitle ?? `${group.memberIds.length} agents`}</span>
   )
@@ -604,7 +634,7 @@ function GroupRowView({
         <div>
           <RowLink
             nav="group"
-            href={`/group/${group.id}`}
+            href={`/group/${group.lead}`}
             press={{
               ...press,
               onPointerDown: (e) => {
@@ -615,9 +645,15 @@ function GroupRowView({
             }}
             open={menu}
             roomy={roomy}
-            selected={selected}
+            // With the open chat listed beneath, the highlight belongs to it rather than the group.
+            selected={selected && !expanded}
             unread={unread}
             label={unread ? `${group.name}, new messages` : undefined}
+            disclosure={
+              several
+                ? { open: expanded, controls: chatsId, onToggle: () => setExpanded(`group:${group.id}`, !expanded) }
+                : undefined
+            }
             face={
               <span className={cn('relative flex-none [&_.buddy]:block', roomy && 'my-2.5')}>
                 {halo && <Halo id={`group:${group.id}`} />}
@@ -626,11 +662,12 @@ function GroupRowView({
             }
             name={group.name}
             time={group.live ? 'now' : shortTime(group.at)}
-            subtitleKey={group.live ? 'live' : 'line'}
+            subtitleKey={group.live ? 'live' : expanded ? 'who' : 'line'}
             subtitle={subtitle}
             last={last}
             onMore={() => setMenu(true)}
           />
+          {several && <NestedGroupChats id={chatsId} group={group} open={expanded} openChatId={openChatId} />}
         </div>
       </Popover.Anchor>
       <RowMenu
@@ -639,6 +676,7 @@ function GroupRowView({
         roomy={roomy}
         close={() => setMenu(false)}
         items={[
+          { label: 'New chat', icon: <SquarePen size={18} strokeWidth={1.85} />, onSelect: newChat },
           { label: 'Rename', icon: <PencilLine size={18} strokeWidth={1.85} />, onSelect: onRename },
           ...(move ? [move] : []),
           { label: 'Delete', icon: <Trash2 size={18} strokeWidth={1.85} />, onSelect: onDelete, danger: true },
@@ -1002,7 +1040,9 @@ function RowLink({
           <span
             className={cn(
               'flex items-baseline gap-2',
-              disclosure ? cn(unfolded ? 'pr-8.5' : chevronStays.name, clearsBoth.name) : !time && clearsMore(roomy, 'name'),
+              disclosure
+                ? cn(unfolded ? 'pr-8.5' : chevronStays.name, clearsBoth.name)
+                : !time && clearsMore(roomy, 'name'),
             )}
           >
             <span
@@ -1030,7 +1070,9 @@ function RowLink({
           <span
             className={cn(
               'flex items-center gap-2',
-              disclosure ? cn(unfolded ? 'pr-6.5' : chevronStays.subtitle, clearsBoth.subtitle) : clearsMore(roomy, 'subtitle'),
+              disclosure
+                ? cn(unfolded ? 'pr-6.5' : chevronStays.subtitle, clearsBoth.subtitle)
+                : clearsMore(roomy, 'subtitle'),
             )}
           >
             <span
@@ -1072,7 +1114,12 @@ function RowLink({
         </span>
       </Link>
       {newChat ? (
-        <Link href={newChat} aria-label={`New chat with ${name}`} title="New chat" className={quick(roomy, !!disclosure)}>
+        <Link
+          href={newChat}
+          aria-label={`New chat with ${name}`}
+          title="New chat"
+          className={quick(roomy, !!disclosure)}
+        >
           <Plus size={roomy ? 18 : 16} strokeWidth={2} aria-hidden />
         </Link>
       ) : (
@@ -1176,7 +1223,10 @@ export function NeedsYou({ density, title }: { density: Density; title?: ReactNo
                           {agent.name}
                         </span>
                         <span
-                          className={cn('line-clamp-2 break-words text-ink-2', roomy ? 'text-footnote' : 'text-caption')}
+                          className={cn(
+                            'line-clamp-2 break-words text-ink-2',
+                            roomy ? 'text-footnote' : 'text-caption',
+                          )}
                         >
                           {text}
                         </span>

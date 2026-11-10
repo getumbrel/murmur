@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type RefObject } from 'react'
 import { useLocation } from 'wouter'
 import { MotionConfig } from 'motion/react'
+import { toast } from 'sonner'
+import { useQueryClient } from '@tanstack/react-query'
 import { Thread } from '@/features/chat/thread'
 import { useKeyboardInset } from '@/features/chat/use-keyboard-inset'
 import { groupDraft } from '@/features/chat/use-draft'
@@ -13,7 +15,18 @@ import { BuddyStack } from '@/ui/buddy'
 import { Skeleton } from '@/ui/skeleton'
 import { useFinePointer, useIsWide } from '@/lib/use-media'
 import { cn } from '@/lib/cn'
-import { approveInGroup, deleteGroup, renameGroup, retryGroup, sendToGroup, stopGroup, useGroup } from '@/state/groups'
+import {
+  approveInGroup,
+  deleteGroup,
+  newGroupChat,
+  renameGroup,
+  retryGroup,
+  sendToGroup,
+  stopGroup,
+  useGroup,
+  useGroupChats,
+} from '@/state/groups'
+import { passGroupPlace } from '@/state/sections'
 
 // A group chat: like talking to one agent, except several take turns.
 
@@ -28,6 +41,8 @@ export function GroupScreen({ groupId }: { groupId: string }) {
   const root = useRef<HTMLDivElement>(null)
   const scrolled = useScrolled(root)
   const [sheet, setSheet] = useState(false)
+  const chats = useGroupChats(groupId)
+  const qc = useQueryClient()
   const [draft, setDraft] = useState<{ mentioned: string[]; typing: boolean }>({ mentioned: [], typing: false })
 
   const onDraftChange = useCallback((d: { mentioned: string[]; typing: boolean }) => setDraft(d), [])
@@ -41,6 +56,14 @@ export function GroupScreen({ groupId }: { groupId: string }) {
   const listening =
     draft.typing && !working ? (draft.mentioned.length ? draft.mentioned : members.map((m) => m.id)) : []
   const send = (text: string) => void sendToGroup(groupId, text)
+  const newChat = async () => {
+    try {
+      const next = await newGroupChat(groupId)
+      if (next !== groupId) navigate(`/group/${next}`)
+    } catch {
+      toast.error('Couldn’t start a new chat. Try again.')
+    }
+  }
 
   return (
     <MotionConfig reducedMotion="user">
@@ -64,6 +87,7 @@ export function GroupScreen({ groupId }: { groupId: string }) {
           showBack={!wide}
           scrolled={scrolled}
           onOpen={() => setSheet(true)}
+          onNewChat={newChat}
         />
 
         <Thread
@@ -106,10 +130,22 @@ export function GroupScreen({ groupId }: { groupId: string }) {
             onOpenChange={setSheet}
             group={group}
             onRename={(name) => renameGroup(groupId, name)}
-            onDelete={async () => {
-              await deleteGroup(groupId)
+            chats={chats}
+            onOpenChat={(id) => {
               setSheet(false)
-              navigate('/', { replace: true })
+              navigate(`/group/${id}`)
+            }}
+            onDelete={async () => {
+              const rest = chats.filter((c) => c.id !== groupId)
+              await deleteGroup(groupId)
+              // The group lives on in its other chats: keep its place in the list, and go to the latest.
+              const first = rest.reduce<(typeof rest)[number] | undefined>(
+                (a, b) => (a && a.createdAt < b.createdAt ? a : b),
+                undefined,
+              )
+              if (first) void passGroupPlace(qc, groupId, first.id).catch(() => {})
+              setSheet(false)
+              navigate(rest[0] ? `/group/${rest[0].id}` : '/', { replace: true })
             }}
             onOpenMember={(id) => {
               setSheet(false)
