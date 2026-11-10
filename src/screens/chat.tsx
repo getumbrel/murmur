@@ -23,6 +23,7 @@ import { useLoved } from '@/features/chat-screen/hearts'
 import { BackBadge, backHint, useElsewhere } from '@/features/chat-screen/elsewhere'
 import { ChatMenu, ChatMenuButton, useChatMenu } from '@/features/chat-screen/chat-menu'
 import { ChatInfoSheet } from '@/features/chat-screen/chat-info'
+import { FindBar, useFind, type Spot } from '@/features/chat-screen/find-bar'
 import { useAgentChatList, useArchivedChats, useChatActions, type AgentChat } from '@/features/agent-page/chats'
 import { chatOptions } from '@/features/agent-page/chat-list'
 import { RenameChatSheet } from '@/features/agent-page/rename-chat'
@@ -31,6 +32,7 @@ import { ModelChip } from '@/features/model/model-chip'
 import { EFFORT, thinkingOf, type Thinking } from '@/features/model/names'
 import { useThinkingDefault, type ModelPick } from '@/features/model/use-models'
 import { commandList, isCurated, type CommandName } from '@/features/commands/commands'
+import { isMac } from '@/features/commands/shortcuts'
 import { useCatalog } from '@/features/commands/use-catalog'
 import { useUmbrelKey } from '@/features/chat/umbrel-key'
 import { ChatConnectCard } from '@/features/chat/connect-card'
@@ -77,6 +79,7 @@ import {
   heldBack,
   leaveChat,
   loadOlder,
+  loadWhole,
   openChat,
   readUnread,
   react,
@@ -248,7 +251,7 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
   // read, with the words it was found by marked. One further back waits
   // behind the skeleton while it's read to.
   const wanted = useSeek(id)
-  const [focus, setFocus] = useState<{ chat: string; id: string; at: number; words: string[] }>()
+  const [focus, setFocus] = useState<{ chat?: string; id: string; at: number; words?: string[]; spot?: Spot }>()
   if (focus && focus.chat !== id) setFocus(undefined)
   const [seeking, setSeeking] = useState<string>()
   useLayoutEffect(() => {
@@ -619,14 +622,35 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
         leave: () => navigate(wide ? act.away(stored) : up),
       }).menu
     : []
-  const menu = useChatMenu(
-    () => {
+  // A long chat is read a page at a time: finding in it, or taking it with you, reads the rest.
+  const whole = useMemo(() => (id && chat?.older ? () => loadWhole(id) : undefined), [id, chat?.older])
+  // Find in chat: each place comes into sight in the thread, which marks nothing itself.
+  const asked = useRef(0)
+  const find = useFind({
+    chat: `${agentId}/${id && id !== born.current ? id : 'new'}`,
+    items,
+    root,
+    whole,
+    show: (itemId, spot) => {
+      // (Asked again, even within the same millisecond, it's asked anew.)
+      asked.current = Math.max(Date.now(), asked.current + 1)
+      setFocus({ chat: id, id: itemId, at: asked.current, spot })
+    },
+  })
+  const doneFinding = () => {
+    find.done()
+    if (fine) composer.current?.focus()
+  }
+  const menu = useChatMenu({
+    text: () => {
       if (!agent || !hasMessages) return
       const all = id ? (getChat(id)?.items ?? items) : items
       const title = name || `Chat with ${agent.name}`
       return { title, text: transcript(all, { title, agent: agent.name }) }
     },
-    id
+    whole,
+    find: find.start,
+    more: id
       ? [
           { label: 'Chat info', icon: Info, onSelect: () => setInfo(true) },
           ...options.map((o, i) => ({
@@ -638,7 +662,41 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
           })),
         ]
       : [],
-  )
+  })
+
+  // ⌘F finds in the chat, since the browser's own Find only reads the messages drawn near where
+  // you are. Pressed again from the field it's the browser's after all. ⌘G and ⇧⌘G step, as Enter
+  // does, and Esc puts it away (before it would stop a reply).
+  const finding = useRef({ find, hasMessages, doneFinding })
+  finding.current = { find, hasMessages, doneFinding }
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || e.isComposing) return
+      const { find, hasMessages, doneFinding } = finding.current
+      // (A sheet or a menu that's up has the keys.)
+      const over = () =>
+        !!document.querySelector(
+          '[data-sheet][data-state="open"], [role="menu"], [role="dialog"], [role="alertdialog"], [role="listbox"]',
+        )
+      const mod = isMac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey
+      const key = e.key.toLowerCase()
+      if (key === 'escape' && find.open && !mod && !over()) {
+        e.preventDefault()
+        doneFinding()
+      } else if (mod && !e.altKey && !e.shiftKey && key === 'f') {
+        if (!hasMessages || (find.open && document.activeElement === find.input.current) || over()) return
+        e.preventDefault()
+        find.start()
+      } else if (mod && !e.altKey && key === 'g' && find.open && !over()) {
+        e.preventDefault()
+        if (e.shiftKey) find.newer()
+        else find.older()
+      }
+    }
+    // (Ahead of the page's own keys: Esc here isn't Stop.)
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [])
 
   if (gone)
     return (
@@ -686,6 +744,7 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
           menu={wide && hasMessages && <ChatMenuButton menu={menu} />}
           call={agent && <CallButton name={agent.name} live={inCall} disabled={openError} onCall={onCall} />}
           titleProps={hasMessages ? menu.hold : undefined}
+          find={find.open && <FindBar find={find} onDone={doneFinding} />}
         />
 
         <Thread

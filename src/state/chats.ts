@@ -369,6 +369,20 @@ export function loadOlder(id: string) {
   return task
 }
 
+/**
+ * Read a chat back to its first message, for what needs all of it: finding
+ * something said in it, or handing the whole of it over. Nothing to do for a
+ * chat that fits in one page, which is most of them.
+ */
+export async function loadWhole(id: string) {
+  while (getChat(id)?.older) {
+    const before = reach.get(id)?.offset
+    await loadOlder(id)
+    // (A read that got nowhere would be asked again for ever.)
+    if (reach.get(id)?.offset === before) break
+  }
+}
+
 async function readOlder(id: string) {
   const chat = getChat(id)
   const read = reach.get(id)

@@ -53,6 +53,7 @@ const SECTIONS: { title: string; items: Shortcut[] }[] = [
       { title: 'Send', keys: ['enter'] },
       { title: 'New line', keys: ['shift+enter'] },
       { title: 'Commands', keys: ['/'] },
+      { title: 'Find in chat', keys: ['mod+f'] },
       { title: 'Stop reply', keys: ['esc'] },
     ],
   },

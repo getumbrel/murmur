@@ -4,8 +4,26 @@ import { useCallback, useEffect, useRef, useState } from 'react'
  * Put text on the clipboard. Murmur is often served over plain http (e.g.
  * umbrel.local), where `navigator.clipboard` doesn't exist; there it falls
  * back to the old select-and-copy trick. Resolves false if neither worked.
+ * The text can be a promise of it, for text that takes a moment to get.
  */
-export async function copyText(text: string) {
+export async function copyText(text: string | Promise<string>) {
+  if (typeof text !== 'string') {
+    // Text that's still on its way: the browser is promised it now, while the tap that asked still counts.
+    if (window.isSecureContext && navigator.clipboard?.write && typeof ClipboardItem !== 'undefined') {
+      try {
+        const blob = text.then((t) => new Blob([t], { type: 'text/plain' }))
+        await navigator.clipboard.write([new ClipboardItem({ 'text/plain': blob })])
+        return true
+      } catch {
+        /* fall through */
+      }
+    }
+    try {
+      text = await text
+    } catch {
+      return false
+    }
+  }
   if (window.isSecureContext && navigator.clipboard) {
     try {
       await navigator.clipboard.writeText(text)

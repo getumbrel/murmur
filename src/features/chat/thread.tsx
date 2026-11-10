@@ -268,13 +268,9 @@ const holds = (row: Row, itemId: string) =>
 /** How long a word found by search stays marked: the length of its animation in styles.css. */
 const FIND_MS = 2800
 
-/**
- * Marks the words a message was found by, as Find does on a Mac: a yellow
- * lozenge over each, a copy of the word drawn over the message rather than
- * into it, so what React rendered is left alone. False when none shows.
- */
-function markWords(message: HTMLElement, words: string[]) {
-  if (!words.length) return false
+/** Where the words a message was found by are in it, whole words only. */
+function wordRanges(message: HTMLElement, words: string[]) {
+  if (!words.length) return []
   const either = words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
   const find = new RegExp(`(?<![\\p{L}\\p{N}])(?:${either})(?![\\p{L}\\p{N}])`, 'giu')
   const ranges: Range[] = []
@@ -287,7 +283,17 @@ function markWords(message: HTMLElement, words: string[]) {
       if (range.getClientRects().length) ranges.push(range)
     }
   }
-  if (!ranges.length) return false
+  return ranges
+}
+
+/**
+ * Marks words in a message as Find does on a Mac: a yellow lozenge over each
+ * that pops up, holds, then fades, a copy of the word drawn over the message
+ * rather than into it, so what React rendered is left alone. Gives back the
+ * way to take them off early; nothing when none shows.
+ */
+export function popWords(message: HTMLElement, ranges: Range[]) {
+  if (!ranges.length) return undefined
   // Where it falls is where it's measured from: it moves nothing.
   const layer = document.createElement('span')
   layer.setAttribute('aria-hidden', 'true')
@@ -317,11 +323,13 @@ function markWords(message: HTMLElement, words: string[]) {
   lay()
   const ro = new ResizeObserver(lay)
   ro.observe(message)
-  setTimeout(() => {
+  const off = () => {
+    clearTimeout(timer)
     ro.disconnect()
     layer.remove()
-  }, FIND_MS)
-  return true
+  }
+  const timer = setTimeout(off, FIND_MS)
+  return off
 }
 
 /** What a word's copy takes from the word, so it lies exactly over it. */
@@ -380,8 +388,11 @@ type Props = Handlers &
     onOlder?: () => Promise<void>
     /** The connection is down: a message Hermes hasn't taken yet shows it's waiting. */
     waiting?: boolean
-    /** A message to open at (a search result's), the words to mark in it, and when that was asked: asked again, it opens there again. */
-    focus?: { id: string; at: number; words?: string[] }
+    /**
+     * A message to open at (a search result's), the words to mark in it, and when that was asked: asked again, it opens there again.
+     * With `spot` it's a place inside the message (Find's), which marks its own words: the thread only moves if that place is out of sight.
+     */
+    focus?: { id: string; at: number; words?: string[]; spot?: (message: HTMLElement) => DOMRect | undefined }
     /** Pinned under the messages, e.g. the composer. Messages scroll beneath it. */
     footer?: ReactNode
     className?: string
@@ -507,18 +518,26 @@ export function Thread({
   let first = oldest
   let last = newest
   const target = focus && focus.at !== opened ? rows.findIndex((r) => holds(r, focus.id)) : -1
-  if (focus && target >= 0) {
-    first = rows[Math.max(0, target - LEADUP)].id
-    last = target + WINDOW < rows.length - 1 ? rows[target + WINDOW].id : undefined
-    setOpened(focus.at)
-    setOldest(first)
-    setNewest(last)
+  /** The rows shown when held by these two. */
+  const span = (first?: string, last?: string) => {
+    const end = last ? rows.findIndex((r) => r.id === last) : -1
+    const to = end < 0 ? rows.length : end + 1
+    const at = first ? rows.findIndex((r) => r.id === first) : -1
+    return { end, to, from: Math.min(at < 0 ? to : at, Math.max(0, to - WINDOW)) }
   }
-  const end = last ? rows.findIndex((r) => r.id === last) : -1
+  if (focus && target >= 0) {
+    setOpened(focus.at)
+    // A place among the rows already shown leaves them as they are.
+    const here = span(first, last)
+    if (!focus.spot || target < here.from || target >= here.to) {
+      first = rows[Math.max(0, target - LEADUP)].id
+      last = target + WINDOW < rows.length - 1 ? rows[target + WINDOW].id : undefined
+      setOldest(first)
+      setNewest(last)
+    }
+  }
+  const { end, to, from } = span(first, last)
   if (newest && end < 0) setNewest(undefined)
-  const to = end < 0 ? rows.length : end + 1
-  const at = first ? rows.findIndex((r) => r.id === first) : -1
-  const from = Math.min(at < 0 ? to : at, Math.max(0, to - WINDOW))
   if (rows.length && rows[from].id !== first) setOldest(rows[from].id)
   const shown = from || to < rows.length ? rows.slice(from, to) : rows
   // Somewhere back in the chat, with newer rows below what's shown.
@@ -732,11 +751,20 @@ export function Thread({
       if (!message.isConnected) return done()
       const top = parseFloat(getComputedStyle(el).paddingTop) || 0
       const room = el.clientHeight - top - under
+      const frame = el.getBoundingClientRect()
+      if (focus.spot) {
+        // A place inside the message, once it's drawn: left alone where it can be read already.
+        const spot = focus.spot(message)
+        if (!spot) return
+        const clear = spot.top >= frame.top + top + 12 && spot.bottom <= frame.bottom - under - 12
+        if (!clear) el.scrollTop += spot.top - frame.top - (top + Math.max(16, (room - spot.height) * 0.4))
+        return
+      }
       const offset = top + Math.max(16, (room - message.offsetHeight) * 0.4)
-      el.scrollTop += message.getBoundingClientRect().top - el.getBoundingClientRect().top - offset
+      el.scrollTop += message.getBoundingClientRect().top - frame.top - offset
     }
     place()
-    if (!markWords(message, focus.words ?? [])) {
+    if (!focus.spot && !popWords(message, wordRanges(message, focus.words ?? []))) {
       message.classList.remove('found')
       void message.offsetWidth
       message.classList.add('found')

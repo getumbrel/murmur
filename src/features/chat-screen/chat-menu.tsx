@@ -1,17 +1,20 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'motion/react'
-import { Copy, Ellipsis, Share } from 'lucide-react'
+import { ArrowDownToLine, Copy, Ellipsis, Search, Share } from 'lucide-react'
 import { toast } from 'sonner'
 import { IconButton } from '@/ui/button'
 import { cn } from '@/lib/cn'
 import { useLongPress } from '@/features/chat/message-menu'
 import { copyText } from '@/features/chat/use-copy'
+import { saveFile } from './save-file'
+import { fileName } from './transcript'
 
-// Copy or share a whole chat, or look into it; below, what you can do to it as
-// one of your chats (pin, rename, archive, delete). On wide screens a quiet "…"
-// sits in the header; anywhere, press and hold (or right-click) the agent's
-// name for the same menu.
+// Find something said in a chat, or take the whole of it with you (copied,
+// shared, or as a file); below, what you can do to it as one of your chats
+// (pin, rename, archive, delete). On wide screens a quiet "…" sits in the
+// header; anywhere, press and hold (or right-click) the agent's name for the
+// same menu.
 
 const canShare = () => typeof navigator !== 'undefined' && typeof navigator.share === 'function'
 
@@ -24,31 +27,85 @@ type Action = {
   section?: boolean
 }
 
-export function useChatMenu(getText: () => { title: string; text: string } | undefined, more: Action[] = []) {
+type Options = {
+  /** The chat as markdown, and what it's called. */
+  text: () => { title: string; text: string } | undefined
+  /** Reads in the rest of a long chat, so what leaves is all of it; undefined once it's all here. */
+  whole?: () => Promise<void>
+  /** Opens Find in chat. */
+  find?: () => void
+  more?: Action[]
+}
+
+export function useChatMenu({ text, whole, find, more = [] }: Options) {
   const [anchor, setAnchor] = useState<HTMLElement | null>(null)
-  const latest = useRef(getText)
-  latest.current = getText
+  const latest = useRef({ text, whole })
+  latest.current = { text, whole }
   const close = useCallback(() => setAnchor(null), [])
+  const open = useCallback((el: HTMLElement | null) => {
+    setAnchor(el)
+    // A long chat starts being read as the menu opens, so it's likely all here by the time something's picked.
+    if (el) void latest.current.whole?.().catch(() => {})
+  }, [])
+
+  /**
+   * The whole chat, once it's been read: at once for most, after a moment
+   * (and a word about why) for a long one. Undefined if it couldn't be read.
+   */
+  const ready = () => {
+    const reading = latest.current.whole?.()
+    if (!reading) return { now: latest.current.text() }
+    const wait = toast.loading('Getting the whole chat…')
+    return {
+      later: reading.then(
+        () => (toast.dismiss(wait), latest.current.text()),
+        () => void toast.error('Couldn’t get the whole chat. Check your connection, then try again.', { id: wait }),
+      ),
+    }
+  }
+  /** It took a while to read, and the browser no longer counts the tap: one more tap does it. */
+  const offer = (label: string, onClick: () => unknown) =>
+    toast('The whole chat is ready.', { action: { label, onClick: () => void onClick() }, duration: 12_000 })
 
   const copy = async () => {
-    const t = latest.current()
-    if (!t) return
-    if (await copyText(t.text)) toast.success('Copied')
+    const { now, later } = ready()
+    if (later) {
+      const text = later.then((t) => t?.text ?? Promise.reject(new Error('unread')))
+      if (await copyText(text)) return void toast.success('Copied')
+      if (await later) offer('Copy', copy)
+      return
+    }
+    if (!now) return
+    if (await copyText(now.text)) toast.success('Copied')
     else toast.error('Couldn’t copy this chat.')
   }
   const share = async () => {
-    const t = latest.current()
+    const { now, later } = ready()
+    const t = now ?? (await later)
     if (!t) return
     try {
       await navigator.share({ title: t.title, text: t.text })
     } catch (e) {
       // Closing the sheet isn't a failure; anything else falls back to copying.
-      if (!(e instanceof DOMException && e.name === 'AbortError')) void copy()
+      if (e instanceof DOMException && e.name === 'AbortError') return
+      if (later && e instanceof DOMException && e.name === 'NotAllowedError') offer('Share', share)
+      else void copy()
+    }
+  }
+  const save = async () => {
+    const { now, later } = ready()
+    const t = now ?? (await later)
+    if (!t) return
+    if (!(await saveFile(fileName(t.title), t.text))) {
+      if (later) offer('Download', save)
+      else toast.error('Couldn’t download this chat.')
     }
   }
   const actions = [
+    ...(find ? [{ label: 'Find in chat', icon: Search, onSelect: find }] : []),
     { label: 'Copy chat', icon: Copy, onSelect: copy },
     ...(canShare() ? [{ label: 'Share…', icon: Share, onSelect: share }] : []),
+    { label: 'Download chat', icon: ArrowDownToLine, onSelect: save },
     ...more,
   ]
 
@@ -56,7 +113,7 @@ export function useChatMenu(getText: () => { title: string; text: string } | und
   const held = useRef(false)
   const press = useLongPress((el) => {
     held.current = true
-    setAnchor(el)
+    open(el)
   })
   const hold = {
     ...press,
@@ -72,7 +129,7 @@ export function useChatMenu(getText: () => { title: string; text: string } | und
     },
   }
 
-  return { anchor, open: setAnchor, close, actions, hold }
+  return { anchor, open, close, actions, hold }
 }
 
 type Menu = ReturnType<typeof useChatMenu>

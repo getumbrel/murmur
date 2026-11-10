@@ -150,7 +150,8 @@ Scan a code and an agent is on WhatsApp or Telegram, so you can text it from the
 - **Move agents.** Export an agent to a file and bring it in on another Hermes.
 - **More than one Hermes?** Keep one at home and another at work, and switch in one tap.
 - **Give it a goal** with `/goal`, and the agent keeps working until it's done. Ask a quick side question with `/btw` without interrupting it.
-- **Search every chat**, with a command palette and keyboard shortcuts on desktop.
+- **Search every chat**, or find a word inside one, with a command palette and keyboard shortcuts on desktop.
+- **Take a chat with you.** Copy it, share it, or download it as a Markdown file.
 - **Light and dark**, desktop notifications and a Dock badge, and fluid at every screen size.
 
 ## Get Murmur

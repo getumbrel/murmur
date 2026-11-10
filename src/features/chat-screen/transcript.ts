@@ -96,3 +96,19 @@ export function transcript(items: ChatItem[], { title, agent }: { title?: string
   }
   return out.join('\n\n').trim() + '\n'
 }
+
+/**
+ * A file's name for a chat: what the chat's called, as a file can be. Names
+ * can't hold slashes, colons and the like, or start with a dot; a long one
+ * is cut at a word.
+ */
+export function fileName(title: string, extension = 'md') {
+  let name = title
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/[\\/:*?"<>|]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^\.+|[. ]+$/g, '')
+  if (name.length > 80) name = name.slice(0, 81).replace(/\s+\S*$/, '').slice(0, 80).replace(/[. ]+$/, '')
+  return `${name || 'Chat'}.${extension}`
+}

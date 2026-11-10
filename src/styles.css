@@ -48,6 +48,7 @@
   --find: oklch(0.91 0.18 101);
   --find-ink: #1d1a00;
   --found: oklch(0.93 0.16 98 / 0.55);
+  --find-wash: oklch(0.91 0.18 101 / 0.36);
 
   color-scheme: light;
 }
@@ -80,6 +81,7 @@
     --success: oklch(0.74 0.15 150);
     --warning: oklch(0.8 0.15 75);
     --found: oklch(0.78 0.15 72 / 0.2);
+    --find-wash: oklch(0.86 0.17 98 / 0.3);
 
     color-scheme: dark;
   }
@@ -109,6 +111,7 @@
   --success: oklch(0.74 0.15 150);
   --warning: oklch(0.8 0.15 75);
   --found: oklch(0.78 0.15 72 / 0.2);
+  --find-wash: oklch(0.86 0.17 98 / 0.3);
 
   color-scheme: dark;
 }
@@ -461,6 +464,17 @@ html[data-text-size='largest'] {
   pointer-events: none;
   animation: find 2.8s var(--ease-out) forwards;
 }
+/* Find in chat (find-bar.tsx): every place the words are is washed in the
+   same yellow, and the one you're at is Find's own, under the lozenge that
+   pops as you arrive. Painted over the words, so the page itself is untouched. */
+::highlight(find) {
+  background-color: var(--find-wash);
+}
+::highlight(find-now) {
+  background-color: var(--find);
+  color: var(--find-ink);
+}
+
 @keyframes find {
   0% {
     transform: scale(1);
