@@ -68,6 +68,28 @@ describe('rows Hermes saved in parts', () => {
     expect(said(getChat('parts')!.items)).toEqual(['user: What is in this picture?', 'assistant: A single pixel.'])
   })
 
+  it('shows the picture kept beside your words, the very one Hermes sent', async () => {
+    const picture = { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${'A'.repeat(64)}` } }
+    const text = 'Where do you think this is?\n\n[Image attached at: /opt/data/images/upload_gq2qyo8l.jpg]'
+    history([
+      { id: 1, role: 'user', timestamp: 1, content: [{ type: 'text', text }, picture] },
+      // Only what you sent: a picture in a step's result isn't yours.
+      { id: 2, role: 'assistant', timestamp: 2, content: [{ type: 'text', text: 'The dunes.' }, picture] },
+    ])
+    resume.mockResolvedValue(LIVE)
+    await openChat('photo', 'default')
+    const [yours, reply] = getChat('photo')!.items
+    expect(yours).toMatchObject({
+      kind: 'user',
+      text: 'Where do you think this is?',
+      attachments: [{ kind: 'image', name: 'upload_gq2qyo8l.jpg', path: '/opt/data/images/upload_gq2qyo8l.jpg' }],
+    })
+    const shown = yours.kind === 'user' && yours.attachments?.[0].kind === 'image' ? yours.attachments[0].url : ''
+    expect(shown).toBe(picture.image_url.url)
+    expect(reply).toMatchObject({ kind: 'assistant', text: 'The dunes.' })
+    expect(reply).not.toHaveProperty('attachments')
+  })
+
   it('skips what it can’t show, and keeps the rest of the chat', async () => {
     history([
       { id: 1, role: 'user', timestamp: 1, content: 'Hello' },

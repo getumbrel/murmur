@@ -18,7 +18,7 @@ import { approvalText, detailOf, isCallTo, toolAsked, type ToolCall } from '@/fe
 import { explainError } from '@/features/chat/errors'
 import { holdsSummary } from '@/features/chat/compaction'
 import type { ApprovalChoice, ChatItem, ChatStatus, ClarifyQuestion, Reaction, SecretAsk, Speaker } from '@/features/chat/types'
-import { fileRef, parseUserMessage, rememberUpload, type UserAttachment } from '@/features/media/parse'
+import { fileRef, parseUserMessage, picturesIn, rememberUpload, type UserAttachment } from '@/features/media/parse'
 import { toolMedia } from '@/features/media/tool-media'
 import { shotOf } from '@/features/machine/shots'
 import { foundIn, pendingIn } from '@/features/umbrel/finds'
@@ -148,6 +148,8 @@ type Row = {
   id?: number
   role: string
   content?: string | null
+  /** The pictures saved in your message itself, when Hermes saved it in parts. */
+  pictures?: string[]
   tool_calls?: { id?: string; call_id?: string; function?: { name: string; arguments?: string } }[] | null
   tool_call_id?: string | null
   tool_name?: string | null
@@ -226,6 +228,7 @@ function rowsToItems(rows: Row[], speaker?: Speaker, errands: Map<string, Errand
       // A message sent mid-reply is stored wrapped in Hermes's steering markers (an older Hermes shows them).
       const { text, attachments } = parseUserMessage(
         row.display_kind === 'steer' && shown == null ? (STEER.exec(raw)?.[1] ?? raw) : raw,
+        row.pictures,
       )
       if (text || attachments.length) {
         items.push({
@@ -331,7 +334,7 @@ function rowsToItems(rows: Row[], speaker?: Speaker, errands: Map<string, Errand
   return items
 }
 
-/** A message's words, when Hermes saved it in parts (text beside a picture): the text, without the rest. */
+/** A message's words, when Hermes saved it in parts (text beside a picture): the text, without the rest (picturesIn reads your pictures). */
 function words(content: unknown): string | null {
   if (typeof content === 'string' || content == null) return content ?? null
   const parts = Array.isArray(content) ? content : [content]
@@ -340,12 +343,14 @@ function words(content: unknown): string | null {
     .join('')
 }
 
-/** A saved row as this page reads it: whatever shape Hermes kept its words in, they're text here. */
+/** A saved row as this page reads it: whatever shape Hermes kept its words in, they're text here, and your pictures beside them. */
 function plain(row: Row): Row {
   const calls = Array.isArray(row.tool_calls) ? row.tool_calls.filter((c) => c && typeof c === 'object') : null
+  const pictures = row.role === 'user' ? picturesIn(row.content) : []
   return {
     ...row,
     content: words(row.content),
+    pictures: pictures.length ? pictures : undefined,
     reasoning: typeof row.reasoning === 'string' ? row.reasoning : null,
     tool_calls: calls,
   }

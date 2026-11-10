@@ -10,8 +10,9 @@ export type { UserAttachment }
 const ATTACHED_CONTEXT = /(?:^|\n)--- Attached Context ---\s*\n[\s\S]*$/
 const CONTEXT_WARNINGS = /(?:^|\n)--- Context Warnings ---[\s\S]*$/
 const RUNTIME_CONTEXT = /\n*Umbrel Runtime Context:[\s\S]*$/
-const IMAGE_ATTACHED = /\[Image attached at: ([^\]\n]+)\]/g
-const IMAGE_ATTACHED_TAIL = /\n*\[Image attached at: [^\]]+\][\s\S]*$/
+// A picture's file on the Hermes host ("at: <path>"), or its address on the web.
+const IMAGE_ATTACHED = /\[Image attached(?: at: ([^\]\n]+)|: (https?:\/\/[^\]\s]+))\]/g
+const IMAGE_ATTACHED_TAIL = /\n*\[Image attached(?: at: [^\]]+|: https?:\/\/[^\]\s]+)\][\s\S]*$/
 const REF = /@(file|image):(`[^`\n]+`|"[^"\n]+"|'[^'\n]+'|\S+)/g
 const SCREENSHOT_LINE = /^\[screenshot\]\n?/gm
 
@@ -54,18 +55,54 @@ const nameFor = (path: string, names: Record<string, string>) =>
   names[path] ?? nameOf(path).replace(UPLOAD, 'image$1')
 
 /**
+ * The pictures in a message Hermes saved in parts (text beside pictures):
+ * each one's address, which is usually the picture itself (a `data:` URL, and
+ * a long one: it's passed along as it is, never copied or rebuilt).
+ */
+export function picturesIn(content: unknown): string[] {
+  const parts = Array.isArray(content) ? content : content && typeof content === 'object' ? [content] : []
+  return parts.flatMap((part) => {
+    const at = part?.image_url
+    const url = typeof at === 'string' ? at : at?.url
+    return typeof url === 'string' && PICTURE.test(url) ? [url] : []
+  })
+}
+
+const PICTURE = /^(?:data:image\/|https?:\/\/)/i
+
+/** What to call a picture known only by its address. */
+function pictureName(url: string) {
+  const kind = /^data:image\/([a-z0-9]+)/i.exec(url)?.[1].toLowerCase()
+  if (kind) return `image.${kind === 'jpeg' ? 'jpg' : kind}`
+  try {
+    return nameOf(decodeURIComponent(new URL(url).pathname)) || 'image'
+  } catch {
+    return 'image'
+  }
+}
+
+/**
  * Split a stored user message into the words the person typed and the files
  * they attached. Hermes stores the expanded prompt: image markers, `@file:` /
  * `@image:` refs, the inlined file contents and runtime context, and what
- * Murmur sent along with it.
+ * Murmur sent along with it. `pictures` are the ones saved in the message
+ * itself (picturesIn), in the order its words name them: shown from there,
+ * they outlast their files, which Hermes clears away after a while.
  */
-export function parseUserMessage(stored: string): { text: string; attachments: UserAttachment[] } {
+export function parseUserMessage(
+  stored: string,
+  pictures: string[] = [],
+): { text: string; attachments: UserAttachment[] } {
   const attachments: UserAttachment[] = []
-  const seen = new Set<string>()
+  const seen = new Map<string, UserAttachment>()
+  // Every picture the words name, in order (one named twice is here twice).
+  const named: Extract<UserAttachment, { kind: 'image' }>[] = []
   const add = (a: UserAttachment) => {
-    const k = `${a.kind}:${a.path}`
+    const k = `${a.kind}:${a.path ?? (a.kind === 'image' ? a.url : '')}`
+    const known = seen.get(k) ?? a
+    if (known.kind === 'image') named.push(known)
     if (seen.has(k)) return
-    seen.add(k)
+    seen.set(k, a)
     attachments.push(a)
   }
 
@@ -73,8 +110,9 @@ export function parseUserMessage(stored: string): { text: string; attachments: U
   // What Murmur sent along (what routines reported, say) isn't what the person wrote.
   const raw = stored.replace(ALONG, '')
   for (const m of raw.matchAll(IMAGE_ATTACHED)) {
-    const path = m[1].trim()
-    add({ kind: 'image', name: nameFor(path, names), path })
+    const path = m[1]?.trim()
+    if (path) add({ kind: 'image', name: nameFor(path, names), path })
+    else add({ kind: 'image', name: pictureName(m[2]), url: m[2] })
   }
 
   // Refs can sit in the prose or after the inlined context (`@image:` lines).
@@ -82,6 +120,11 @@ export function parseUserMessage(stored: string): { text: string; attachments: U
     const path = unquote(m[2])
     const image = m[1] === 'image' || /\.(png|jpe?g|gif|webp|avif|svg)$/i.test(path)
     add({ kind: image ? 'image' : 'file', name: nameFor(path, names), path })
+  }
+  // Each picture saved in the message is one its words name, in the same order; any more stand on their own.
+  for (const [n, url] of pictures.entries()) {
+    if (named[n]) named[n].url ??= url
+    else attachments.push({ kind: 'image', name: pictureName(url), url })
   }
   let text = raw
     .replace(CONTEXT_WARNINGS, '')

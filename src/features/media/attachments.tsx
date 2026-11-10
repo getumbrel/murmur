@@ -36,7 +36,7 @@ export function UserAttachments({
       {images.length > 0 && (
         <div className="flex flex-wrap justify-end gap-1.5">
           {images.map((a, i) => (
-            <Thumb key={`${a.url ?? a.path}-${i}`} item={a} single={images.length === 1} />
+            <Thumb key={thumbKey(a, i)} item={a} single={images.length === 1} />
           ))}
         </div>
       )}
@@ -47,6 +47,10 @@ export function UserAttachments({
     </div>
   )
 }
+
+/** Tells a message's photos apart. (One saved in its message is its own address, megabytes long: its place will do.) */
+const thumbKey = (a: UserAttachment & { kind: 'image' }, i: number) =>
+  `${a.url?.startsWith('data:') ? '' : (a.url ?? a.path)}-${i}`
 
 /**
  * Where something you attached lives. Hermes stages attachments in its own
@@ -59,16 +63,19 @@ function useAttachmentRef(path?: string): FileRef | null {
 }
 
 function Thumb({ item, single }: { item: Extract<UserAttachment, { kind: 'image' }>; single: boolean }) {
-  const ref = useAttachmentRef(item.url ? undefined : item.path)
+  // A picture that won't show from where it's kept in the browser or the message is read from its file.
+  const [broken, setBroken] = useState(false)
+  const held = broken ? undefined : item.url
+  const ref = useAttachmentRef(held ? undefined : item.path)
   const loaded = useBlob(ref)
-  const src = item.url ?? loaded.data?.url
+  const src = held ?? loaded.data?.url
   const img = useRef<HTMLImageElement>(null)
   const [open, setOpen] = useState(false)
   const [ready, setReady] = useState(false)
   // One photo keeps its shape; several sit as a grid of squares.
   const size = single ? (ready ? '' : 'size-40') : 'size-24 sm:size-28'
 
-  if (loaded.error) {
+  if (loaded.error || (broken && !ref)) {
     return (
       <span
         className={cn(
@@ -98,6 +105,7 @@ function Thumb({ item, single }: { item: Extract<UserAttachment, { kind: 'image'
             alt={item.name}
             draggable={false}
             onLoad={() => setReady(true)}
+            onError={() => held && setBroken(true)}
             className={cn(
               'transition-opacity duration-300',
               single && ready ? 'block h-auto max-h-64 w-auto max-w-[min(15rem,70vw)]' : 'size-full object-cover',
