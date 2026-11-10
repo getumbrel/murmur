@@ -3,7 +3,19 @@ import type { UserAttachment } from '@/features/chat/types'
 import { cn } from '@/lib/cn'
 import { useMediaContext } from './context'
 import { TypeIcon, kindName } from './blocks'
-import { canShareFiles, download, formatSize, shareFile, useBlob, useFileSize, type FileRef } from './files'
+import { Spinner } from '@/ui/spinner'
+import {
+  canShareFiles,
+  download,
+  formatSize,
+  savesByShare,
+  shareBlob,
+  shareFile,
+  useBlob,
+  useFileSize,
+  useSave,
+  type FileRef,
+} from './files'
 import { Lightbox } from './lightbox'
 
 /** What the person attached, above their bubble: photos as thumbnails, files as chips. */
@@ -102,14 +114,22 @@ function Thumb({ item, single }: { item: Extract<UserAttachment, { kind: 'image'
           origin={img.current}
           radius={16}
           onClose={() => setOpen(false)}
-          onDownload={() => {
-            if (ref) return download(ref, item.name)
-            const a = document.createElement('a')
-            a.href = src
-            a.download = item.name
-            a.click()
-          }}
-          onShare={ref && canShareFiles() ? () => void shareFile(ref, item.name) : undefined}
+          onDownload={
+            savesByShare()
+              ? undefined
+              : () => {
+                  if (ref) return download(ref, item.name)
+                  const a = document.createElement('a')
+                  a.href = src
+                  a.download = item.name
+                  a.click()
+                }
+          }
+          onShare={
+            canShareFiles()
+              ? () => void (ref ? shareFile(ref, item.name) : fetch(src).then(async (r) => shareBlob(await r.blob(), item.name)))
+              : undefined
+          }
         />
       )}
     </>
@@ -121,6 +141,7 @@ function FileChip({ item }: { item: Extract<UserAttachment, { kind: 'file' }> })
   const fetched = useFileSize(item.size == null ? ref : null)
   const size = item.size ?? fetched
   const sending = item.progress != null
+  const { saving, save } = useSave(ref, item.name)
   const meta =
     sending && size != null
       ? `${formatSize(size * item.progress!)} of ${formatSize(size)}`
@@ -129,6 +150,10 @@ function FileChip({ item }: { item: Extract<UserAttachment, { kind: 'file' }> })
     <>
       {sending ? (
         <Sending progress={item.progress!} />
+      ) : saving ? (
+        <span className="flex size-9 flex-none items-center justify-center rounded-[10px] bg-accent-soft text-accent">
+          <Spinner size={18} />
+        </span>
       ) : (
         <TypeIcon path={item.name} className="size-9 rounded-[10px]" />
       )}
@@ -140,7 +165,7 @@ function FileChip({ item }: { item: Extract<UserAttachment, { kind: 'file' }> })
   )
   const chip = 'flex max-w-full min-w-0 items-center gap-2.5 rounded-[18px] rounded-br-md bg-user-bubble py-2 pr-4 pl-2'
   return ref ? (
-    <button type="button" onClick={() => download(ref, item.name)} title="Download" className={cn(chip, 'pressable')}>
+    <button type="button" onClick={save} title={savesByShare() ? 'Share' : 'Download'} className={cn(chip, 'pressable')}>
       {body}
     </button>
   ) : (

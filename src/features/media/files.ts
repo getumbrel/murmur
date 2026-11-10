@@ -7,6 +7,8 @@
 // Both validate the path server-side and refuse credential files.
 
 import { useEffect, useState } from 'react'
+import { toast } from 'sonner'
+import { ios, standalone } from '@/lib/device'
 
 /** Where a file lives: its path on the host, and (optionally) the chat it came from. */
 export type FileRef = { path: string; sessionId?: string; profile?: string }
@@ -247,8 +249,14 @@ export const canShareFiles = () => typeof navigator !== 'undefined' && typeof na
 /** Open the system share sheet with the file itself. Resolves false if sharing isn't possible. */
 export async function shareFile(ref: FileRef, name = baseName(ref.path)) {
   if (!canShareFiles()) return false
-  const { blob } = await loadBlob(ref)
-  const file = new File([blob], name, { type: blob.type })
+  return shareBlob((await loadBlob(ref)).blob, name)
+}
+
+/** The same, for bytes already here. */
+export async function shareBlob(blob: Blob, name: string) {
+  if (!canShareFiles()) return false
+  // The bare type: iOS may not know what to make of Hermes's "; charset=utf-8".
+  const file = new File([blob], name, { type: blob.type.split(';')[0].trim() })
   if (!navigator.canShare({ files: [file] })) return false
   try {
     await navigator.share({ files: [file] })
@@ -256,4 +264,37 @@ export async function shareFile(ref: FileRef, name = baseName(ref.path)) {
     /* dismissed */
   }
   return true
+}
+
+/**
+ * Murmur opened from an iPhone's Home Screen is one window with no browser
+ * around it. A download has nowhere to go there: iOS shows the file in that
+ * window, with no way back to the chat. So saving hands the file to the share
+ * sheet instead, which saves it to Files, opens it in another app or sends it.
+ */
+export const savesByShare = () => ios && standalone() && canShareFiles()
+
+/**
+ * Save the file to the device: the browser's download, or the share sheet
+ * where a download would take the window. Done once the file is here, not once
+ * the sheet is put away. A sheet iOS won't open (the tap was too long ago)
+ * stays shut, and the file is ready for the next tap.
+ */
+export async function save(ref: FileRef, name = baseName(ref.path)) {
+  if (!savesByShare()) return download(ref, name)
+  const { blob } = await loadBlob(ref)
+  void shareBlob(blob, name)
+}
+
+/** Saving, for a button: busy while the file loads for the share sheet, and a word when it can't be had. */
+export function useSave(ref: FileRef | null, name?: string) {
+  const [saving, setSaving] = useState(false)
+  const start = () => {
+    if (!ref || saving) return
+    setSaving(savesByShare())
+    save(ref, name)
+      .catch((e) => toast.error(e instanceof FileError ? e.message : 'Couldn’t load this file.'))
+      .finally(() => setSaving(false))
+  }
+  return { saving, save: start }
 }

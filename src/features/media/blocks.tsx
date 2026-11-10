@@ -14,6 +14,7 @@ import {
   FileVideo,
   ImageOff,
   Presentation,
+  Share,
 } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { Spinner } from '@/ui/spinner'
@@ -28,9 +29,11 @@ import {
   isTextFile,
   mediaKind,
   readText,
+  savesByShare,
   shareFile,
   useBlob,
   useFileSize,
+  useSave,
   type FileRef,
   type TextFile,
 } from './files'
@@ -67,7 +70,7 @@ export function HostImage({ fileRef, alt }: { fileRef: FileRef; alt?: string }) 
       src={data?.url}
       alt={alt ?? name}
       name={name}
-      onDownload={() => download(fileRef)}
+      onDownload={savesByShare() ? undefined : () => download(fileRef)}
       onShare={canShareFiles() ? () => void shareFile(fileRef) : undefined}
     />
   )
@@ -287,21 +290,26 @@ export function TypeIcon({ path, className }: { path: string; className?: string
 }
 
 function DownloadButton({ fileRef, className }: { fileRef: FileRef; className?: string }) {
+  const { saving, save } = useSave(fileRef)
+  // Where saving is the share sheet, the button says so.
+  const share = savesByShare()
+  const Icon = share ? Share : Download
   return (
     <button
       type="button"
       onClick={(e) => {
         e.stopPropagation()
-        download(fileRef)
+        save()
       }}
-      aria-label={`Download ${baseName(fileRef.path)}`}
-      title="Download"
+      aria-label={`${share ? 'Share' : 'Download'} ${baseName(fileRef.path)}`}
+      aria-busy={saving || undefined}
+      title={share ? 'Share' : 'Download'}
       className={cn(
         'pressable relative flex size-9 flex-none items-center justify-center rounded-full text-ink-2 hover:bg-fill-2 hover:text-ink after:absolute after:-inset-1',
         className,
       )}
     >
-      <Download size={18} strokeWidth={1.9} />
+      {saving ? <Spinner size={18} /> : <Icon size={18} strokeWidth={1.9} />}
     </button>
   )
 }
