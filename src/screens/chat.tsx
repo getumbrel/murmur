@@ -15,7 +15,7 @@ import type { ChatItem } from '@/features/chat/types'
 import { ChatHeader } from '@/features/chat-screen/chat-header'
 import { EmptyState } from '@/features/chat-screen/empty-state'
 import { takeOpeningLine } from '@/features/chat-screen/opening-line'
-import { NotFound } from '@/features/chat-screen/not-found'
+import { CantOpen, NotFound } from '@/features/chat-screen/not-found'
 import { ThreadSkeleton } from '@/features/chat-screen/thread-skeleton'
 import { useOrbState } from '@/features/chat-screen/use-orb-state'
 import { GoalChip } from '@/features/chat-screen/goal-chip'
@@ -225,7 +225,9 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
   // for a tap. Arriving is the cue, not a fresh composer: New chat from a blank chat, or
   // from one just started (which carries on in place), keeps the composer it has.
   const arrival = useArrival()
-  const typable = !!agent && !openError
+  // Hermes has the chat but won't open it yet: it's being tried again, and says so meanwhile.
+  const shut = !!chat?.ready && !!chat.stalled
+  const typable = !!agent && !openError && !shut
   useEffect(() => {
     if (fine && typable) composer.current?.focus()
   }, [arrival, fine, typable])
@@ -785,6 +787,14 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
                 action="New chat"
                 onAction={newChat}
               />
+            ) : shut ? (
+              <NotFound
+                hue={agent?.hue}
+                title="Can’t open this chat right now"
+                body="Something got in the way. Try again in a moment."
+                action="Try again"
+                onAction={readUnread}
+              />
             ) : agent && (isDraft || (chat?.ready && !busy)) ? (
               <EmptyState agent={agent} orb={typing ? 'listening' : 'idle'} onStart={(prompt) => post(prompt)} />
             ) : id && !chat?.ready ? (
@@ -818,7 +828,7 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
               onSend={onSend}
               onStop={id ? () => void stop(id) : starting ? () => (stopEarly.current = true) : undefined}
               busy={busy}
-              disabled={!agent || openError}
+              disabled={!typable}
               placeholder={agent ? `Message ${clip(agent.name)}` : 'Message'}
               draftKey={id ?? newChatDraft(agentId)}
               commands={commands}
@@ -831,6 +841,7 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
               voice={agentId}
               above={(text) => (
                 <>
+                  {shut && !!chat?.items.length && <CantOpen onRetry={readUnread} />}
                   {agent && <ChatConnectCard runtimeId={chat?.runtimeId} agent={agent} />}
                   {umbrelKey.above(text)}
                 </>

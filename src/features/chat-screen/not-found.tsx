@@ -26,3 +26,15 @@ export function NotFound({
     </div>
   )
 }
+
+/** A chat that won't open yet, said quietly over the message box when its messages are on screen. */
+export function CantOpen({ onRetry }: { onRetry: () => void }) {
+  return (
+    <p role="status" className="animate-fade pb-2 text-center text-footnote text-balance text-ink-3">
+      Can’t open this chat right now.{' '}
+      <button type="button" onClick={onRetry} className="pressable font-medium text-accent">
+        Try again
+      </button>
+    </p>
+  )
+}

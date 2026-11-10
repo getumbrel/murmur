@@ -55,7 +55,7 @@ export type Chat = {
   reasoning?: string
   /** History has been loaded (or the chat is brand new). */
   ready: boolean
-  /** History couldn't be read for a while: it's still being tried, and you can ask for it now. */
+  /** It couldn't be read or opened for a while: it's still being tried, and you can ask for it now. */
   stalled?: boolean
   /** Hermes has older history than what's been read: loadOlder brings it in. */
   older?: boolean
@@ -331,6 +331,26 @@ function rowsToItems(rows: Row[], speaker?: Speaker, errands: Map<string, Errand
   return items
 }
 
+/** A message's words, when Hermes saved it in parts (text beside a picture): the text, without the rest. */
+function words(content: unknown): string | null {
+  if (typeof content === 'string' || content == null) return content ?? null
+  const parts = Array.isArray(content) ? content : [content]
+  return parts
+    .map((part) => (typeof part === 'string' ? part : typeof part?.text === 'string' ? part.text : ''))
+    .join('')
+}
+
+/** A saved row as this page reads it: whatever shape Hermes kept its words in, they're text here. */
+function plain(row: Row): Row {
+  const calls = Array.isArray(row.tool_calls) ? row.tool_calls.filter((c) => c && typeof c === 'object') : null
+  return {
+    ...row,
+    content: words(row.content),
+    reasoning: typeof row.reasoning === 'string' ? row.reasoning : null,
+    tool_calls: calls,
+  }
+}
+
 /** The most rows Hermes sends at once. A page that full may have older rows behind it. */
 const PAGE = 500
 
@@ -345,7 +365,7 @@ async function readRows(id: string, profile: string, offset = 0) {
   const res = await api.get<Res>(
     `/api/sessions/${encodeURIComponent(id)}/messages?${query}${offset ? `&offset=${offset}` : ''}`,
   )
-  const rows = res.messages ?? res.data ?? []
+  const rows = (res.messages ?? res.data ?? []).map(plain)
   // An older Hermes gave a "latest" page newest first; put it back in reading order. (A row
   // copied forward when Hermes summarized keeps its place but not its id: both have to say so.)
   const first = rows[0]
@@ -501,7 +521,7 @@ export function openChat(id: string, profile: string, speaker?: Speaker): Promis
   const task = (async () => {
     try {
       if (!chat.ready && !(await readHistory(id, profile, speaker))) return
-      await attach(id, true)
+      await open(id)
     } finally {
       opening.delete(id)
     }
@@ -511,27 +531,34 @@ export function openChat(id: string, profile: string, speaker?: Speaker): Promis
 }
 
 /**
- * Read a chat's history until it's read: a read that fails is tried again,
- * soon and then less often, and at once when the app or Hermes comes back or
- * you ask. Only a chat Hermes doesn't have yet opens empty; one that can't be
- * read never does. False if the chat was left first.
+ * Read a chat's history until it's read: a read that fails, or rows this page
+ * can't make sense of, is tried again, soon and then less often, and at once
+ * when the app or Hermes comes back or you ask. Only a chat Hermes doesn't
+ * have yet opens empty; one that can't be read never does. False if the chat
+ * was left first.
  */
 async function readHistory(id: string, profile: string, speaker?: Speaker) {
   for (let tries = 0; ; tries++) {
     let rows: Row[]
+    let items: ChatItem[]
     try {
-      rows = await readRows(id, profile)
-    } catch (e) {
-      if (!(e instanceof HermesError && e.status === 404)) {
-        // A few seconds of trying, then it says so.
-        if (tries === 2) patch(id, () => ({ stalled: true }))
-        await nextTry(id, Math.min(30_000, 1000 * 2 ** tries))
-        if (!viewing.has(id)) return false
-        continue
-      }
-      rows = []
+      // Hermes doesn't have it: new, or gone. Opening it says which.
+      let missing = false
+      rows = await readRows(id, profile).catch((e): Row[] => {
+        if (!(e instanceof HermesError && e.status === 404)) throw e
+        missing = true
+        return []
+      })
+      if (missing) absent.add(id)
+      else absent.delete(id)
+      items = rowsToItems(rows, speaker)
+    } catch {
+      // A few seconds of trying, then it says so.
+      if (tries === 2) patch(id, () => ({ stalled: true }))
+      await nextTry(id, Math.min(30_000, 1000 * 2 ** tries))
+      if (!viewing.has(id)) return false
+      continue
     }
-    const items = rowsToItems(rows, speaker)
     reach.set(id, { rows, offset: rows.length })
     // Anything sent while it loaded comes after the history, once: a message
     // Hermes saved meanwhile is in the history already.
@@ -544,6 +571,38 @@ async function readHistory(id: string, profile: string, speaker?: Speaker) {
       told: c.told || rows.some((r) => r.role === 'user' && toldIn(r.content ?? '')),
     }))
     return true
+  }
+}
+
+/** Chats Hermes had no history for when asked: new ones, and ones that are gone. */
+const absent = new Set<string>()
+
+/** Hermes saying a chat doesn't exist, as opposed to refusing to open one it has. */
+const saysGone = (e: unknown) => {
+  const { code, message } = e as { code?: number; message?: string }
+  return code === 4007 && /\bnot found\b/i.test(message ?? '')
+}
+
+/**
+ * Attach a chat being opened, until it's attached. Hermes can turn an open
+ * away for a moment (it's letting the chat go for another app, or settling a
+ * reply that was cut off) or for longer; either way it's tried again like
+ * history is, quietly at first, and then the chat says it can't be opened and
+ * keeps trying. Only a chat Hermes has neither history nor a place for is
+ * gone: that one throws.
+ */
+async function open(id: string) {
+  for (let tries = 0; ; tries++) {
+    try {
+      await attach(id, true)
+      patch(id, (c) => (c.stalled ? { stalled: undefined } : undefined))
+      return
+    } catch (e) {
+      if (absent.has(id) && saysGone(e)) throw e
+      if (tries === 2) patch(id, () => ({ stalled: true }))
+      await nextTry(id, Math.min(30_000, 1000 * 2 ** tries))
+      if (!viewing.has(id)) return
+    }
   }
 }
 
