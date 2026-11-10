@@ -283,11 +283,22 @@ export function foundSubjects(name: string, result: unknown): [id: string, subje
   )
 }
 
-/** A step's label once its result is in, when that says more than the call did (an email read, by its subject). */
+/**
+ * A step's label once its result is in, when that says more than the call did: an email read, by
+ * its subject; a question the agent stopped waiting on, unanswered.
+ */
 export function resultLabel(name: string, result: unknown): string | undefined {
+  if (name === 'clarify') return unanswered(result) ? 'Asking you, no answer' : undefined
   if (name !== 'email_read') return undefined
   const read = readMailResult<{ subject?: unknown }>(result)
   return typeof read?.subject === 'string' && read.subject.trim() ? readingLabel(read.subject) : undefined
+}
+
+/** A question's result when the agent gave up waiting: `timed_out` (Hermes 0.23), or its older note. */
+function unanswered(result: unknown) {
+  const read = readMailResult<{ outcome?: unknown }>(result)
+  if (read) return read.outcome === 'timed_out'
+  return typeof result === 'string' && /\bdid not respond within\b/i.test(result)
 }
 
 /** How long the person had the agent's browser when it asked for a hand, if they handed it back (ms). */

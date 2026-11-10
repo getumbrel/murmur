@@ -1308,7 +1308,16 @@ const Turn = memo(function Turn({
                 case 'approval':
                   return <ApprovalCard key={block.id} item={block.item} hue={hue} seed={seed} onApprove={onApprove} />
                 case 'clarify':
-                  return <ClarifyCard key={block.id} item={block.item} hue={hue} seed={seed} onAnswer={onAnswer} />
+                  return (
+                    <ClarifyCard
+                      key={block.id}
+                      item={block.item}
+                      name={(section.speaker ?? agent)?.name}
+                      hue={hue}
+                      seed={seed}
+                      onAnswer={onAnswer}
+                    />
+                  )
                 case 'secret':
                   return (
                     <SecretCard

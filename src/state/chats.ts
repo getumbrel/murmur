@@ -1036,11 +1036,18 @@ async function deliver(id: string, itemId: string, steer = false, voice?: SendOp
     if (note) patch(id, () => ({ told: true }))
     const prompt = [promptOf(refs, text), extra].filter(Boolean).join('\n\n')
     prompts.set(itemId, prompt)
+    // Written while the agent waits on a question, it's the reply: Hermes would hold it behind the
+    // question until the wait ran out, so the wait ends and it goes in as a message of its own.
+    const question = steer ? waitingOn(getChat(id)) : undefined
+    if (question) await replyInstead(id, question)
     // While it's working, a new message steers the current reply instead of
     // waiting its turn — the way you'd interrupt a person mid-thought. (Before
     // the agent is up it can't be steered yet; then it waits its turn.)
     const steered =
-      steer && !files.length && (await onChat(id, 'session.steer', { text: prompt }).then(() => true, () => false))
+      !question &&
+      steer &&
+      !files.length &&
+      (await onChat(id, 'session.steer', { text: prompt }).then(() => true, () => false))
     if (!steered) {
       const spoken = voice
         ? {
@@ -1052,7 +1059,8 @@ async function deliver(id: string, itemId: string, steer = false, voice?: SendOp
             ...(voice.interrupted ? { interrupted: true } : {}),
           }
         : {}
-      const res = await onChat<SubmitResult>(id, 'prompt.submit', { text: prompt, profile: chat.profile, ...spoken })
+      const submit = () => onChat<SubmitResult>(id, 'prompt.submit', { text: prompt, profile: chat.profile, ...spoken })
+      const res = question ? await whileSettling(submit) : await submit()
       if (res.user_row_id != null) setRowId(id, itemId, res.user_row_id)
     }
     unsent.delete(itemId)
@@ -1649,6 +1657,61 @@ export function answerQuestion(id: string, requestId: string, answers: Record<st
   }))
 }
 
+type Question = Extract<ChatItem, { kind: 'clarify' }>
+
+/** The question the agent is waiting on in a chat, if any. */
+const waitingOn = (c?: Chat) => c?.items.findLast((i): i is Question => i.kind === 'clarify' && i.status === 'pending')
+
+/** Chats whose reply is being stopped for a message written instead of an answer: no "Stopped" for it. */
+const replying = new Set<string>()
+
+/**
+ * A message written instead of answering the agent's question answers it: the card says so (the
+ * message itself is right under it), the agent stops waiting, and the message goes in once the
+ * reply has stopped.
+ */
+async function replyInstead(id: string, question: Question) {
+  requests.delete(question.requestId)
+  patch(id, (c) => ({ items: c.items.map((i) => (i === question ? { ...i, status: 'answered', answers: {} } : i)) }))
+  replying.add(id)
+  try {
+    await onChat(id, 'session.interrupt').catch(() => {})
+    await until(id, (c) => !isBusy(c), 8000)
+  } finally {
+    replying.delete(id)
+  }
+  // Thinking about the message from here, as any message sent to an idle chat is.
+  patch(id, () => ({ status: 'thinking' }))
+}
+
+/** Resolves once `ready` holds for the chat, or after `ms` either way. */
+function until(id: string, ready: (c: Chat) => boolean, ms: number) {
+  return new Promise<void>((resolve) => {
+    const check = () => {
+      const c = getChat(id)
+      if (c && !ready(c)) return
+      stopWatching()
+      clearTimeout(timer)
+      resolve()
+    }
+    const stopWatching = useChats.subscribe(check)
+    const timer = setTimeout(() => (stopWatching(), resolve()), ms)
+    check()
+  })
+}
+
+/** `send` again while Hermes is still wrapping up a stopped reply (it's busy for a moment), for up to 5s. */
+async function whileSettling<T>(send: () => Promise<T>): Promise<T> {
+  for (let tries = 0; ; tries++) {
+    try {
+      return await send()
+    } catch (e) {
+      if ((e as { code?: number }).code !== 4009 || tries >= 10) throw e
+      await new Promise((resolve) => setTimeout(resolve, 500))
+    }
+  }
+}
+
 /**
  * A login, a code or a key, answered in a masked field. The value goes
  * straight back on the socket: it's never put in the store, so it can't reach
@@ -2016,7 +2079,7 @@ function onEvent(ev: GatewayEvent) {
           const message =
             typeof payload.error === 'string' ? friendlyError(payload.error) : 'Something went wrong with that reply.'
           items = [...items, { kind: 'error', id: uid('e'), message, retryable: payload.recoverable !== false }]
-        } else if (status === 'interrupted') {
+        } else if (status === 'interrupted' && !replying.has(id)) {
           items = [...items, { kind: 'notice', id: uid('n'), text: 'Stopped' }]
         }
         items = settleHelpers(items, status === 'interrupted', Date.now())
@@ -2116,13 +2179,17 @@ function onEvent(ev: GatewayEvent) {
 
     case 'request.cancel': {
       const reqId = String(payload.id ?? '')
+      // A question the agent gave up waiting on stays, saying so; one withdrawn otherwise (stopped, or
+      // answered with a message) goes.
+      const missed = payload.reason === 'timeout'
       requests.delete(reqId)
       return patch(id, (c) => ({
         status: c.status === 'waiting' ? 'working' : c.status,
         items: c.items.flatMap((i) => {
           if ((i.kind === 'approval' || i.kind === 'secret') && i.requestId === reqId && i.status === 'pending')
             return [{ ...i, status: 'expired' as const }]
-          if (i.kind === 'clarify' && i.requestId === reqId && i.status === 'pending') return []
+          if (i.kind === 'clarify' && i.requestId === reqId && i.status === 'pending')
+            return missed ? [{ ...i, status: 'missed' as const }] : []
           return [i]
         }),
       }))

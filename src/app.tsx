@@ -16,6 +16,7 @@ import { usePicturesSync } from '@/state/pictures'
 import { useUmbrelContextSync } from '@/state/umbrel-context'
 import { useDesktopToolsSync } from '@/state/toolsets'
 import { useScreenSync } from '@/state/screen'
+import { useQuestionWaitSync } from '@/state/questions'
 import { ScreenSheets, ScreenViewer } from '@/features/screen'
 import { wireNotices } from '@/features/chat/notices'
 import { useUmbrelMcpSync } from '@/state/umbrel-mcp'
@@ -294,6 +295,8 @@ function Background() {
   useDesktopToolsSync(agents?.map((a) => a.id))
   // Wherever their Hermes has the screen, every agent's browser shows on it (src/state/screen.ts).
   useScreenSync(agents?.map((a) => a.id))
+  // Every agent waits an hour for your answer to its question, not Hermes 0.23.1's 90 seconds.
+  useQuestionWaitSync(agents?.map((a) => a.id))
   useEffect(() => setMainAgent(agents?.find((a) => a.isDefault)?.id), [agents])
   useSeenTracking()
   useDocumentTitle()

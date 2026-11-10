@@ -62,7 +62,7 @@ export function transcript(items: ChatItem[], { title, agent }: { title?: string
         break
       case 'clarify':
         for (const q of item.questions) {
-          step(name, `Asked: ${q.question}`)
+          step(name, `Asked: ${q.question}${item.status === 'missed' ? ' (no answer)' : ''}`)
           const answer = item.answers?.[q.qid]
           if (answer) block('You', answer)
         }

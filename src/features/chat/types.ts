@@ -139,7 +139,8 @@ export type ChatItem =
       id: string
       requestId: string
       questions: ClarifyQuestion[]
-      status: 'pending' | 'answered'
+      /** Missed: the agent stopped waiting and carried on without an answer. */
+      status: 'pending' | 'answered' | 'missed'
       answers?: Record<string, string>
       speaker?: Speaker
     }

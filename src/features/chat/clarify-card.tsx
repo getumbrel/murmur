@@ -1,6 +1,6 @@
 import { memo, useRef, useState, type FormEvent } from 'react'
 import { motion } from 'motion/react'
-import { Check } from 'lucide-react'
+import { Check, Clock } from 'lucide-react'
 import { Orb } from '@/ui/orb'
 import { Button } from '@/ui/button'
 import { TextField } from '@/ui/field'
@@ -18,11 +18,14 @@ function valueOf(a: Answer) {
 
 export const ClarifyCard = memo(function ClarifyCard({
   item,
+  name,
   hue,
   seed,
   onAnswer,
 }: {
   item: Item
+  /** The agent who asked, for a question it stopped waiting on. */
+  name?: string
   hue: number
   seed?: string
   onAnswer: (requestId: string, answers: Record<string, string>) => void
@@ -30,9 +33,11 @@ export const ClarifyCard = memo(function ClarifyCard({
   const pending = item.status === 'pending'
   const watched = useRef(pending)
   return (
-    <Swap id={pending ? 'card' : 'receipt'}>
+    <Swap id={pending ? 'card' : item.status}>
       {pending ? (
         <Card item={item} hue={hue} seed={seed} onAnswer={onAnswer} />
+      ) : item.status === 'missed' ? (
+        <Missed item={item} name={name} fresh={watched.current} />
       ) : (
         <Receipt item={item} fresh={watched.current} />
       )}
@@ -220,6 +225,32 @@ function Chip({
       {multi && on && <Check size={14} strokeWidth={2.5} aria-hidden className="-ml-0.5" />}
       {children}
     </button>
+  )
+}
+
+/**
+ * A question the agent stopped waiting on: what it asked, unanswered, and that
+ * it went on without it. The choices are gone (nothing waits for them now);
+ * a reply in the chat still reaches it.
+ */
+function Missed({ item, name, fresh }: { item: Item; name?: string; fresh: boolean }) {
+  const who = item.speaker?.name ?? name ?? 'Your agent'
+  return (
+    <div className={cn(fresh && 'receipt-tint -mx-2 px-2')}>
+      <ul className="space-y-0.5">
+        {item.questions.map((q) => (
+          <li key={q.qid} className="flex h-8 min-w-0 items-center gap-2 text-footnote text-ink-3">
+            <Clock size={14} strokeWidth={2} aria-hidden className="flex-none" />
+            <span className="min-w-0 truncate">{q.question}</span>
+            <span aria-hidden>·</span>
+            <span className="flex-none text-ink-2">No answer</span>
+          </li>
+        ))}
+      </ul>
+      <p className="pb-1.5 pl-[22px] text-footnote text-ink-3">
+        {who} stopped waiting and carried on without your answer. You can still reply.
+      </p>
+    </div>
   )
 }
 

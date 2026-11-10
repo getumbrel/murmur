@@ -183,3 +183,24 @@ describe('a machine’s keyboard and mouse', () => {
     expect(didSummary(['mcp__umbrel__start_machine'])).toBe('Used your Umbrel')
   })
 })
+
+describe('a question the agent asked you', () => {
+  const timedOut = {
+    responses: [{ question: 'Which colour?', status: 'unanswered', user_response: null }],
+    outcome: 'timed_out',
+  }
+
+  it('reads as unanswered once the agent stopped waiting, from the live result or the saved one', () => {
+    expect(pastLabel(resultLabel('clarify', timedOut)!)).toBe('Asked you, no answer')
+    const saved = `<untrusted_tool_result source="clarify">\nRetrieved from a tool.\n\n${JSON.stringify(timedOut)}\n</untrusted_tool_result>`
+    expect(resultLabel('clarify', saved)).toBe('Asking you, no answer')
+    // An older Hermes's note.
+    expect(resultLabel('clarify', '[user did not respond within 60 minutes]')).toBe('Asking you, no answer')
+  })
+
+  it('reads as it did when it was answered, or the reply stopped', () => {
+    const answered = { responses: [{ status: 'answered', user_response: 'Slate' }], outcome: 'submitted' }
+    expect(resultLabel('clarify', answered)).toBeUndefined()
+    expect(resultLabel('clarify', { responses: [], outcome: 'cancelled' })).toBeUndefined()
+  })
+})
