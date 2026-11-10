@@ -59,11 +59,14 @@ export function MessageMenu({
   anchor,
   bubble,
   actions,
+  note,
   onClose,
 }: {
   anchor: HTMLElement | null
   bubble: ReactNode
   actions: MenuAction[]
+  /** A quiet line over the actions: when the message was sent. */
+  note?: ReactNode
   onClose: () => void
 }) {
   const [rect, setRect] = useState<DOMRect | null>(null)
@@ -135,6 +138,7 @@ export function MessageMenu({
             animate={{ opacity: 1, scale: 1, y: 0, transition: spring }}
             exit={{ opacity: 0, scale: 0.96, transition: out }}
           >
+            {note && <p className="px-3 pt-1 pb-1.5 text-caption text-ink-3">{note}</p>}
             {actions.map((a) => (
               <button
                 key={a.label}

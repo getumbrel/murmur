@@ -1,8 +1,9 @@
 import { motion, useReducedMotion } from 'motion/react'
-import { useId, type KeyboardEvent } from 'react'
+import { useId, type KeyboardEvent, type ReactNode } from 'react'
 import { cn } from '@/lib/cn'
 
-type Option<T extends string> = { value: T; label: string }
+/** `name` says what a label that isn't words stands for (a glyph), for screen readers. */
+type Option<T extends string> = { value: T; label: ReactNode; name?: string }
 
 // The thumb glides between segments on a spring and gives a little under your
 // finger when you press the selected one. Arrow keys move the selection.
@@ -49,6 +50,7 @@ export function Segmented<T extends string>({
             key={o.value}
             role="radio"
             aria-checked={active}
+            aria-label={o.name}
             tabIndex={active || (i === 0 && !options.some((x) => x.value === value)) ? 0 : -1}
             data-value={o.value}
             onClick={() => onChange(o.value)}

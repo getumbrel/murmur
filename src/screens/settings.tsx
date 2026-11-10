@@ -27,6 +27,7 @@ import { HermesSection } from '@/features/settings/hermes-section'
 import { StatusDot } from '@/features/connection/fields'
 import { useHermesConnection, useMurmurSession } from '@/state/connection'
 import { useTheme, type ThemePref } from '@/features/settings/theme'
+import { useTextSize, type TextSize } from '@/features/settings/text-size'
 import { NotificationsSetting } from '@/features/notifications/notify'
 import { AgentsIcon, ImportIcon, ModelsIcon, ServerIcon, SignOutIcon } from '@/ui/icons'
 import { Waveform } from '@/features/talk/call-button'
@@ -354,9 +355,22 @@ function AboutSection() {
   )
 }
 
-/** Light, dark, or the device's own. Takes effect at once, for every Hermes. */
+/** Each text size as itself: an "A" that big. (In px, so the row shows the sizes and doesn't grow with them.) */
+const TEXT_SIZES: { value: TextSize; name: string; px: number }[] = [
+  { value: 'small', name: 'Small text', px: 12 },
+  { value: 'default', name: 'Default text size', px: 14 },
+  { value: 'large', name: 'Large text', px: 16 },
+  { value: 'larger', name: 'Larger text', px: 18 },
+  { value: 'largest', name: 'Largest text', px: 20 },
+]
+
+/**
+ * Light, dark, or the device's own, and how big the words are. Both take
+ * effect at once, on this device, for every Hermes.
+ */
 function Appearance() {
   const [theme, setTheme] = useTheme()
+  const [textSize, setTextSize] = useTextSize()
   return (
     <section className="space-y-2">
       <h3 className="px-4 text-footnote font-medium text-ink-2">Appearance</h3>
@@ -369,6 +383,20 @@ function Appearance() {
           { value: 'light', label: 'Light' },
           { value: 'dark', label: 'Dark' },
         ]}
+      />
+      <Segmented<TextSize>
+        label="Text size"
+        value={textSize}
+        onChange={setTextSize}
+        options={TEXT_SIZES.map(({ value, name, px }) => ({
+          value,
+          name,
+          label: (
+            <span aria-hidden className="leading-none" style={{ fontSize: px }}>
+              A
+            </span>
+          ),
+        }))}
       />
     </section>
   )

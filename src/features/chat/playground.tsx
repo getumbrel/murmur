@@ -1,6 +1,6 @@
 // Dev-only playground: Thread + Composer with fake data and simulated
 // streaming, so the chat can be designed and reviewed without Hermes.
-// Scenes: ?scene=solo | live | group | empty | media | cards | helpers | wakes | errors. Sending anything plays a reply.
+// Scenes: ?scene=solo | live | group | empty | media | cards | helpers | wakes | days | errors. Sending anything plays a reply.
 // (media shows files from the connected Hermes: /opt/data/murmur-media-test.)
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
@@ -63,6 +63,7 @@ type Scene =
   | 'pay'
   | 'helpers'
   | 'wakes'
+  | 'days'
   | 'errors'
 
 let n = 0
@@ -126,6 +127,28 @@ const WEEKEND = `Here’s a relaxed plan for **Saturday in Lisbon**:
 - **Evening:** sunset at Miradouro da Senhora do Monte.
 
 Want me to book a table for dinner?`
+
+/** A chat picked up over several days: where the thread tells the time. */
+function daysHistory(): ChatItem[] {
+  const now = new Date()
+  const day = (ago: number, hour: number, minute: number) =>
+    new Date(now.getFullYear(), now.getMonth(), now.getDate() - ago, hour, minute).getTime()
+  const said = (at: number, ask: string, answer: string, took = 9000): ChatItem[] => [
+    { kind: 'user', id: uid('u'), text: ask, at },
+    { kind: 'assistant', id: uid('a'), text: answer, streaming: false, at: at + took },
+  ]
+  const first = day(4, 9, 12)
+  return [
+    ...said(first, 'I want to start baking sourdough. Where do I begin?', 'With a starter. Mix 50 g of wholemeal flour with 50 g of water in a jar, cover it loosely, and feed it the same again each morning. In about a week it will double within six hours of a feed, and then it’s ready to bake with.'),
+    { kind: 'user', id: uid('u'), text: 'Remind me to feed it every morning at 8.', at: first + 4 * 60_000 },
+    tool('cronjob', { action: 'create', name: 'Feed the starter', schedule: '0 8 * * *' }, first + 4 * 60_000 + 2000, 900),
+    { kind: 'assistant', id: uid('a'), text: 'Done. I’ll remind you every morning at 8.', streaming: false, at: first + 4 * 60_000 + 6000 },
+    ...said(day(1, 18, 40), 'It doubled in five hours today. Is it ready?', 'It is. Drop a spoonful into a glass of water: if it floats, bake tomorrow.'),
+    ...said(day(1, 18, 52), 'It floats!', 'Then mix the dough tonight: 500 g flour, 350 g water, 100 g starter and 10 g salt. Leave it on the counter overnight.'),
+    ...said(now.getTime() - 3 * 60 * 60_000, 'The dough has doubled. What now?', 'Shape it gently into a ball, rest it for 30 minutes, then bake at 240 °C in a covered pot: 30 minutes with the lid on, 15 with it off.'),
+    ...said(now.getTime() - 4 * 60_000, 'It’s out of the oven and it looks incredible.', 'Congratulations on your first loaf. Let it cool for an hour before you slice it, hard as that is.'),
+  ]
+}
 
 function soloHistory(pending: boolean): ChatItem[] {
   const t = T0
@@ -545,6 +568,8 @@ function Chat({ scene }: { scene: Scene }) {
                 ? secretsHistory()
                 : scene === 'wakes'
                   ? wakesHistory()
+                  : scene === 'days'
+                    ? daysHistory()
                   : scene === 'helpers'
                     ? helpersHistory()
                     : scene === 'pay'
@@ -857,6 +882,7 @@ const SCENES: { value: Scene; label: string }[] = [
   { value: 'pay', label: 'Pay' },
   { value: 'helpers', label: 'Helpers' },
   { value: 'wakes', label: 'Wakes' },
+  { value: 'days', label: 'Days' },
   { value: 'errors', label: 'Errors' },
 ]
 

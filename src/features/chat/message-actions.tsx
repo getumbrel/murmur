@@ -4,6 +4,7 @@ import { cn } from '@/lib/cn'
 import { Spinner } from '@/ui/spinner'
 import { toggleSpeaking, useSpeech } from '@/features/voice/speech'
 import { useCopy } from './use-copy'
+import { clock } from './times'
 
 // 32px to look at, 44px to hit.
 const base =
@@ -26,12 +27,15 @@ const swap = {
  */
 export function MessageActions({
   text,
+  at,
   onRetry,
   onReact,
   speak,
   className,
 }: {
   text: string
+  /** When it was said: its time comes with the actions under a pointer. (Touch reads the thread's own times.) */
+  at?: number
   onRetry?: () => void
   /** Opens the tapbacks, springing out of this button. */
   onReact?: (anchor: HTMLElement) => void
@@ -102,6 +106,11 @@ export function MessageActions({
         <button type="button" className={action} onClick={onRetry} aria-label="Try again" title="Try again">
           <RotateCcw size={16} strokeWidth={1.75} />
         </button>
+      )}
+      {!!at && (
+        <time dateTime={new Date(at).toISOString()} className="ml-1.5 text-caption whitespace-nowrap text-ink-3 tabular-nums [@media(hover:none)]:hidden">
+          {clock(at)}
+        </time>
       )}
     </div>
   )

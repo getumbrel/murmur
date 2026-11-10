@@ -44,6 +44,7 @@ import { ERROR_ACTION_LABEL, errorActionOf, type ErrorAction } from './errors'
 import { Plan } from './plan'
 import { HelperPill, Helpers, HelpersBack, useCardInSight } from './helpers'
 import { WakeLine } from './wake-line'
+import { clock, dayName, timeHeaders, useToday } from './times'
 import { FailedLine, FindingLine } from '@/features/routines/finding-line'
 import { RoutineCard } from '@/features/routines/routine-card'
 import { ReactionBadge, ReactionPills, Tapback, useHoldToReact } from './reactions'
@@ -230,6 +231,34 @@ function foldedScreens(rows: Row[]) {
     for (const k of keys) later.add(k)
   }
   return folded
+}
+
+/**
+ * When a row begins something (your message, the agent woken on its own) and
+ * the last time known in it: what the thread's times are placed by. What a
+ * routine found says when itself, so it only moves the clock on.
+ */
+function when(row: Row): { starts?: number; ends?: number } {
+  if (row.kind === 'user') return { starts: row.item.at }
+  if (row.kind === 'failed') return { ends: row.item.at }
+  if (row.kind !== 'turn') return {}
+  const blocks = row.sections.flatMap((s) => s.blocks)
+  const opener = blocks[0]
+  const woke = opener?.kind === 'wake' ? opener.item : opener?.kind === 'helpers' ? opener.back : undefined
+  const said = blocks.findLast((b) => b.kind === 'text' || b.kind === 'finding')
+  return { starts: woke?.at, ends: said && 'item' in said && 'at' in said.item ? said.item.at : undefined }
+}
+
+/** Where the conversation picks up again: the day and the time, the way Messages heads one. */
+function TimeHeader({ at, fresh }: { at: number; fresh: boolean }) {
+  return (
+    <time
+      dateTime={new Date(at).toISOString()}
+      className={cn('mb-4 block text-center text-caption text-ink-3 select-none', fresh && 'animate-fade')}
+    >
+      <span className="font-semibold">{dayName(at)}</span> {clock(at)}
+    </time>
+  )
 }
 
 /** The row a message is in: its own, or the reply it's part of. */
@@ -464,6 +493,9 @@ export function Thread({
   for (const i of items) if (i.kind === 'approval' && i.status === 'pending') watched.current.add(i.id)
   const rows = useMemo(() => toRows(items, busy, watched.current), [items, busy])
   const folded = useMemo(() => foldedScreens(rows), [rows])
+  // The time, wherever the conversation picks up after a pause. ("Today" turns over at midnight.)
+  const headers = useMemo(() => timeHeaders(rows, when), [rows])
+  useToday()
   // A long chat paints its newest rows, and older ones join as you scroll up
   // to them: rendering every saved message up front made opening one slow.
   // Held by the oldest row shown, so another conversation starts afresh.
@@ -816,6 +848,7 @@ export function Thread({
                             }}
                             style={{ transformOrigin: '50% 0%' }}
                           >
+                            {headers.has(row.id) && <TimeHeader at={headers.get(row.id)!} fresh={isNew(key)} />}
                             {content}
                           </motion.div>
                         )
@@ -981,13 +1014,22 @@ const UserMessage = memo(function UserMessage({
               </span>
             </div>
             {waiting && <Waiting />}
-            {/* On hover-capable screens, quiet actions appear beside it. */}
+            {/* On hover-capable screens, when it was sent and quiet actions appear beside it. */}
             <div
               className={cn(
                 'absolute right-full bottom-0 hidden items-center gap-0.5 pr-1 opacity-0 transition-opacity duration-150 group-hover/user:opacity-100 focus-within:opacity-100 [@media(hover:hover)]:flex',
                 waiting && '[@media(hover:hover)]:hidden',
               )}
             >
+              {/* (Where there's room: a narrow window has it a right-click away.) */}
+              {!!item.at && (
+                <time
+                  dateTime={new Date(item.at).toISOString()}
+                  className="mr-1.5 text-caption whitespace-nowrap text-ink-3 tabular-nums max-sm:hidden"
+                >
+                  {clock(item.at)}
+                </time>
+              )}
               {onEdit && (
                 <button type="button" className={quiet} onClick={() => onEdit(item)} aria-label="Edit" title="Edit">
                   <PencilLine size={16} strokeWidth={1.75} />
@@ -1012,6 +1054,13 @@ const UserMessage = memo(function UserMessage({
             anchor={held}
             actions={actions}
             onClose={close}
+            note={
+              !!item.at && (
+                <>
+                  <span className="font-semibold">{dayName(item.at)}</span> {clock(item.at)}
+                </>
+              )
+            }
             bubble={
               <div className={cn(BUBBLE, 'w-full shadow-float')}>
                 <MentionText text={item.text} still />
@@ -1133,6 +1182,11 @@ const Turn = memo(function Turn({
   const closeTap = useCallback(() => setTapAt(null), [])
   const hold = useHoldToReact(setTapAt)
   const mine = reactTo?.reactions?.find((r) => r.author === 'user')?.emoji
+  // When it was said: its last words' time. (What a routine found says when at its top.)
+  const blocks = sections.flatMap((s) => s.blocks)
+  const saidAt = blocks.some((b) => b.kind === 'finding')
+    ? undefined
+    : blocks.findLast((b): b is Extract<Block, { kind: 'text' }> => b.kind === 'text')?.item.at
 
   return (
     <article
@@ -1271,6 +1325,7 @@ const Turn = memo(function Turn({
       {!live && text && (
         <MessageActions
           text={text}
+          at={saidAt}
           onRetry={onRetry}
           onReact={reactTo ? setTapAt : undefined}
           speak={{ key: speakKey, profile: sections.at(-1)?.speaker?.id ?? voice }}

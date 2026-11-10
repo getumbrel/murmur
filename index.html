@@ -30,6 +30,13 @@
         }
       } catch (e) {}
     </script>
+    <!-- Text size (Settings), likewise. Keep in step with src/features/settings/text-size.ts. -->
+    <script>
+      try {
+        var s = localStorage.getItem('murmur:text-size')
+        if (s === 'small' || s === 'large' || s === 'larger' || s === 'largest') document.documentElement.dataset.textSize = s
+      } catch (e) {}
+    </script>
     <!-- The first frame is already the app's colour, so the splash fades in from nothing. -->
     <style>
       html { background: #fbfbfa }
