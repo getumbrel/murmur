@@ -32,10 +32,21 @@ export async function glance(src: string, size: Size): Promise<Glance> {
   )
 }
 
+const mean = (g: Glance) => g.reduce((a, v) => a + v, 0) / g.length
+
 /** One colour all over: a page still loading, or a screen still starting. */
 export function blank(g: Glance) {
-  const mean = g.reduce((a, v) => a + v, 0) / g.length
-  return Math.sqrt(g.reduce((a, v) => a + (v - mean) ** 2, 0) / g.length) < 3
+  const m = mean(g)
+  return Math.sqrt(g.reduce((a, v) => a + (v - m) ** 2, 0) / g.length) < 3
+}
+
+/**
+ * The browser's own white all over: a page it has opened and not yet drawn,
+ * a new tab or one still loading. A desktop never shows it, nor does a screen
+ * starting up (black, then its backdrop's dark colour).
+ */
+export function opening(g: Glance) {
+  return blank(g) && mean(g) > 200
 }
 
 /** Another page, or the same one moved: more than a caret's blink. */
@@ -43,14 +54,20 @@ export function differs(a: Glance, b: Glance) {
   return a.reduce((sum, v, i) => sum + Math.abs(v - b[i]), 0) / a.length > 6
 }
 
+/** What a card has seen of its screen so far: the first real still, and whether the browser has opened a page since. */
+export type Seen = { first?: Glance; opened?: boolean }
+
 /**
- * The next still, against the first real one the card saw: the browser has
- * drawn once it shows something else. Blank stills never count either way.
+ * The next still, against what the card has seen: the browser has drawn once
+ * it shows something other than the first real still, or anything real after
+ * opening a page. A screen that has only just started needs the second: its
+ * backdrop and the browser's new tab are one colour each, so its first real
+ * still is already the new page, with nothing before it to differ from.
  */
-export function look(first: Glance | undefined, next: Glance): { first?: Glance; drawn: boolean } {
-  if (blank(next)) return { first, drawn: false }
-  if (!first) return { first: next, drawn: false }
-  return { first, drawn: differs(first, next) }
+export function look(seen: Seen, next: Glance): Seen & { drawn: boolean } {
+  if (blank(next)) return { ...seen, opened: seen.opened || opening(next), drawn: false }
+  if (!seen.first) return { ...seen, first: next, drawn: !!seen.opened }
+  return { ...seen, drawn: !!seen.opened || differs(seen.first, next) }
 }
 
 /** The agent's first step in its browser this turn (`key` names the turn), and whether it's done. */
@@ -77,7 +94,7 @@ const drawnFor = new Set<string>()
 export function useDrawn(profile: string, still: string | null, size: Size, step?: BrowserStep) {
   const key = step && `${profile} ${step.key}`
   const [drawn, setDrawn] = useState(() => !key || drawnFor.has(key))
-  const first = useRef<Glance>(undefined)
+  const seen = useRef<Seen>({})
   const done = useCallback(() => {
     if (key) drawnFor.add(key)
     setDrawn(true)
@@ -96,9 +113,9 @@ export function useDrawn(profile: string, still: string | null, size: Size, step
     let alive = true
     glance(still, { w, h }).then((g) => {
       if (!alive) return
-      const seen = look(first.current, g)
-      first.current = seen.first
-      if (seen.drawn) done()
+      const { drawn, ...now } = look(seen.current, g)
+      seen.current = now
+      if (drawn) done()
     }, done)
     return () => {
       alive = false
