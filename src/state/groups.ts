@@ -3,7 +3,9 @@
 // sleeps. Rooms send no live events, so the room's log is polled (quickly while
 // someone is talking, slowly otherwise, never in a hidden tab). For words as
 // they're written, we also listen in on each member's own behind-the-scenes
-// chat for the room ("Group: <room id>"). The log stays the source of truth.
+// chat for the room ("Group: <room id>"), and that chat is where the steps
+// behind their words are read (state/group-steps.ts). The log stays the source
+// of truth.
 
 import { create } from 'zustand'
 import { useEffect, useMemo, useRef } from 'react'
@@ -14,6 +16,7 @@ import { hueFor } from '@/lib/hues'
 import { toAgent, useAgents, type Agent, type Profile } from '@/state/agents'
 import { forgetFrames } from '@/state/browser-frames'
 import { friendlyError, resumeHolding } from '@/state/chats'
+import { forgetCopies, joinSteps, readTurns, type CopyTurn } from '@/state/group-steps'
 import { toolLabel } from '@/features/chat/tool-labels'
 import type { ApprovalChoice, ChatItem, Speaker } from '@/features/chat/types'
 import { mentionedIds, toHandles, toNames } from '@shared/mentions.ts'
@@ -52,7 +55,14 @@ type PendingAction = {
   member_id?: string
   approval?: { command?: string; description?: string; request_id?: string; pattern_key?: string }
 }
-type DriverStatus = { working?: boolean; blocked?: boolean; pending_actions?: PendingAction[] }
+/** A member's turn under way (absent from older gateways). */
+type MemberActivity = { member_id?: string; status?: string }
+type DriverStatus = {
+  working?: boolean
+  blocked?: boolean
+  pending_actions?: PendingAction[]
+  member_activity?: MemberActivity[]
+}
 type StateResult = { room: WireRoom; driver_status?: DriverStatus }
 type LogResult = { events: RoomEvent[]; cursor?: number; latest_seq?: number; has_more?: boolean }
 
@@ -320,6 +330,7 @@ export async function deleteGroup(id: string) {
   void Promise.all(members.map((m) => forgetMemberCopy(id, m.profile))).catch(() => {})
   // The pictures of its agents' browsers go with it.
   void forgetFrames(id)
+  forgetSteps(id)
 }
 
 async function forgetMemberCopy(room: string, profile: string) {
@@ -375,6 +386,8 @@ type Stream = {
   /** Log position the turn began after (unknown until the next poll lands). */
   after: number | null
   done: boolean
+  /** The room's task it runs, when its agent's copy of the room said so: its message will name it too. */
+  task?: string
 }
 
 type Approval = {
@@ -419,8 +432,12 @@ type Live = {
   aliases: Record<string, string>
   /** Steps seen live, kept beside the message once the log takes over. */
   trail: Record<string, ToolItem[]>
+  /** Each turn's steps as its agent's copy of the room keeps them, by the room's task it ran. */
+  steps: Record<string, ToolItem[]>
   /** When Stop was pressed, until Hermes confirms the round is over. */
   stopping?: number
+  /** Its first look is in and its agents' steps are still being read: it shows once they are. */
+  opening?: boolean
 }
 
 export const useGroupLive = create<{ rooms: Record<string, Live> }>(() => ({ rooms: {} }))
@@ -436,6 +453,7 @@ const blank = (): Live => ({
   approvals: [],
   aliases: {},
   trail: {},
+  steps: {},
 })
 
 const get = (id: string) => useGroupLive.getState().rooms[id]
@@ -544,6 +562,12 @@ function poll(id: string): Promise<void> {
       apply(id, state, events, cursor, startedAt)
       const now = get(id)
       if (now?.driver?.working) void listenIn(id)
+      const reading = followSteps(id)
+      // A group opens with its agents' steps in place, not a moment after their words.
+      if (!live.loaded)
+        void Promise.race([reading, new Promise((r) => setTimeout(r, OPEN_WAIT))]).then(() =>
+          patch(id, () => ({ opening: false })),
+        )
       // A round just ended: one more quick look for its last words.
       if (wasWorking && !now?.driver?.working) fastUntil.set(id, Date.now() + 1500)
       if (events.length || wasWorking !== Boolean(now?.driver?.working)) {
@@ -598,10 +622,19 @@ function apply(id: string, state: StateResult, fresh: RoomEvent[], cursor: numbe
       return false
     })
 
-    // Streams whose turn the log now records hand over to it.
+    // Streams whose turn the log now records hand over to it: by the task
+    // both name, where the agent's copy said which, or else by who spoke next.
     const streams: Record<string, Stream> = {}
     for (const [k, s] of Object.entries(l.streams)) {
-      if (s.after !== null) {
+      const ended = s.task ? events.find((e) => ENDS_TURN.has(e.kind) && e.payload.task_id === s.task) : undefined
+      if (ended) {
+        if (ended.kind === 'message.member') {
+          aliases[ended.event_id] = `${s.id}-a`
+          if (s.tools.length) trail[ended.event_id] = s.tools.map(settle)
+        }
+        continue
+      }
+      if (s.after !== null && !s.task) {
         const ended = added.find((e) => e.seq > s.after! && ENDS_TURN.has(e.kind) && memberOf(e) === s.member)
         if (ended) {
           if (ended.kind === 'message.member') {
@@ -640,12 +673,21 @@ function apply(id: string, state: StateResult, fresh: RoomEvent[], cursor: numbe
       }
     }
 
+    // A turn that's over has taken all the steps it's going to.
+    let steps = l.steps
+    for (const e of added) {
+      const task = ENDS_TURN.has(e.kind) ? String(e.payload.task_id ?? '') : ''
+      if (steps[task]?.some((t) => t.status === 'running')) steps = { ...steps, [task]: steps[task].map(settle) }
+    }
+
     return {
       room: state.room,
       driver,
       events,
       cursor: end,
+      steps,
       loaded: true,
+      ...(!l.loaded && { opening: true }),
       missing: false,
       outgoing,
       streams,
@@ -868,6 +910,137 @@ function onServerRequest(req: ServerRequest) {
     }
   })
   return true
+}
+
+// ── Steps, from each agent's copy of the room ───────────────────────────────
+
+/** How often a working agent's copy is read for its steps: about as often as the log. */
+const STEPS_EVERY = 700
+/** Reads that fail this many times running are given up on, so a copy that can't be read isn't asked for ever. */
+const GIVE_UP = 3
+/** The longest a group waits to open for its agents' steps: past that, its words show and the steps follow. */
+const OPEN_WAIT = 1500
+
+// Per room and member ("<room>/<member>").
+/** How far through the log their turns have been read whole. */
+const readTo = new Map<string, number>()
+/** The turn they were last seen on: a long one's start may be further back than a quick read goes. */
+const onTurn = new Map<string, string>()
+/** Their copy doesn't name its turns (an older Hermes): it's left alone. */
+const unnamed = new Set<string>()
+const reading = new Set<string>()
+const readAt = new Map<string, number>()
+const failures = new Map<string, number>()
+
+/**
+ * Reads each member's steps from their copy of the room: the turn they're on,
+ * while they work on it, and the whole of each turn once their words are in.
+ * Settles once the reads it starts are shown.
+ */
+function followSteps(id: string): Promise<unknown> {
+  const live = get(id)
+  if (!live?.room || !live.loaded) return Promise.resolve()
+  const reads: Promise<void>[] = []
+  const working = new Set(
+    (live.driver?.member_activity ?? []).filter((a) => a.status === 'running').map((a) => a.member_id),
+  )
+  for (const m of live.room.members) {
+    const key = `${id}/${m.member_id}`
+    if (unnamed.has(key) || reading.has(key)) continue
+    // Their turns that are over (said, or failed) and haven't been read whole.
+    const over = live.events.filter(
+      (e) =>
+        (e.kind === 'message.member' || e.kind === 'turn.failed') &&
+        memberOf(e) === m.member_id &&
+        e.seq > (readTo.get(key) ?? 0),
+    )
+    const wanted = [...new Set(over.map((e) => String(e.payload.task_id ?? '')).filter(Boolean))]
+    const now = working.has(m.member_id) && Date.now() - (readAt.get(key) ?? 0) >= STEPS_EVERY
+    if (!wanted.length && !now) continue
+    const to = over.at(-1)?.seq
+    const done = () => to !== undefined && readTo.set(key, Math.max(readTo.get(key) ?? 0, to))
+    reading.add(key)
+    readAt.set(key, Date.now())
+    const looked = readTurns(
+      id,
+      m.profile,
+      wanted.length ? { wanted } : { before: onTurn.get(key), page: 30, most: 300 },
+    )
+      .then((read) => {
+        failures.delete(key)
+        done()
+        if (read?.unnamed) unnamed.add(key)
+        if (!read?.turns.length) return
+        onTurn.set(key, read.turns.at(-1)!.task)
+        showSteps(id, m.member_id, read.turns, working.has(m.member_id))
+      })
+      .catch(() => {
+        const n = (failures.get(key) ?? 0) + 1
+        failures.set(key, n)
+        if (n >= GIVE_UP) {
+          failures.delete(key)
+          done()
+        }
+      })
+      .finally(() => reading.delete(key))
+    reads.push(looked)
+  }
+  return Promise.all(reads)
+}
+
+/** The same steps as before, give or take new objects: kept as they were, so nothing redraws. */
+const sameSteps = (a: ToolItem[] | undefined, b: ToolItem[]) =>
+  a?.length === b.length &&
+  a.every((t, i) => t.id === b[i].id && t.status === b[i].status && t.label === b[i].label && t.took === b[i].took)
+
+function showSteps(id: string, member: string, turns: CopyTurn[], working: boolean) {
+  patch(id, (l) => {
+    const over = (task: string) => l.events.some((e) => ENDS_TURN.has(e.kind) && e.payload.task_id === task)
+    let steps = l.steps
+    for (const t of turns) {
+      const all = t.whole ? t.steps : joinSteps(steps[t.task], t.steps)
+      const now = over(t.task) ? all.map(settle) : all
+      if (!sameSteps(steps[t.task], now)) steps = { ...steps, [t.task]: now }
+    }
+    // The turn they're on, while they're on it: there as it goes, the way a reply being written is.
+    const on = turns.at(-1)!
+    let streams = l.streams
+    if (working && !over(on.task) && steps[on.task]?.length) {
+      const was = streams[member]
+      streams = { ...streams }
+      // Theirs from a turn before this one (not in the log yet) steps aside.
+      if (was?.task && was.task !== on.task) {
+        streams[`${member}#${was.id}`] = { ...was, done: true }
+        delete streams[member]
+      }
+      const s = streams[member]
+      const tools = joinSteps(s?.tools, steps[on.task])
+      if (s?.task === on.task && sameSteps(s.tools, tools)) streams = l.streams
+      else
+        streams[member] = s
+          ? { ...s, task: on.task, tools }
+          : {
+              id: uid(`live-${member}`),
+              member,
+              text: '',
+              tools,
+              startedAt: Date.now(),
+              after: null,
+              done: false,
+              task: on.task,
+            }
+    }
+    if (steps === l.steps && streams === l.streams) return
+    return { steps, streams }
+  })
+}
+
+/** A room is gone: so is what was known of its copies. */
+function forgetSteps(id: string) {
+  forgetCopies(id)
+  for (const map of [readTo, onTurn, readAt, failures])
+    for (const key of map.keys()) if (key.startsWith(`${id}/`)) map.delete(key)
+  for (const key of unnamed) if (key.startsWith(`${id}/`)) unnamed.delete(key)
 }
 
 let wired = false
@@ -1148,7 +1321,7 @@ const liveStreams = (streams: Record<string, Stream>, logged: Set<string>) =>
 
 /** The log as a conversation. Changes only when the log does, never per word. */
 function presentLog(
-  { events, aliases, trail, approvals }: Pick<Live, 'events' | 'aliases' | 'trail' | 'approvals'>,
+  { events, aliases, trail, steps, approvals }: Pick<Live, 'events' | 'aliases' | 'trail' | 'steps' | 'approvals'>,
   cast: Cast,
   /** Members with a turn on screen: their requests sit with it instead. */
   speaking: string,
@@ -1156,6 +1329,11 @@ function presentLog(
   const { roster, speaker, say, approvalItem } = cast
   const streaming = new Set(speaking.split(','))
   const key = (eventId: string) => aliases[eventId] ?? eventId
+  // A turn's steps: as its agent's copy keeps them, or else as they were seen live.
+  const stepsOf = (ev: RoomEvent) => {
+    const kept = steps[String(ev.payload.task_id ?? '')]
+    return kept?.length ? kept : (trail[ev.event_id] ?? [])
+  }
   // An answered request sits with the reply it was part of; otherwise where it arrived.
   const withReply = new Map<string, Approval[]>()
   const placed: Approval[] = []
@@ -1176,7 +1354,7 @@ function presentLog(
         break
       case 'message.member': {
         const who = speaker(memberOf(ev))
-        for (const t of trail[ev.event_id] ?? []) items.push({ ...t, speaker: say(who) })
+        for (const t of stepsOf(ev)) items.push({ ...t, speaker: say(who) })
         for (const a of withReply.get(ev.event_id) ?? []) items.push(approvalItem(a))
         const text = visibleText(String(ev.payload.text ?? ''))
         if (text)
@@ -1196,6 +1374,8 @@ function presentLog(
         const late = ev.payload.reason_code === 'turn_deadline_exceeded'
         // An empty line opens the member's section so the note sits under their name.
         items.push({ kind: 'assistant', id: `${ev.event_id}-who`, text: '', streaming: false, at, speaker: say(who) })
+        // What they got done before it went wrong.
+        for (const t of stepsOf(ev)) items.push({ ...t, speaker: say(who) })
         items.push({
           kind: 'error',
           id: ev.event_id,
@@ -1367,10 +1547,13 @@ export function useGroup(id: string): GroupView {
   const logged = useMemo(() => loggedReplies(events), [events])
   const streams = useMemo(() => (live ? liveStreams(live.streams, logged) : []), [live?.streams, logged])
   const speaking = [...new Set(streams.map((s) => s.member))].join()
-  const { aliases, trail, approvals } = live ?? {}
+  const { aliases, trail, steps, approvals } = live ?? {}
   const history = useMemo(
-    () => (aliases && trail && approvals ? presentLog({ events, aliases, trail, approvals }, cast, speaking) : []),
-    [events, aliases, trail, approvals, cast, speaking],
+    () =>
+      aliases && trail && steps && approvals
+        ? presentLog({ events, aliases, trail, steps, approvals }, cast, speaking)
+        : [],
+    [events, aliases, trail, steps, approvals, cast, speaking],
   )
   const view = useMemo(() => (live ? present(live, cast, streams, history) : QUIET), [live, cast, streams, history])
   const kept = useRef<ChatItem[]>([])
@@ -1380,7 +1563,8 @@ export function useGroup(id: string): GroupView {
     group,
     items,
     // A group the list says is brand new needs no wait to show its welcome.
-    loaded: ready && (Boolean(live?.loaded) || (listed?.latest_seq === 0 && !live?.outgoing.length)),
+    loaded:
+      ready && ((Boolean(live?.loaded) && !live?.opening) || (listed?.latest_seq === 0 && !live?.outgoing.length)),
     missing: Boolean(live?.missing),
     working: view.working,
     stopping: view.stopping,

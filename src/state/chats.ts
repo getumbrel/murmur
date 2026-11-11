@@ -156,7 +156,7 @@ export const getChat = (id: string) => useChats.getState().chats[id]
 
 // ── History ─────────────────────────────────────────────────────────────────
 
-type Row = {
+export type Row = {
   id?: number
   role: string
   content?: string | null
@@ -167,7 +167,8 @@ type Row = {
   tool_name?: string | null
   reasoning?: string | null
   display_kind?: string | null
-  display_metadata?: { reactions?: unknown } | null
+  /** `submission_id`: what the request was sent as (a group's turn names its room task there). */
+  display_metadata?: { reactions?: unknown; submission_id?: unknown } | null
   /** What Hermes shows for your message when that isn't its content: a request carried inside a chat's summary, say. */
   display_content?: string | null
   timestamp?: number
@@ -347,6 +348,17 @@ function rowsToItems(rows: Row[], speaker?: Speaker, errands: Map<string, Errand
   return items
 }
 
+/**
+ * The steps in a stretch of saved rows, named for their calls as the live
+ * stream names them, so a step keeps its place from when it starts to after
+ * it's read back. How a group finds its agents' steps (state/group-steps.ts).
+ */
+export function stepsIn(rows: Row[]): Extract<ChatItem, { kind: 'tool' }>[] {
+  return rowsToItems(rows).flatMap((item) =>
+    item.kind === 'tool' ? [{ ...item, id: `tool-${item.id.replace(/^h\d+-/, '')}` }] : [],
+  )
+}
+
 /** A message's words, when Hermes saved it in parts (text beside a picture): the text, without the rest (picturesIn reads your pictures). */
 function words(content: unknown): string | null {
   if (typeof content === 'string' || content == null) return content ?? null
@@ -376,10 +388,14 @@ const PAGE = 500
  * A chat's saved rows, oldest first: its newest page, or the one `offset`
  * rows back from its end. Every message, including the ones Hermes has
  * since summarized for the model (its own clients read them the same way).
+ * `pictures: false` leaves the pictures in messages out, for a read that's
+ * only after the steps.
  */
-async function readRows(id: string, profile: string, offset = 0) {
+export async function readRows(id: string, profile: string, offset = 0, { limit = PAGE, pictures = true } = {}) {
   type Res = { messages?: Row[]; data?: Row[] }
-  const query = `profile=${encodeURIComponent(profile)}&order=latest&limit=${PAGE}&include_compacted=true`
+  const query =
+    `profile=${encodeURIComponent(profile)}&order=latest&limit=${limit}&include_compacted=true` +
+    (pictures ? '' : '&inline_images=false')
   const res = await api.get<Res>(
     `/api/sessions/${encodeURIComponent(id)}/messages?${query}${offset ? `&offset=${offset}` : ''}`,
   )

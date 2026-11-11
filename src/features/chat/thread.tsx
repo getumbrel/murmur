@@ -1408,7 +1408,8 @@ const Turn = memo(function Turn({
                             key={browsing.agent}
                             browsing={browsing}
                             agent={who}
-                            live={live}
+                            // In a group, an agent's browser is live while it's their turn.
+                            live={live && lastSection}
                             folded={foldedKeys.has(browserKey(section.speaker?.id))}
                           />
                         ))}
