@@ -26,8 +26,11 @@ export type ToolCategory =
   | 'machine'
   | 'other'
 
-/** `app`: the mark (a MARKS key) of the app the step uses, drawn in place of the category's icon. */
-export type ToolLabel = { label: string; category: ToolCategory; detail?: string; app?: string }
+/**
+ * `app`: the mark (a MARKS key) of the app the step uses, drawn in place of the category's icon.
+ * `page`: the whole address a browser step opened, when it opened one a link can go to.
+ */
+export type ToolLabel = { label: string; category: ToolCategory; detail?: string; app?: string; page?: string }
 
 type Args = Record<string, unknown>
 type Rule = {
@@ -55,6 +58,22 @@ export function domain(url: string) {
     return new URL(url.includes('://') ? url : `https://${url}`).hostname.replace(/^www\./, '')
   } catch {
     return url
+  }
+}
+
+/**
+ * A page's whole address, as a link can open it: http or https only, and never
+ * one that carries a sign-in. "example.com/sale" is taken the way a browser's
+ * address bar takes it.
+ */
+export function pageAddress(raw: string | undefined) {
+  if (!raw?.trim()) return undefined
+  try {
+    const url = new URL(raw.includes('://') ? raw.trim() : `https://${raw.trim()}`)
+    const web = url.protocol === 'http:' || url.protocol === 'https:'
+    return web && url.hostname && !url.username && !url.password ? url.href : undefined
+  } catch {
+    return undefined
   }
 }
 
@@ -406,8 +425,11 @@ function connectorLabel(calls: { name: string }[]): ToolLabel | undefined {
 function browserCodeLabel(a: Args, preview?: string): ToolLabel {
   const code = str(a.code) ?? ''
   const step = str(code.match(/^\s*#\s*(.+)/)?.[1]) ?? str(preview)
-  const to = code.match(/\b(?:new_tab|goto_url)\(\s*(['"])(.+?)\1/)?.[2]
-  return { label: step ? clip(step, 60) : 'Using the browser', category: 'browser', detail: to && domain(to) }
+  const opened = [...code.matchAll(/\b(?:new_tab|goto_url)\(\s*(['"])(.+?)\1/g)].map((m) => m[2])
+  const to = opened[0]
+  // Where it ends up is the last page it opens.
+  const page = pageAddress(opened.at(-1))
+  return { label: step ? clip(step, 60) : 'Using the browser', category: 'browser', detail: to && domain(to), ...(page && { page }) }
 }
 
 /** manage_connections: the agent looking at, or connecting, apps through Nous. */
@@ -448,7 +470,8 @@ export function toolLabel(name: string, args?: unknown, preview?: string): ToolL
   }
   const detail = rule.detail?.(a) ?? (rule.detail && !rule.private ? str(preview) : undefined)
   if (detail && rule.verb) return { label: `${rule.verb} ${clip(detail, 40)}`, category: rule.category }
-  return { label: rule.label, category: rule.category, detail: detail && (rule.whole ? detail : clip(detail)) }
+  const page = OPENS_PAGES.has(name) ? pageAddress(pick(a, 'url', 'href')) : undefined
+  return { label: rule.label, category: rule.category, detail: detail && (rule.whole ? detail : clip(detail)), ...(page && { page }) }
 }
 
 export function toolCategory(name: string): ToolCategory {

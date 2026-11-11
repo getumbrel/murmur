@@ -12,6 +12,7 @@ import { gateway, rpc, type GatewayEvent, type ServerRequest } from '@/hermes/ga
 import { api } from '@/hermes/rest'
 import { hueFor } from '@/lib/hues'
 import { toAgent, useAgents, type Agent, type Profile } from '@/state/agents'
+import { forgetFrames } from '@/state/browser-frames'
 import { friendlyError, resumeHolding } from '@/state/chats'
 import { toolLabel } from '@/features/chat/tool-labels'
 import type { ApprovalChoice, ChatItem, Speaker } from '@/features/chat/types'
@@ -317,6 +318,8 @@ export async function deleteGroup(id: string) {
   qc?.setQueryData<WireRoom[]>(LIST, (rooms) => rooms?.filter((r) => r.room_id !== id))
   refreshLists()
   void Promise.all(members.map((m) => forgetMemberCopy(id, m.profile))).catch(() => {})
+  // The pictures of its agents' browsers go with it.
+  void forgetFrames(id)
 }
 
 async function forgetMemberCopy(room: string, profile: string) {
@@ -779,6 +782,7 @@ function onEvent(ev: GatewayEvent) {
             label: label.label,
             detail: label.detail,
             app: label.app,
+            page: label.page,
             status: 'running',
             startedAt: Date.now(),
           },

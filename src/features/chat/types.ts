@@ -109,6 +109,8 @@ export type ChatItem =
       took?: number
       /** The routine it set up (Hermes's scheduler), which reports in this chat. */
       routineId?: string
+      /** The whole address a browser step opened, for the link where its browser left off. */
+      page?: string
     }
   | {
       kind: 'approval'

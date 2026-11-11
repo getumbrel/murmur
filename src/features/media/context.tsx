@@ -7,6 +7,11 @@ import { createContext, useContext } from 'react'
 export type MediaContext = {
   /** The chat's stored id, so Hermes can check the file belongs to it. */
   sessionId?: string
+  /**
+   * What pictures of its agents' browsers are kept under (state/browser-frames.ts),
+   * where that isn't `sessionId`: a group chat, which is a room, not a session.
+   */
+  frames?: string
   /** The agent the chat is with. */
   profile?: string
   /** Bumps each time a reply finishes, so widgets re-read their file. */

@@ -248,6 +248,21 @@ export function useStill(profile: string | undefined, on = true, every = 1500) {
   return still
 }
 
+/**
+ * One still of the agent's screen, now, whether or not the page is in view:
+ * null when there's none to have, or while a person has its browser.
+ */
+export async function stillNow(profile: string): Promise<string | null> {
+  const { screens, held } = useScreens.getState()
+  if (!screens[profile]?.running || controlOf(screens[profile], held[profile]) !== 'agent') return null
+  const { data_url } = await rpc<DisplayThumbnailResult>('display.thumbnail', { profile }, 10_000).catch(
+    () => ({}) as DisplayThumbnailResult,
+  )
+  // Taken over while it was being asked for: not kept.
+  const now = useScreens.getState()
+  return data_url && controlOf(now.screens[profile], now.held[profile]) === 'agent' ? data_url : null
+}
+
 // ── Every agent's browser on its screen ──────────────────────────────────────
 
 /** The main agent: its Hermes host's screen is what this Hermes can show at all. */

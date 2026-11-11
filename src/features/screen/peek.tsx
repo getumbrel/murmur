@@ -1,32 +1,56 @@
 import './screen.css'
-import { useState } from 'react'
-import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
+import { useRef, useState } from 'react'
+import { AnimatePresence, motion } from 'motion/react'
 import { Maximize2 } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { BrowserIcon } from '@/ui/icons'
 import type { Speaker } from '@/features/chat/types'
 import { SiteIcon } from '@/features/vault/site-icon'
-import { sizeOf, useControl, useScreen, useShowable, useStill } from '@/state/screen'
+import { Lightbox } from '@/features/media/lightbox'
+import type { Kept } from '@/state/browser-frames'
+import { sizeOf, useControl, useScreen, useStill } from '@/state/screen'
 import { type BrowserStep, useDrawn } from './drawn'
+import { useKeeping } from './keeping'
 import { Still } from './live-view'
-import { ScreenSetup, useScreenOffer } from './screen-setup'
 import { openViewer } from './viewer'
 
-/** The tag over a picture of the agent's browser: "Live · shop.example.com", or who has it. */
-function LiveTag({ text, site, live }: { text: string; site?: string; live: boolean }) {
+/** A site as itself: its own icon when it's a named one, else a browser. */
+export function SiteMark({ site, size }: { site?: string; size: number }) {
   return (
-    <span className="glass pointer-events-none absolute bottom-2.5 left-2.5 flex h-7 max-w-[calc(100%-20px)] items-center gap-1.5 rounded-full px-2.5 text-caption font-medium shadow-[inset_0_0_0_0.5px_var(--line-strong)]">
-      <span className={cn('relative flex size-2 flex-none', live && 'live-dot')}>
-        <span className={cn('size-2 rounded-full', live ? 'bg-accent' : 'bg-ink-3')} />
-      </span>
-      <span className="flex-none">{text}</span>
-      {site && (
-        <>
-          <span aria-hidden className="text-ink-3">
-            ·
+    <span aria-hidden className="flex flex-none">
+      {site && named(site) ? <SiteIcon host={site} size={size} /> : <BrowserIcon size={Math.round(size * 0.9)} className="text-ink-2" />}
+    </span>
+  )
+}
+
+/**
+ * The tag over a picture of the agent's browser: "Live · shop.example.com" or
+ * who has it while the agent works, and once it's stopped, the site alone,
+ * under its own icon.
+ */
+function Tag({ text, site, live, left }: { text: string; site?: string; live: boolean; left: boolean }) {
+  return (
+    <span className="glass pointer-events-none absolute bottom-2.5 left-2.5 flex h-7 max-w-[calc(100%-20px)] items-center rounded-full px-2.5 text-caption font-medium shadow-[inset_0_0_0_0.5px_var(--line-strong)]">
+      {left ? (
+        <span key="left" className="flex min-w-0 animate-fade items-center gap-1.5">
+          <SiteMark site={site} size={16} />
+          <span className="truncate">{site ?? 'Browser'}</span>
+        </span>
+      ) : (
+        <span key="live" className="flex min-w-0 items-center gap-1.5">
+          <span className={cn('relative flex size-2 flex-none', live && 'live-dot')}>
+            <span className={cn('size-2 rounded-full', live ? 'bg-accent' : 'bg-ink-3')} />
           </span>
-          <span className="truncate text-ink-2">{site}</span>
-        </>
+          <span className="flex-none">{text}</span>
+          {site && (
+            <>
+              <span aria-hidden className="text-ink-3">
+                ·
+              </span>
+              <span className="truncate text-ink-2">{site}</span>
+            </>
+          )}
+        </span>
       )}
     </span>
   )
@@ -65,6 +89,11 @@ function Opening({ site }: { site?: string }) {
  * stays on the last picture, quieted, or shows who has it. For a turn that
  * has just started browsing, it shows the page opening until the browser has
  * drawn after its first step there (`step`).
+ *
+ * When the reply ends (`live` off) the window stays, on the page where the
+ * agent left it (`left`, the picture kept for the reply), under the site's
+ * own name. It still opens the browser while that's the one on show (`open`);
+ * after that, it opens the picture.
  */
 export function Peek({
   profile,
@@ -72,19 +101,29 @@ export function Peek({
   site,
   reason,
   step,
+  live = true,
+  left,
+  open = true,
+  keep,
 }: {
   profile: string
   agent: Speaker
   site?: string
   reason?: string
   step?: BrowserStep
+  live?: boolean
+  left?: Kept | null
+  open?: boolean
+  /** Where the page it shows is kept as the reply goes: the chat, and the reply's picture there. */
+  keep?: { chat: string; frame: string }
 }) {
   const screen = useScreen(profile)
   const control = useControl(profile)
   const size = sizeOf(screen)
-  const still = useStill(profile, !!screen?.running && control === 'agent')
+  const still = useStill(profile, live && !!screen?.running && control === 'agent')
   const drawn = useDrawn(profile, still, size, control === 'agent' ? step : undefined)
-  const opening = control === 'agent' && !(drawn && still)
+  const opening = live && control === 'agent' && !(drawn && still)
+  useKeeping(keep?.chat, keep?.frame, live && drawn && control === 'agent' ? still : null, size)
   const tag =
     control === 'you'
       ? 'You’re in control'
@@ -93,71 +132,60 @@ export function Peek({
         : opening
           ? 'Opening'
           : 'Live'
+  // The page it left settles over the last one it showed, which then goes.
+  const page = live ? null : left
+  const [settled, setSettled] = useState<string>()
+  const under = drawn && (live || !page || settled !== page.src) ? still : null
+  const origin = useRef<HTMLButtonElement>(null)
+  const [big, setBig] = useState(false)
+  const browser = live || (open && !!screen?.running)
+  const where = site ?? 'the page'
   return (
-    <button
-      type="button"
-      onClick={() => openViewer({ profile, agent, site, reason })}
-      aria-label={`Watch ${agent.name} in the browser`}
-      className="group pressable relative block w-full overflow-hidden rounded-[14px] text-left"
-    >
-      <Still src={drawn ? still : null} size={size} dim={control !== 'agent'} page />
-      <AnimatePresence>{opening && <Opening key="opening" site={site} />}</AnimatePresence>
-      {!still && control !== 'agent' && (
-        // Hermes shows nobody the page while a person has it, so one that arrives then has no picture.
-        <BrowserIcon
-          size={32}
-          className="pointer-events-none absolute inset-x-0 top-[calc(50%-28px)] mx-auto animate-fade text-ink-3"
+    <>
+      <button
+        ref={origin}
+        type="button"
+        onClick={() => (browser ? openViewer({ profile, agent, site, reason }) : page && setBig(true))}
+        aria-label={
+          live ? `Watch ${agent.name} in the browser` : browser ? `Open ${agent.name}’s browser` : `See ${where} as ${agent.name} left it`
+        }
+        className="group pressable relative block w-full overflow-hidden rounded-[14px] text-left"
+      >
+        <Still src={under} size={size} shape={page && !under ? page : undefined} dim={live && control !== 'agent'} page />
+        {page && (
+          <img
+            key={page.src}
+            src={page.src}
+            alt=""
+            draggable={false}
+            onAnimationEnd={() => setSettled(page.src)}
+            className={cn('absolute inset-0 block size-full object-cover object-top select-none', under && 'page-left-in')}
+          />
+        )}
+        <AnimatePresence>{opening && <Opening key="opening" site={site} />}</AnimatePresence>
+        {live && !still && control !== 'agent' && (
+          // Hermes shows nobody the page while a person has it, so one that arrives then has no picture.
+          <BrowserIcon
+            size={32}
+            className="pointer-events-none absolute inset-x-0 top-[calc(50%-28px)] mx-auto animate-fade text-ink-3"
+          />
+        )}
+        <span className="pointer-events-none absolute inset-0 rounded-[14px] shadow-[inset_0_0_0_0.5px_var(--line-strong)]" />
+        <Tag text={tag} site={site} live={control === 'agent' && !opening} left={!live} />
+        <span className="glass absolute top-2.5 right-2.5 flex size-8 items-center justify-center rounded-full opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-focus-visible:opacity-100 [@media(pointer:coarse)]:opacity-100">
+          <Maximize2 size={14} strokeWidth={2} aria-hidden />
+        </span>
+      </button>
+      {big && page && origin.current && (
+        <Lightbox
+          src={page.src}
+          alt={`${where} as ${agent.name} left it`}
+          name={site}
+          origin={origin.current}
+          radius={14}
+          onClose={() => setBig(false)}
         />
       )}
-      <span className="pointer-events-none absolute inset-0 rounded-[14px] shadow-[inset_0_0_0_0.5px_var(--line-strong)]" />
-      <LiveTag text={tag} site={site} live={control === 'agent' && !opening} />
-      <span className="glass absolute top-2.5 right-2.5 flex size-8 items-center justify-center rounded-full opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-focus-visible:opacity-100 [@media(pointer:coarse)]:opacity-100">
-        <Maximize2 size={14} strokeWidth={2} aria-hidden />
-      </span>
-    </button>
-  )
-}
-
-/**
- * The agent's browser while it works in it, under what it's doing: only when
- * there's a screen to show (a browser that runs where nobody can see it shows
- * nothing), and folded away again from one that sends no picture of itself.
- */
-export function BrowserPeek({
-  profile,
-  agent,
-  site,
-  step,
-}: {
-  profile: string
-  agent: Speaker
-  site?: string
-  step: BrowserStep
-}) {
-  const reduce = useReducedMotion()
-  const showable = useShowable(profile)
-  const { offer, notNow } = useScreenOffer()
-  // Once the setup's begun here, it stays to the end.
-  const [settingUp, setSettingUp] = useState(false)
-  const setup = offer || settingUp
-  return (
-    <AnimatePresence propagate>
-      {(showable || setup) && (
-        <motion.div
-          key={setup ? 'setup' : 'peek'}
-          initial={reduce ? { opacity: 0 } : { opacity: 0, height: 0 }}
-          animate={{ opacity: 1, height: 'auto' }}
-          exit={reduce ? { opacity: 0 } : { opacity: 0, height: 0 }}
-          transition={{ type: 'spring', duration: 0.4, bounce: 0 }}
-          className="max-w-[560px] overflow-hidden"
-        >
-          {setup ? (
-            <ScreenSetup agent={agent} onStart={() => setSettingUp(true)} onNotNow={notNow} />
-          ) : (
-            <Peek profile={profile} agent={agent} site={site} step={step} />
-          )}
-        </motion.div>
-      )}
-    </AnimatePresence>
+    </>
   )
 }

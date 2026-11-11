@@ -23,19 +23,22 @@ export function Still({
   size,
   page,
   dim,
+  shape,
   className,
 }: {
   src: string | null
   size: Size
   page?: boolean
   dim?: boolean
+  /** The shape to hold instead of the screen's own: a picture kept from a screen of another size. */
+  shape?: Size
   className?: string
 }) {
   const crop = page ? PAGE : CHROME
   return (
     <div
       className={cn('relative overflow-hidden bg-sunken', className)}
-      style={{ aspectRatio: `${size.w} / ${size.h - crop.top - crop.bottom}` }}
+      style={{ aspectRatio: shape ? `${shape.w} / ${shape.h}` : `${size.w} / ${size.h - crop.top - crop.bottom}` }}
     >
       {src && (
         <img

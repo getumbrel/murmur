@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type RefObject } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react'
 import { useLocation } from 'wouter'
 import { MotionConfig } from 'motion/react'
 import { toast } from 'sonner'
@@ -48,6 +48,8 @@ export function GroupScreen({ groupId }: { groupId: string }) {
   const onDraftChange = useCallback((d: { mentioned: string[]; typing: boolean }) => setDraft(d), [])
   // Opened before the conversation arrived: it fades in over the placeholder.
   const [coldStart] = useState(!loaded)
+  // Where its agents' browsers leave their pictures: under the room, as a chat's are under the chat.
+  const media = useMemo(() => ({ frames: groupId }), [groupId])
 
   if (missing) return <Gone />
 
@@ -99,6 +101,7 @@ export function GroupScreen({ groupId }: { groupId: string }) {
           items={loaded ? items : []}
           busy={working && Boolean(active)}
           agent={active?.member}
+          media={media}
           emptyState={
             loaded && group ? (
               <GroupEmpty group={group} listening={listening} mentioned={draft.mentioned} onStart={send} />

@@ -25,6 +25,23 @@
   }
 }
 
+/* The page an agent left settles over the last one its window showed. */
+.page-left-in {
+  animation: page-left-in 240ms var(--ease-out) both;
+}
+
+@keyframes page-left-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page-left-in {
+    animation-duration: 150ms;
+  }
+}
+
 /* A browser's loading bar, along the top of a page on its way. */
 .opening-bar::after {
   content: '';

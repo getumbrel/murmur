@@ -23,6 +23,7 @@ import { toolMedia } from '@/features/media/tool-media'
 import { shotOf } from '@/features/machine/shots'
 import { foundIn, pendingIn } from '@/features/umbrel/finds'
 import { scoped } from '@/hermes/instance'
+import { forgetFrames } from '@/state/browser-frames'
 import { held, hold, release, type Held } from '@/state/outbox'
 import {
   isTodoTool,
@@ -290,6 +291,7 @@ function rowsToItems(rows: Row[], speaker?: Speaker, errands: Map<string, Errand
             label: mailRead(name, args, subjects) ?? label.label,
             detail: label.detail,
             app: label.app,
+            page: label.page,
             // Done once its result row turns up; one still waiting (on your OK, say) is still going.
             status: 'running',
             startedAt: at,
@@ -1612,6 +1614,8 @@ export async function deleteChat(id: string, profile = getChat(id)?.profile ?? '
     await rpc('session.delete', { session_id: id, profile })
   }
   forget(id)
+  // The pictures of its agent's browser go with it.
+  void forgetFrames(id)
   useChats.setState((s) => {
     const chats = { ...s.chats }
     delete chats[id]
@@ -1964,6 +1968,7 @@ function onEvent(ev: GatewayEvent) {
           label: mailRead(name, payload.args, mailSubjects.get(id)) ?? label.label,
           detail: label.detail,
           app: label.app,
+          page: label.page,
           status: 'running',
           startedAt: Date.now(),
           speaker: c.speaker,

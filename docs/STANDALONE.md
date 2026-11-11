@@ -139,6 +139,8 @@ For access from outside your home network, put Murmur behind HTTPS (Caddy, Tails
 - the secret that signs Murmur's own cookie, unless you set `MURMUR_SECRET`.
 - `setupSeen`, written on the first start, so an update can be told apart from a new install (see `GET /murmur/setup` below).
 
+Beside it, `DATA_DIR/browser-frames/` holds the last picture of an agent's browser from each reply that browsed (one small JPEG, filed by Hermes and chat, readable by Murmur alone), so a chat still shows the page after a reload and on another device. A picture goes when its chat is deleted in Murmur or its Hermes is removed, and the oldest go first once they pass 100 MB.
+
 Keep the data volume private. If you'd rather not keep the Hermes password on disk, pass it as `HERMES_PASSWORD` from your secret manager instead. Settings that come from the environment are never written to the file.
 
 ## Environment

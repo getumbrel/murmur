@@ -48,7 +48,7 @@ import { clock, dayName, timeHeaders, useToday } from './times'
 import { FailedLine, FindingLine } from '@/features/routines/finding-line'
 import { RoutineCard } from '@/features/routines/routine-card'
 import { ReactionBadge, ReactionPills, Tapback, useHoldToReact } from './reactions'
-import { BrowserPeek, HandCard } from '@/features/screen'
+import { BrowserCard, browserKey, foldedIn, HandCard, placeBrowsers } from '@/features/screen'
 import { ASK_TOOL, OPENS_PAGES } from '@/state/screen'
 
 type Of<K extends ChatItem['kind']> = Extract<ChatItem, { kind: K }>
@@ -214,23 +214,23 @@ function saidOf(item: Of<'finding'>) {
 }
 
 /**
- * The machines each reply shows that a later reply shows too, by reply: those
- * fold to a line, so the chat has one screen per machine, in its latest reply.
- * Joined into one string, so a reply re-renders only when its own changes.
+ * The screens each reply shows that a later reply shows too, by reply: those
+ * fold to a line, so the chat has one screen per machine, and one browser per
+ * agent, in its latest reply. Joined into one string, so a reply re-renders
+ * only when its own changes.
  */
 function foldedScreens(rows: Row[]) {
-  const later = new Set<string>()
-  const folded = new Map<string, string>()
-  for (const row of [...rows].reverse()) {
-    if (row.kind !== 'turn') continue
-    const keys = new Set(
-      row.sections.flatMap((s) => s.blocks).flatMap((b) => (b.kind === 'work' ? b.items : [])).flatMap((i) => (i.kind === 'tool' && i.shot ? [i.shot.key] : [])),
-    )
-    const mine = [...keys].filter((k) => later.has(k))
-    if (mine.length) folded.set(row.id, mine.join('\n'))
-    for (const k of keys) later.add(k)
-  }
-  return folded
+  const turns = rows.filter((row) => row.kind === 'turn')
+  const shown = turns.map((row) =>
+    row.sections
+      .flatMap((s) => s.blocks)
+      .flatMap((b) => (b.kind === 'work' ? b.items : []))
+      .flatMap((i) =>
+        i.kind !== 'tool' ? [] : i.shot ? [i.shot.key] : i.name.startsWith('browser_') ? [browserKey(i.speaker?.id)] : [],
+      ),
+  )
+  const folded = foldedIn(shown)
+  return new Map(turns.flatMap((row, i) => (folded[i].length ? [[row.id, folded[i].join('\n')] as const] : [])))
 }
 
 /**
@@ -1111,7 +1111,7 @@ type TurnProps = Handlers & {
   /** Which agent's voice reads it aloud (falls back to whoever spoke last). */
   voice?: string
   isNew: boolean
-  /** The machines whose screens a later reply shows, one per line: here they fold to a line. */
+  /** The screens a later reply shows too (machines, an agent's browser), one per line: here they fold to a line. */
   folded?: string
   className?: string
 }
@@ -1176,6 +1176,32 @@ const Turn = memo(function Turn({
     const placed = placeScreens(runs.map((b) => b.items.flatMap((i) => (i.kind === 'tool' && i.shot ? [i.shot] : []))))
     return new Map(runs.map((b, i) => [b.id, placed[i]]))
   }, [sections])
+  // Each agent's browser, under the run that last used it: live while it works, and it stays after.
+  const browsers = useMemo(() => {
+    const runs = sections.flatMap((s) =>
+      s.blocks.flatMap((b) => (b.kind === 'work' ? [{ id: b.id, items: b.items, who: s.speaker ?? agent }] : [])),
+    )
+    const placed = placeBrowsers(
+      runs.map(({ items, who }) =>
+        items.flatMap((i) =>
+          who && i.kind === 'tool' && i.name.startsWith('browser_')
+            ? [
+                {
+                  agent: who.id,
+                  id: i.id,
+                  // (A step that's streaming is named for its call; one read back carries it.)
+                  call: i.callId ?? (i.id.startsWith('tool-') ? i.id.slice(5) : undefined),
+                  done: i.status !== 'running',
+                  site: OPENS_PAGES.has(i.name) ? i.detail : undefined,
+                  page: i.page,
+                },
+              ]
+            : [],
+        ),
+      ),
+    )
+    return new Map(runs.map((run, i) => [run.id, placed[i]]))
+  }, [sections, agent])
   const foldedKeys = new Set(folded?.split('\n'))
   const tail = sections.at(-1)?.blocks.at(-1)
   // Between steps (or before the first one) there's still something to say.
@@ -1193,12 +1219,6 @@ const Turn = memo(function Turn({
     .flatMap((b) => (b.kind === 'work' ? b.items : []))
     .flatMap((i) => (i.kind === 'tool' && OPENS_PAGES.has(i.name) && i.detail ? [i.detail] : []))
     .at(-1)
-  // Its first step in its browser: until the browser draws something after it, the card waits.
-  const browsed = sections
-    .flatMap((s) => s.blocks)
-    .flatMap((b) => (b.kind === 'work' ? b.items : []))
-    .find((i) => i.kind === 'tool' && i.name.startsWith('browser_'))
-  const step = browsed?.kind === 'tool' ? { key: browsed.id, done: browsed.status !== 'running' } : undefined
 
   // What a tapback lands on: the reply's last words, once it's finished (and,
   // until Hermes has saved it, only while it's the newest).
@@ -1248,16 +1268,19 @@ const Turn = memo(function Turn({
                   const finds = found.get(block.id) ?? []
                   // Routines it set up, each under the step that did.
                   const routines = block.items.flatMap((i) => (i.kind === 'tool' && i.routineId ? [i.routineId] : []))
-                  // While it works in its browser: the browser itself, live.
-                  const browsing = liveBlock && block.items.some((i) => i.kind === 'tool' && i.name.startsWith('browser_'))
                   return (
                     <Fragment key={block.id}>
                       <Work items={block.items} live={liveBlock} hue={hue} seed={seed} />
-                      <AnimatePresence initial={false}>
-                        {browsing && who && step && (
-                          <BrowserPeek key="peek" profile={who.id} agent={who} site={site} step={step} />
-                        )}
-                      </AnimatePresence>
+                      {who &&
+                        browsers.get(block.id)?.map((browsing) => (
+                          <BrowserCard
+                            key={browsing.agent}
+                            browsing={browsing}
+                            agent={who}
+                            live={live}
+                            folded={foldedKeys.has(browserKey(section.speaker?.id))}
+                          />
+                        ))}
                       {made.length > 0 && <ToolMedia items={made} />}
                       {screens.get(block.id)?.map((screen) => (
                         <MachineScreen key={screen.key} screen={screen} live={live} folded={foldedKeys.has(screen.key)} />

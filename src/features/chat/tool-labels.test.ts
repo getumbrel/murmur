@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { didSummary, foundSubjects, pastLabel, peopleOf, resultLabel, searchWords, toolLabel, tookFor } from './tool-labels'
+import { didSummary, foundSubjects, pageAddress, pastLabel, peopleOf, resultLabel, searchWords, toolLabel, tookFor } from './tool-labels'
 
 describe('tools from connected servers', () => {
   it('read as plain steps', () => {
@@ -139,6 +139,7 @@ describe('the browser', () => {
       label: 'Opening your basket at Hearth & Bean',
       category: 'browser',
       detail: 'hearth.example',
+      page: 'https://www.hearth.example/cart',
     })
     expect(exec("# Searching for flights\ngoto_url('https://flights.example/?q=LIS')").detail).toBe('flights.example')
     expect(pastLabel(exec('# Opening the shop\nnew_tab("https://shop.example")').label)).toBe('Opened the shop')
@@ -202,5 +203,46 @@ describe('a question the agent asked you', () => {
     const answered = { responses: [{ status: 'answered', user_response: 'Slate' }], outcome: 'submitted' }
     expect(resultLabel('clarify', answered)).toBeUndefined()
     expect(resultLabel('clarify', { responses: [], outcome: 'cancelled' })).toBeUndefined()
+  })
+})
+
+describe('the page a browser step opened', () => {
+  it('keeps the whole address, where the step’s detail is only the site', () => {
+    const opened = toolLabel('browser_navigate', { url: 'https://www.shop.example.com/kettles/42?ref=search#reviews' })
+    expect(opened.detail).toBe('shop.example.com')
+    expect(opened.page).toBe('https://www.shop.example.com/kettles/42?ref=search#reviews')
+    expect(toolLabel('browser_navigate', '{"url":"example.com/sale"}').page).toBe('https://example.com/sale')
+  })
+
+  it('is the last one a step of browser code opens', () => {
+    const code = "# Comparing prices\nnew_tab('https://a.example.com/x')\ngoto_url(\"https://b.example.com/y?z=1\")\nprint(page_info())"
+    expect(toolLabel('browser_exec', { code })).toMatchObject({ detail: 'a.example.com', page: 'https://b.example.com/y?z=1' })
+    expect(toolLabel('browser_exec', { code: 'print(page_info())' }).page).toBeUndefined()
+    // Through Hermes's tool search, it's still the step it wraps.
+    expect(toolLabel('tool_call', { calls: [{ name: 'browser_navigate', arguments: { url: 'https://example.com/a' } }] }).page).toBe('https://example.com/a')
+  })
+
+  it('is only ever one a link can safely go to', () => {
+    expect(pageAddress('http://192.168.1.4:8080/admin')).toBe('http://192.168.1.4:8080/admin')
+    for (const not of [
+      'javascript:alert(1)',
+      'data:text/html,<script>alert(1)</script>',
+      'file:///etc/passwd',
+      'about:blank',
+      'chrome://settings',
+      'mailto:sam@example.com',
+      'https://sam:secret@example.com/',
+      'not a url',
+      '',
+      undefined,
+    ]) {
+      expect(pageAddress(not), String(not)).toBeUndefined()
+    }
+    expect(toolLabel('browser_navigate', { url: 'javascript:alert(1)' }).page).toBeUndefined()
+  })
+
+  it('belongs to steps that open pages, not to ones that only read them', () => {
+    expect(toolLabel('web_extract', { url: 'https://example.com/a' }).page).toBeUndefined()
+    expect(toolLabel('browser_click', { ref: 'e12', url: 'https://example.com/a' }).page).toBeUndefined()
   })
 })

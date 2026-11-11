@@ -8,7 +8,8 @@ import { timingSafeEqual } from 'node:crypto'
 import { extname, join, normalize, resolve, sep } from 'node:path'
 import { cookieValue, handleAccess, isSignedIn, onSignOut } from './access.ts'
 import { memo, setting, useEnv, type Env } from './config.ts'
-import { handleConnection, hermesFor, onDrop, syncHermesCookie } from './connection.ts'
+import { handleBrowserFrames } from './browser-frames.ts'
+import { handleConnection, hermesFor, onDrop, requestTarget, syncHermesCookie } from './connection.ts'
 import { accepted, hostAllowed, originAllowed, requestUrl, sendJson } from './http.ts'
 import { handleNotifications, startNotifications, stopNotifications, type NativeNote } from './notifications.ts'
 import { isOAuthReturn } from './oauth-return.ts'
@@ -256,6 +257,7 @@ export function startServer(options: ServerOptions = {}): Promise<RunningServer>
       if (await handleUmbrel(req, res, url)) return
       if (await handleVoiceKey(req, res, url)) return
       if (await handleSiteIcon(req, res, url)) return
+      if (await handleBrowserFrames(req, res, url, requestTarget(req)?.id ?? null)) return
       if (path === '/murmur/local') return sendJson(res, 200, { servers: await discoverLocal() })
       sendJson(res, 404, { error: 'not_found' })
     } catch (error) {

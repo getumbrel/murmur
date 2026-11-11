@@ -23,6 +23,7 @@
 // to another Hermes, so a tab never mixes two.
 
 import type http from 'node:http'
+import { forgetHermes } from './browser-frames.ts'
 import {
   addBuiltin,
   addTarget,
@@ -308,6 +309,8 @@ async function update(res: http.ServerResponse, target: Target, body: Body) {
 
 function remove(req: http.IncomingMessage, res: http.ServerResponse, target: Target) {
   removeTarget(target.id)
+  // What its agents' browsers were showing goes with it.
+  forgetHermes(target.id)
   reload()
   // This browser was using it: move it to the first, now, so the reload lands there.
   if (browserTarget(req).id !== readCookie(req, HERMES_COOKIE)) appendCookie(res, cookieFor(req, targets()[0].id))
