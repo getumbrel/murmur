@@ -1,5 +1,5 @@
 import http from 'node:http'
-import type { AddressInfo } from 'node:net'
+import net, { type AddressInfo } from 'node:net'
 import { existsSync, mkdtempSync, readdirSync, rmSync, statSync, utimesSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -164,6 +164,22 @@ describe('/murmur/browser-frames', () => {
     expect((await put('chat1/call_1', jpeg(FRAME_BYTES + 1))).status).toBe(413)
     expect((await put('chat1/call_1', jpeg(FRAME_BYTES))).status).toBe(200)
     expect(framesOf('main', 'chat1')).toEqual(['call_1'])
+  })
+
+  it('says one is too large without hanging up while it’s still being sent', async () => {
+    // Windows loses the answer when the line drops mid-send. Anywhere, the
+    // same line takes the next request once the refused picture is in.
+    const socket = net.connect((server.address() as AddressInfo).port, '127.0.0.1')
+    let heard = ''
+    socket.on('data', (chunk) => void (heard += chunk.toString('latin1')))
+    socket.on('error', () => {})
+    socket.write(
+      `PUT /murmur/browser-frames/chat1/call_1 HTTP/1.1\r\nhost: x\r\ncontent-type: image/jpeg\r\ncontent-length: ${FRAME_BYTES + 1}\r\n\r\n`,
+    )
+    socket.write(jpeg(FRAME_BYTES + 1))
+    socket.write('GET /murmur/browser-frames/chat1 HTTP/1.1\r\nhost: x\r\nconnection: close\r\n\r\n')
+    await new Promise((closed) => socket.on('close', closed))
+    expect(heard.match(/^HTTP\/1\.1 \d+/gm)).toEqual(['HTTP/1.1 413', 'HTTP/1.1 200'])
   })
 
   it('refuses a name that could reach outside its folder', async () => {

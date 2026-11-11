@@ -219,11 +219,9 @@ export async function handleBrowserFrames(
   if (req.method !== 'PUT') return reply(res, 405, { error: 'method_not_allowed' })
   if (req.headers['content-type'] !== 'image/jpeg') return reply(res, 415, { error: 'not_a_jpeg' })
   const picture = await readBody(req, FRAME_BYTES)
-  if (!picture) {
-    // Whatever's left of it isn't read.
-    res.once('finish', () => req.destroy())
-    return reply(res, 413, { error: 'too_large' })
-  }
+  // What's left of one too large is read and dropped (Node does that): hanging
+  // up while it's still being sent loses this answer with it on Windows.
+  if (!picture) return reply(res, 413, { error: 'too_large' })
   if (!isJpeg(picture)) return reply(res, 415, { error: 'not_a_jpeg' })
   keepFrame(hermes, chat, step, picture)
   return reply(res, 200, { ok: true })
