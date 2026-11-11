@@ -21,6 +21,7 @@ import { CantOpen, NotFound } from '@/features/chat-screen/not-found'
 import { ThreadSkeleton } from '@/features/chat-screen/thread-skeleton'
 import { useOrbState } from '@/features/chat-screen/use-orb-state'
 import { GoalChip } from '@/features/chat-screen/goal-chip'
+import { StillRunning } from '@/features/chat-screen/still-running'
 import { useLoved } from '@/features/chat-screen/hearts'
 import { BackBadge, backHint, useElsewhere } from '@/features/chat-screen/elsewhere'
 import { ChatMenu, ChatMenuButton, useChatMenu } from '@/features/chat-screen/chat-menu'
@@ -99,9 +100,11 @@ import {
   setChatReasoning,
   stop,
   stopHelper,
+  stopRunning,
   titleTaken,
   undo,
   useChats,
+  watchRunning,
 } from '@/state/chats'
 import {
   BOT_CHAT,
@@ -160,6 +163,8 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
     openChat(id, agentId, speakerOf(agent)).catch(() => setOpenError(true))
   }, [id, agentId, agent])
   useEffect(() => (id ? () => leaveChat(id) : undefined), [id])
+  // What the agent started and left going is kept current while its chat is on screen.
+  useEffect(() => (id ? watchRunning(id) : undefined), [id])
 
   // A blank chat keeps its model choice locally until Hermes creates it.
   const [draftPick, setDraftPick] = useState<ModelPick>()
@@ -915,6 +920,12 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
               above={(text) => (
                 <>
                   {shut && !!chat?.items.length && <CantOpen onRetry={readUnread} />}
+                  <StillRunning
+                    // While it's replying the agent is plainly at work; this is for after.
+                    running={busy ? undefined : chat?.running}
+                    stopping={chat?.stopping}
+                    onStop={() => id && void stopRunning(id).catch(() => toast.error('Couldn’t stop that. Try again.'))}
+                  />
                   {agent && <ChatConnectCard runtimeId={chat?.runtimeId} agent={agent} />}
                   {umbrelKey.above(text)}
                 </>

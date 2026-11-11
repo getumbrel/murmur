@@ -1,6 +1,6 @@
 // Dev-only playground: Thread + Composer with fake data and simulated
 // streaming, so the chat can be designed and reviewed without Hermes.
-// Scenes: ?scene=solo | live | group | empty | media | cards | helpers | wakes | days | errors. Sending anything plays a reply.
+// Scenes: ?scene=solo | live | group | empty | media | cards | helpers | wakes | running | days | errors. Sending anything plays a reply.
 // (media shows files from the connected Hermes: /opt/data/murmur-media-test.)
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
@@ -16,6 +16,8 @@ import { CardFace } from '@/features/vault/card-face'
 import { SiteIcon } from '@/features/vault/site-icon'
 import { AppsIcon, CardIcon, IconChip, PasswordsIcon } from '@/ui/icons'
 import { toolLabel } from './tool-labels'
+import { StillRunning } from '@/features/chat-screen/still-running'
+import type { Running } from './running'
 
 const ATLAS: Speaker = { id: 'atlas', name: 'Atlas', hue: 278 }
 
@@ -63,6 +65,7 @@ type Scene =
   | 'pay'
   | 'helpers'
   | 'wakes'
+  | 'running'
   | 'days'
   | 'errors'
 
@@ -226,6 +229,28 @@ const INBOX = `Here’s the newest 50, sorted.
 **Safe to trash (27):** newsletters, promos and Intercom copies of tickets you’ve already answered.
 
 Nothing has changed in Gmail yet. Say the word and I’ll archive and trash these.`
+
+/** The reply is in, and a command the agent started is still going: the line over the message box, with Stop. */
+function runningHistory(): ChatItem[] {
+  const t = Date.now() - 4 * 60_000 - 20_000
+  return [
+    {
+      kind: 'user',
+      id: uid('u'),
+      text: 'Copy every photo from the old drive into Photos, and tell me when it’s done.',
+      at: t,
+    },
+    tool('terminal', { command: 'ls /mnt/old-drive/DCIM' }, t + 2000, 900),
+    tool('terminal', { command: 'rsync -a /mnt/old-drive/DCIM/ /home/photos/' }, t + 4000, 1200),
+    {
+      kind: 'assistant',
+      id: uid('a'),
+      text: 'Copying now. There are 8,412 photos on the drive, so this will take a while. I’ll tell you as soon as they’re all in.',
+      streaming: false,
+      at: t + 9000,
+    },
+  ]
+}
 
 /** Hermes waking the agent on its own: helpers back from the background, a command done, a reply picked up. */
 function wakesHistory(): ChatItem[] {
@@ -568,6 +593,8 @@ function Chat({ scene }: { scene: Scene }) {
                 ? secretsHistory()
                 : scene === 'wakes'
                   ? wakesHistory()
+                  : scene === 'running'
+                    ? runningHistory()
                   : scene === 'days'
                     ? daysHistory()
                   : scene === 'helpers'
@@ -578,6 +605,18 @@ function Chat({ scene }: { scene: Scene }) {
   )
   const inset = useKeyboardInset()
   useErrand(scene === 'helpers', setItems)
+  // What the agent left going; Stop ends it, as Hermes would, a moment later.
+  const [running, setRunning] = useState<Running | undefined>(() =>
+    scene === 'running' ? { ids: ['proc_1'], since: Date.now() - 4 * 60_000 - 10_000 } : undefined,
+  )
+  const [stopping, setStopping] = useState(false)
+  const stopRunning = () => {
+    setStopping(true)
+    window.setTimeout(() => {
+      setRunning(undefined)
+      setStopping(false)
+    }, 900)
+  }
 
   useEffect(() => {
     if (scene === 'solo' || scene === 'group') setBusy(true)
@@ -751,6 +790,7 @@ function Chat({ scene }: { scene: Scene }) {
               onStop={stop}
               busy={busy}
               draftKey={`playground-${scene}`}
+              above={() => <StillRunning running={busy ? undefined : running} stopping={stopping} onStop={stopRunning} />}
               placeholder={group ? 'Message the group' : 'Message Atlas'}
               more={group ? undefined : MORE}
               // Dictation transcribes with the main agent's speech settings.
@@ -882,6 +922,7 @@ const SCENES: { value: Scene; label: string }[] = [
   { value: 'pay', label: 'Pay' },
   { value: 'helpers', label: 'Helpers' },
   { value: 'wakes', label: 'Wakes' },
+  { value: 'running', label: 'Running' },
   { value: 'days', label: 'Days' },
   { value: 'errors', label: 'Errors' },
 ]

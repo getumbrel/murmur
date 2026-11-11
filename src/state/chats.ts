@@ -41,6 +41,7 @@ import {
   withReactions,
 } from '@/features/chat/live'
 import { errandsOf, isYours, sentItems, wakeItems, withSeenHelpers, type Errand } from '@/features/chat/wake'
+import { sameRunning, stillRunning, type Kept, type Running } from '@/features/chat/running'
 import { along, madeRoutine, soundsScheduled, toldIn, type Carried } from '@shared/routines.ts'
 import { reportHere } from '@/state/routines'
 
@@ -82,6 +83,10 @@ export type Chat = {
    * made. Everything said before then came over with it.
    */
   from?: { id: string; title: string; at: number }
+  /** Commands the agent started and left going, past the end of its reply (features/chat/running.ts). */
+  running?: Running
+  /** You asked for them to be stopped; Hermes hasn't said they have yet. */
+  stopping?: boolean
 }
 
 export type Goal = { title: string; status: string }
@@ -1679,6 +1684,81 @@ export async function stopHelper(id: string, subagentId: string) {
   } catch (e) {
     line(undefined)
     throw e
+  }
+}
+
+// ── Still running ───────────────────────────────────────────────────────────
+
+/**
+ * Ask Hermes what this chat's agent has left running. Only a chat Hermes has
+ * live is asked (the one on screen is): a chat isn't brought back for this.
+ */
+export async function readRunning(id: string) {
+  const runtimeId = getChat(id)?.runtimeId
+  if (!runtimeId) return
+  let running: Running | undefined
+  try {
+    const res = await rpc<{ processes?: Kept[] }>('process.list', { session_id: runtimeId })
+    running = stillRunning(res.processes, Date.now())
+  } catch (e) {
+    // A blip leaves what was last known. An older Hermes can't say, and one that let the chat go has nothing to say.
+    const code = (e as { code?: number } | null)?.code
+    if (!isMissingMethod(e) && code !== 4001) return
+  }
+  patch(id, (c) => {
+    if (c.runtimeId !== runtimeId) return
+    if (!running) return c.running || c.stopping ? { running: undefined, stopping: false } : undefined
+    return sameRunning(c.running, running) ? undefined : { running }
+  })
+}
+
+/**
+ * Keep what's still running in a chat current while it's on screen: read when
+ * the chat opens and each time a reply ends, and looked at again every few
+ * seconds while something is going, so it's gone soon after it finishes.
+ */
+export function watchRunning(id: string) {
+  const read = () => void readRunning(id)
+  const seen = (c?: Chat) => `${c?.runtimeId ?? ''}|${c?.turns ?? 0}|${c && isBusy(c) ? 1 : 0}`
+  let last = seen(getChat(id))
+  const offChats = useChats.subscribe(({ chats }) => {
+    const now = seen(chats[id])
+    if (now === last) return
+    last = now
+    read()
+  })
+  const visible = () => document.visibilityState === 'visible' && read()
+  document.addEventListener('visibilitychange', visible)
+  const timer = setInterval(() => document.visibilityState === 'visible' && getChat(id)?.running && read(), 4000)
+  read()
+  return () => {
+    offChats()
+    document.removeEventListener('visibilitychange', visible)
+    clearInterval(timer)
+  }
+}
+
+/** Stop what the agent left running in this chat: each command, one by one, and no other chat's. */
+export async function stopRunning(id: string) {
+  const ids = getChat(id)?.running?.ids ?? []
+  if (!ids.length) return
+  patch(id, () => ({ stopping: true }))
+  try {
+    await Promise.all(
+      ids.map(async (process_id) => {
+        const res = await onChat<{ status?: string }>(id, 'process.kill', { process_id }).catch((e) => {
+          // Finished on its own in the meantime: that's stopped too.
+          if ((e as { code?: number } | null)?.code === 4044) return { status: 'not_found' }
+          throw e
+        })
+        if (res.status === 'error') throw new Error('Could not stop it')
+      }),
+    )
+  } catch (e) {
+    patch(id, () => ({ stopping: false }))
+    throw e
+  } finally {
+    await readRunning(id)
   }
 }
 
