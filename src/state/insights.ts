@@ -96,14 +96,30 @@ type SessionUsage = {
   cache_hit_pct?: number | null
   cost_usd?: number | null
   cost_status?: string | null
+  prompt?: number | null
+  completion?: number | null
 }
-type SessionRow = { estimated_cost_usd?: number | null; actual_cost_usd?: number | null; cost_status?: string | null }
+type SessionRow = {
+  estimated_cost_usd?: number | null
+  actual_cost_usd?: number | null
+  cost_status?: string | null
+  input_tokens?: number | null
+  cache_read_tokens?: number | null
+  cache_write_tokens?: number | null
+  output_tokens?: number | null
+}
 
 export type ChatUsage = {
   /** Spent so far; undefined when it's covered by a plan or nothing's known. */
   cost?: number
   /** Covered by a subscription (a ChatGPT plan), so there's no bill. */
   included: boolean
+  /**
+   * How much the agent has read and written over the whole chat, in the units
+   * a model counts and bills in. Every reply reads the chat again, so reading
+   * runs far ahead of what the chat holds. Undefined before the first reply.
+   */
+  work?: { read: number; written: number }
 }
 
 const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined)
@@ -111,9 +127,17 @@ const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : u
 export function chatUsageOf(usage: SessionUsage | null | undefined, row: SessionRow | null | undefined): ChatUsage {
   const status = usage?.cost_status ?? row?.cost_status ?? undefined
   const cost = num(usage?.cost_usd) ?? num(row?.actual_cost_usd) ?? num(row?.estimated_cost_usd)
+  // The stored row first: a chat reopened from the list has no live count
+  // until its next reply. Reading includes what came back from the cache.
+  const stored = row && [row.input_tokens, row.cache_read_tokens, row.cache_write_tokens].some((n) => num(n))
+  const read = stored
+    ? (num(row.input_tokens) ?? 0) + (num(row.cache_read_tokens) ?? 0) + (num(row.cache_write_tokens) ?? 0)
+    : (num(usage?.prompt) ?? 0)
+  const written = stored ? (num(row.output_tokens) ?? 0) : (num(usage?.completion) ?? 0)
   return {
     cost: status === 'included' || !cost ? undefined : cost,
     included: status === 'included',
+    work: read > 0 ? { read, written } : undefined,
   }
 }
 

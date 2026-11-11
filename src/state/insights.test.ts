@@ -102,6 +102,29 @@ describe('a chat', () => {
     expect(plan.cost).toBeUndefined()
   })
 
+  it('adds up what a chat has read, cached or not, and written', () => {
+    const row = { input_tokens: 41_011, cache_read_tokens: 426_752, cache_write_tokens: 0, output_tokens: 1450 }
+    expect(chatUsageOf(null, row).work).toEqual({ read: 467_763, written: 1450 })
+    // The stored count wins: a chat reopened from the list answers zeros until its next reply.
+    expect(chatUsageOf({ prompt: 0, completion: 0 }, row).work).toEqual({ read: 467_763, written: 1450 })
+  })
+
+  it('falls back to the live count, and has none before the first reply', () => {
+    expect(chatUsageOf({ prompt: 5012, completion: 8 }, null).work).toEqual({ read: 5012, written: 8 })
+    expect(chatUsageOf({ prompt: 0, completion: 0 }, { input_tokens: 0, output_tokens: 0 }).work).toBeUndefined()
+    expect(chatUsageOf(null, null).work).toBeUndefined()
+  })
+
+  it('still says what an unpriced model has done', () => {
+    const chat = chatUsageOf(null, {
+      estimated_cost_usd: 0,
+      cost_status: 'unknown',
+      input_tokens: 29_000,
+      output_tokens: 12,
+    })
+    expect(chat).toEqual({ cost: undefined, included: false, work: { read: 29_000, written: 12 } })
+  })
+
   it('folds Hermes’s categories into a few a person would name', () => {
     expect(
       slicesOf([

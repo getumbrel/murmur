@@ -182,6 +182,23 @@ describe('insights', () => {
     const slices = slicesOf(categories)
     expect(slices.map((s) => s.id)).toEqual(expect.arrayContaining(['chat', 'instructions', 'tools']))
   })
+
+  it('keeps what a chat has read and written on its stored row after every reply, with no price for a model of your own', async () => {
+    const { runtime, stored } = await newChat(socket, agent)
+    await turn(socket, runtime, 'Hi [[tokens: 3000]] [[say: Hi]]', agent)
+    const first = await api.get(`/api/sessions/${stored}?${p}`)
+    // The fake model counts every answer as 4.
+    expect(first).toMatchObject({ input_tokens: 3000, output_tokens: 4, cache_read_tokens: 0, cache_write_tokens: 0, reasoning_tokens: 0, api_call_count: 1, cost_status: 'unknown' })
+    expect(chatUsageOf(null, first)).toEqual({ cost: undefined, included: false, work: { read: 3000, written: 4 } })
+
+    await turn(socket, runtime, 'Again [[tokens: 5000]] [[say: Sure]]', agent)
+    const second = await api.get(`/api/sessions/${stored}?${p}`)
+    expect(chatUsageOf(null, second).work).toEqual({ read: 8000, written: 8 })
+    // The live count agrees: its `prompt` is everything the model was sent, cached or not.
+    const usage = await socket.request('session.usage', { session_id: runtime }, 15_000)
+    expect(usage).toMatchObject({ prompt: 8000, completion: 8, total: 8008 })
+    expect(chatUsageOf(usage, null).work).toEqual({ read: 8000, written: 8 })
+  })
 })
 
 describe('backups', () => {

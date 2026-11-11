@@ -6,10 +6,11 @@ import { Orb } from '@/ui/orb'
 import { Skeleton } from '@/ui/skeleton'
 import { money, tokensText, useContextBreakdown, type ChatUsage, type Slice } from '@/state/insights'
 
-// What the agent remembers of a chat, and what it's cost; the chat's menu
-// opens it. A long chat outgrows what the model can read at once, and Hermes
-// then summarizes its earlier messages: the agent keeps those in brief and
-// the recent ones word for word, while the person still has every one.
+// What the agent remembers of a chat, what it's cost, and how much it has read
+// and written along the way; the chat's menu opens it. A long chat outgrows
+// what the model can read at once, and Hermes then summarizes its earlier
+// messages: the agent keeps those in brief and the recent ones word for word,
+// while the person still has every one.
 
 /** Each part of what it's keeping in mind in the agent's own colour, the chat itself boldest. */
 const SHADE: Record<Slice['id'], number> = { chat: 1, tools: 0.62, instructions: 0.42, skills: 0.3, memory: 0.22 }
@@ -87,12 +88,21 @@ export function ChatInfoSheet({ open, onOpenChange, agent, usage, summarized, ru
           </section>
         ) : null}
 
-        {(usage?.cost !== undefined || usage?.included) && (
-          <ListGroup>
-            {usage?.cost !== undefined && (
+        {usage && (usage.cost !== undefined || usage.included || usage.work) && (
+          <ListGroup footer={usage.work && `${agent.name} reads the chat again with every reply.`}>
+            {usage.cost !== undefined && (
               <ListRow title="Spent" detail={<span className="tabular-nums">≈ {money(usage.cost)}</span>} />
             )}
-            {usage?.included && <ListRow title="Spent" detail="Covered by your plan" />}
+            {usage.included && <ListRow title="Spent" detail="Covered by your plan" />}
+            {usage.work && (
+              <>
+                <ListRow title="Read" detail={<span className="tabular-nums">{tokensText(usage.work.read)}</span>} />
+                <ListRow
+                  title="Written"
+                  detail={<span className="tabular-nums">{tokensText(usage.work.written)}</span>}
+                />
+              </>
+            )}
           </ListGroup>
         )}
       </div>
