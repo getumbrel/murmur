@@ -11,11 +11,29 @@ import type { SearchResult } from '@/state/search'
 /** Where a result was found: Hermes's quote (the match marked >>>like this<<<), and who said it. */
 export type Found = { snippet: string; role: 'user' | 'assistant' }
 
-const useWanted = create<Record<string, Found | undefined>>(() => ({}))
+/** A reply to open at, known by what it says and when: the one a chat was carried on from. */
+export type Said = { at: number; text: string }
+
+const isSaid = (wanted: Found | Said): wanted is Said => 'at' in wanted
+
+const useWanted = create<Record<string, Found | Said | undefined>>(() => ({}))
 
 /** On opening a result: its chat opens at the match. */
 export function seek(result: SearchResult) {
   useWanted.setState({ [result.chatId]: result.found })
+}
+
+/** On going back to the chat another was carried on from: it opens at that reply. */
+export function seekSaid(chatId: string, said: Said) {
+  useWanted.setState({ [chatId]: said })
+}
+
+/** That reply, among what's been read of the chat (the same words said at another time will do, if it's all there is). */
+function replyAt(chatId: string, said: Said) {
+  const items = getChat(chatId)?.items ?? []
+  const reply = (exact: boolean) =>
+    items.findLast((i) => i.kind === 'assistant' && i.text === said.text && (!exact || i.at === said.at))
+  return (reply(true) ?? reply(false))?.id
 }
 
 /** Where a chat was asked to open, until it has. */
@@ -45,7 +63,8 @@ export function needleOf(snippet: string): Needle | undefined {
 }
 
 /** The words a result was found by, to mark in the message it opens at. */
-export function matchOf(found: Found): string[] {
+export function matchOf(found: Found | Said): string[] {
+  if (isSaid(found)) return []
   const needle = needleOf(found.snippet)
   return needle ? [...new Set(needle.words.filter((_, i) => needle.marked[i]))] : []
 }
@@ -110,7 +129,11 @@ const enough = (needle: Needle, best?: Best) => !!best && best.fit >= Math.min(n
  * The message, among what's been read of the chat: `id` once it's certain,
  * or once nothing older is left to read; `more` when older pages could hold it.
  */
-export function findRead(chatId: string, found: Found): { id?: string; more: boolean } {
+export function findRead(chatId: string, found: Found | Said): { id?: string; more: boolean } {
+  if (isSaid(found)) {
+    const id = replyAt(chatId, found)
+    return { id, more: !id && !!getChat(chatId)?.older }
+  }
   const needle = needleOf(found.snippet)
   if (!needle) return { more: false }
   const best = search(chatId, needle, found.role, new Set())
@@ -120,7 +143,17 @@ export function findRead(chatId: string, found: Found): { id?: string; more: boo
 }
 
 /** The message, reading back through the chat's older pages for it as far as it takes (within reason). */
-export async function findOlder(chatId: string, found: Found): Promise<string | undefined> {
+export async function findOlder(chatId: string, found: Found | Said): Promise<string | undefined> {
+  if (isSaid(found)) {
+    for (let page = 0; !replyAt(chatId, found) && getChat(chatId)?.older && page < PAGES; page++) {
+      try {
+        await loadOlder(chatId)
+      } catch {
+        break
+      }
+    }
+    return replyAt(chatId, found)
+  }
   const needle = needleOf(found.snippet)
   if (!needle) return
   const looked = new Set<string>()

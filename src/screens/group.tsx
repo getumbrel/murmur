@@ -7,7 +7,7 @@ import { Thread } from '@/features/chat/thread'
 import { useKeyboardInset } from '@/features/chat/use-keyboard-inset'
 import { groupDraft } from '@/features/chat/use-draft'
 import { GroupHeader } from '@/features/group/group-header'
-import { GroupComposer } from '@/features/group/group-composer'
+import { GroupComposer, type GroupComposerHandle } from '@/features/group/group-composer'
 import { GroupEmpty } from '@/features/group/group-empty'
 import { GroupSheet } from '@/features/group/group-sheet'
 import { Button } from '@/ui/button'
@@ -46,6 +46,12 @@ export function GroupScreen({ groupId }: { groupId: string }) {
   const [draft, setDraft] = useState<{ mentioned: string[]; typing: boolean }>({ mentioned: [], typing: false })
 
   const onDraftChange = useCallback((d: { mentioned: string[]; typing: boolean }) => setDraft(d), [])
+  // Reply to a part of what someone said: the passage waits above the box for your words.
+  const composer = useRef<GroupComposerHandle>(null)
+  const onQuote = useCallback((passage: string) => {
+    composer.current?.setQuote(passage)
+    composer.current?.focus()
+  }, [])
   // Opened before the conversation arrived: it fades in over the placeholder.
   const [coldStart] = useState(!loaded)
   // Where its agents' browsers leave their pictures: under the room, as a chat's are under the chat.
@@ -112,8 +118,10 @@ export function GroupScreen({ groupId }: { groupId: string }) {
           onApprove={(requestId, choice) => void approveInGroup(groupId, requestId, choice)}
           onAnswer={() => {}}
           onRetry={() => void retryGroup(groupId)}
+          onQuote={group ? onQuote : undefined}
           footer={
             <GroupComposer
+              handle={composer}
               members={members}
               onSend={send}
               onStop={() => void stopGroup(groupId)}

@@ -3,7 +3,7 @@
 // pinned, archived and deleted.
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { clearUnread, titleTaken, updateChat } from '@/state/chats'
+import { canContinue, clearUnread, ContinueError, copyChat, nameCopy, titleTaken, updateChat } from '@/state/chats'
 import { errandsOf, isYours, sentItems, wakeItems, type SavedRow } from '@/features/chat/wake'
 import { holdsSummary } from '@/features/chat/compaction'
 import { api, connect, modelRequests, MURMUR, newChat, q, sleep, turn, whenIdle, type Socket } from './client'
@@ -505,6 +505,93 @@ describe('changing a chat', () => {
     const branch = await socket.request('session.branch_stored', { profile: 'default', parent_session_id: stored, source: 'desktop' })
     expect(branch.stored_session_id).toEqual(expect.any(String))
     expect((await history(branch.stored_session_id)).map((r) => r.content)).toContain('Forked')
+  })
+
+  describe('carrying a chat on in a new one', () => {
+    /** A chat of three turns, the second of which runs a command, and the row its second reply is saved in. */
+    async function threeTurns() {
+      const { runtime, stored } = await newChat(socket)
+      await turn(socket, runtime, 'One [[say: First]]')
+      await turn(socket, runtime, 'Two [[tool: terminal {"command":"echo CARRIED-$((40+2))"}]]')
+      await turn(socket, runtime, 'Three [[say: Third]]')
+      const rows = await history(stored)
+      const reply = rows.find((r) => r.role === 'assistant' && r.content === '[[tool done]]')!
+      return { runtime, stored, rows, reply }
+    }
+    const shape = (rows: Row[]) => rows.map((r) => `${r.role}${r.tool_calls?.length ? '+calls' : ''}`)
+
+    it('copies it up to a reply, steps and what they found too, and leaves the original alone', async () => {
+      expect(await canContinue()).toBe(true)
+      const { stored, rows, reply } = await threeTurns()
+      const copy = await copyChat(stored, 'default', reply.id)
+      expect(copy.id).toMatch(/^\d{8}_\d{6}_[0-9a-f]{6}$/)
+      const copied = await history(copy.id)
+      expect(shape(copied)).toEqual(['user', 'assistant', 'user', 'assistant+calls', 'tool', 'assistant'])
+      expect(copied.map((r) => r.content)).toEqual(rows.slice(0, 6).map((r) => r.content))
+      expect(copied.find((r) => r.role === 'tool')!.content).toContain('CARRIED-42')
+      // When each thing was said comes with it: what tells the copied part from what's said next.
+      expect(copied.map((r) => r.timestamp)).toEqual(rows.slice(0, 6).map((r) => r.timestamp))
+      // Hermes keeps where it came from, and it starts unnamed, made now.
+      const row = await api.get(`/api/sessions/${copy.id}?${q('default')}`)
+      expect(JSON.parse(row.model_config)).toMatchObject({ _branched_from: stored })
+      expect(row).toMatchObject({ title: null, source: 'desktop' })
+      expect(row.started_at * 1000).toBeGreaterThan(Math.max(...copied.map((r) => r.timestamp)) * 1000)
+      expect((await history(stored)).map((r) => [r.id, r.content])).toEqual(rows.map((r) => [r.id, r.content]))
+
+      // Carried on, the agent still has what its step found.
+      const resumed = await socket.request('session.resume', { session_id: copy.id, profile: 'default', source: 'desktop' })
+      await turn(socket, resumed.session_id, 'What did it print? [[say: Asked in the copy]]')
+      const asked = (await modelRequests()).filter((r) => r.body.tools?.length && JSON.stringify(r.body.messages).includes('Asked in the copy')).at(-1)!
+      expect(JSON.stringify(asked.body.messages)).toContain('CARRIED-42')
+      expect(asked.body.messages.some((m: { tool_calls?: unknown[] }) => m.tool_calls?.length)).toBe(true)
+      expect((await history(stored)).length).toBe(rows.length)
+    })
+
+    it('names the copy after the chat it came from, and its first message gives it a name of its own', async () => {
+      const { stored, reply } = await threeTurns()
+      // (Named by the model once its first reply was in.)
+      const title = (await api.get(`/api/sessions/${stored}?${q('default')}`)).title
+      const first = await copyChat(stored, 'default', reply.id)
+      const second = await copyChat(stored, 'default', reply.id)
+      const stem = String(title).replace(/ #\d+$/, '')
+      const one = await nameCopy(first.id, 'default', first.from)
+      const two = await nameCopy(second.id, 'default', second.from)
+      expect(one).toMatch(new RegExp(`^${stem.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} #\\d+$`))
+      expect(two).toMatch(/ #\d+$/)
+      expect(two).not.toBe(one)
+      // Let go of, Hermes names the chat from what's said next.
+      const snapshot = await api.get(`/api/sessions/${first.id}/mutation-snapshot?${q('default')}`)
+      await api.patch(`/api/sessions/${first.id}`, { title: '', profile: 'default', request_id: `release-${first.id}`, expected_revision: snapshot.runtime_revision })
+      expect((await api.get(`/api/sessions/${first.id}?${q('default')}`)).title).toBeNull()
+      const resumed = await socket.request('session.resume', { session_id: first.id, profile: 'default', source: 'desktop' })
+      await turn(socket, resumed.session_id, 'A new direction [[say: Sure]]')
+      await socket.until('a name of its own', () => socket.of(resumed.session_id).find((e) => e.type === 'session.title') || undefined, 30_000)
+      expect((await api.get(`/api/sessions/${first.id}?${q('default')}`)).title).toEqual(expect.any(String))
+    })
+
+    it('won’t cut at a row the chat doesn’t have', async () => {
+      const { stored } = await threeTurns()
+      await expect(copyChat(stored, 'default', 987_654_321)).rejects.toBeInstanceOf(ContinueError)
+    })
+
+    // Why it's done through export and import: Hermes's own copies leave the steps behind,
+    // and the one that keeps them isn't on this socket. If any of these change, copyChat can use it.
+    it('Hermes’s own copies keep only what was said', async () => {
+      const { runtime, stored } = await threeTurns()
+      const cut = await socket.request('session.branch', { session_id: runtime, count: 4 })
+      expect(shape(await history(cut.stored_session_id))).toEqual(['user', 'assistant', 'user', 'assistant'])
+      const whole = await socket.request('session.branch_stored', { profile: 'default', parent_session_id: stored, source: 'desktop' })
+      await turn(socket, whole.session_id, 'Go on [[say: Going on]]')
+      const rows = await history(whole.stored_session_id)
+      expect(rows.some((r) => r.role === 'tool' || r.tool_calls?.length)).toBe(false)
+      expect(rows.map((r) => r.content)).toContain('Third')
+    })
+
+    it('has no session.mutate on the dashboard’s socket', async () => {
+      const { stored, reply } = await threeTurns()
+      const refused = await socket.failure('session.mutate', { session_id: stored, request_id: `mutate-${stored}`, expected_revision: 0, expected_generation: 0, operation: 'branch', payload: { through_message_id: reply.id } })
+      expect(refused.code).toBe(-32601)
+    })
   })
 
   it('runs a slash command', async () => {

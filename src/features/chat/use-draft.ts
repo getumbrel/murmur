@@ -70,6 +70,42 @@ export function useDraft(key?: string) {
   return [text, change, clear] as const
 }
 
+// The passage a message answers (features/chat/quote.tsx) waits with the words typed under it.
+const QUOTE = scoped('murmur:draft-quote:')
+
+function readQuote(key?: string) {
+  if (!key) return ''
+  try {
+    return localStorage.getItem(QUOTE + key) ?? ''
+  } catch {
+    return ''
+  }
+}
+
+/** The passage being answered, kept per key like the text under it. One at a time: a new one takes its place. */
+export function useDraftQuote(key?: string) {
+  const [quote, setQuote] = useState(() => readQuote(key))
+  const [shown, setShown] = useState(key)
+  if (shown !== key) {
+    setShown(key)
+    setQuote(readQuote(key))
+  }
+  const change = useCallback(
+    (next: string) => {
+      setQuote(next)
+      if (!key) return
+      try {
+        if (next) localStorage.setItem(QUOTE + key, next)
+        else localStorage.removeItem(QUOTE + key)
+      } catch {
+        /* storage unavailable: it just doesn't outlast a reload */
+      }
+    },
+    [key],
+  )
+  return [quote, change] as const
+}
+
 const MAX_LINES = 8
 const LINE = 24
 

@@ -76,6 +76,12 @@ export type Chat = {
   starting?: boolean
   /** The agent has been told how routines report in this chat (shared/routines.ts). */
   told?: boolean
+  /**
+   * The chat this one was carried on from (Continue in a new chat, or a copy
+   * Hermes made itself): which, what Hermes calls it, and when the copy was
+   * made. Everything said before then came over with it.
+   */
+  from?: { id: string; title: string; at: number }
 }
 
 export type Goal = { title: string; status: string }
@@ -618,11 +624,32 @@ async function open(id: string) {
  * chats, so an older one isn't in them. One said live since is newer.
  */
 async function readTitle(id: string, profile: string) {
-  type Res = { title?: string | null }
-  const row = await api
-    .get<Res>(`/api/sessions/${encodeURIComponent(id)}?profile=${encodeURIComponent(profile)}`)
-    .catch(() => null)
+  const row = await readSession(id, profile)
   patch(id, (c) => ({ named: true, ...(c.title === undefined && row?.title ? { title: row.title } : {}) }))
+  // Carried on from another chat: Hermes keeps which on the copy. One that's gone leaves nothing to go back to.
+  const parent = configOf(row)._branched_from
+  if (typeof parent !== 'string' || !parent || parent === id || getChat(id)?.from) return
+  const origin = await readSession(parent, profile)
+  if (origin) patch(id, (c) => (c.from ? undefined : { from: { id: parent, title: origin.title ?? '', at: (row?.started_at ?? 0) * 1000 } }))
+}
+
+type SessionRow = { title?: string | null; model_config?: unknown; started_at?: number }
+
+/** A chat's own row, or null when Hermes doesn't have it (or can't be asked). */
+const readSession = (id: string, profile: string) =>
+  api.get<SessionRow>(`/api/sessions/${encodeURIComponent(id)}?profile=${encodeURIComponent(profile)}`).catch(() => null)
+
+/** What Hermes keeps beside a chat's model (it's stored as text), as an object. */
+function configOf(row: { model_config?: unknown } | null | undefined): Record<string, unknown> {
+  let config = row?.model_config
+  if (typeof config === 'string') {
+    try {
+      config = JSON.parse(config)
+    } catch {
+      return {}
+    }
+  }
+  return config && typeof config === 'object' && !Array.isArray(config) ? (config as Record<string, unknown>) : {}
 }
 
 /** Chats waiting to try their history again, and how to stop the wait. */
@@ -961,6 +988,8 @@ export async function send(id: string, text: string, files: File[] = [], opts: S
   patch(id, (c) => ({ items: [...c.items, item], status: now ?? c.status }))
   unsent.set(itemId, { text, files })
   hold(id, { id: itemId, text: shown, ...(files.length ? { files: files.map((f) => f.name) } : {}), after })
+  // (A copy's first message: Hermes names the chat from it.)
+  await releaseStandIn(id)
   await deliver(id, itemId, busy, opts.voice)
 }
 
@@ -1366,8 +1395,10 @@ function attachError(e: unknown) {
  * Carry a chat on here when another Hermes app holds it (Hermes lets one
  * program drive a chat at a time, by design). The conversation is copied into
  * a new chat, the message that couldn't be sent goes there, and its id comes
- * back so the screen can move to it. Hermes 0.21.5+ copies everything, tool
- * steps included; older ones get the words of the conversation.
+ * back so the screen can move to it. It's the words of the conversation that
+ * are copied, on any Hermes: `session.branch_stored` takes your messages and
+ * the agent's replies and leaves its steps behind (checked on 0.23.1), as the
+ * fallback for a Hermes without it does. (continueFrom copies the steps too.)
  */
 export async function continueHere(id: string) {
   const chat = getChat(id)
@@ -1400,6 +1431,222 @@ export async function continueHere(id: string) {
   await openChat(copy, profile, speaker)
   if (pending) await send(copy, pending)
   return copy
+}
+
+// ── Carrying a chat on in a new one ─────────────────────────────────────────
+// "Continue in a new chat" under a reply: the chat up to and including that
+// reply becomes a chat of its own, steps and all, and the one it came from
+// stays as it is.
+//
+// Hermes's own ways of copying a chat don't do it from here (checked on
+// 0.23.1): `session.mutate`'s branch cuts at a row and keeps everything, but
+// it lives on Hermes's session authority, which the dashboard's socket doesn't
+// have ("unknown method"); `session.branch` and `session.branch_stored` copy
+// only what was said, so the agent's steps are gone and it no longer knows
+// what they found. What does keep everything is the dashboard's own export
+// and import of a chat: the rows are read out whole, cut after the reply,
+// and put back under a new id.
+
+/** Why a chat couldn't be carried on: for the screen to say. */
+export class ContinueError extends Error {
+  why: 'summarized' | 'large' | 'failed'
+  constructor(why: ContinueError['why']) {
+    super(why)
+    this.why = why
+  }
+}
+
+export type ExportedRow = { id: number; role?: string; active?: unknown; compacted?: unknown; [key: string]: unknown }
+type Exported = { title?: string | null; model_config?: unknown; messages?: ExportedRow[]; [key: string]: unknown }
+
+/** What of a chat's own row its copy keeps: how it talks to its model, and where it works. The rest starts afresh. */
+const CARRIED = ['model', 'system_prompt', 'user_id', 'cwd', 'git_branch', 'git_repo_root', 'billing_provider', 'billing_base_url', 'billing_mode']
+
+const on = (flag: unknown) => flag === true || flag === 1 || flag === '1'
+/** Still part of the conversation (rows from before these flags existed all are). */
+const inPlay = (row: ExportedRow) => row.active == null || on(row.active)
+
+/** An id shaped like the ones Hermes gives its chats: the date, the time, six hex digits. */
+function newChatId() {
+  const now = new Date().toISOString()
+  const hex = Math.floor(Math.random() * 0x1000000).toString(16).padStart(6, '0')
+  return `${now.slice(0, 10).replace(/-/g, '')}_${now.slice(11, 19).replace(/:/g, '')}_${hex}`
+}
+
+/**
+ * Whether this Hermes can carry a chat on in a new one: it has to be able to
+ * take a chat in. Hermes has had that since 0.22.0, and nothing says so short
+ * of trying; what it added in 0.22.3 for changing chats safely (a chat's
+ * revision, read here for a chat that doesn't exist) can be asked for without
+ * changing anything, and a Hermes that answers has both.
+ */
+export async function canContinue() {
+  try {
+    const snapshot = await api.get<{ exists?: boolean } | null>('/api/sessions/murmur-can-continue/mutation-snapshot')
+    return typeof snapshot?.exists === 'boolean'
+  } catch {
+    return false
+  }
+}
+
+/**
+ * The rows a copy keeps when it's cut after the row `rowId`: every row up to
+ * it that's still part of the conversation, and the earlier ones Hermes has
+ * summarized (they stay, as history). Rows taken back by an edit or an undo
+ * don't come. Null when that row isn't in the conversation any more: a reply
+ * Hermes has since summarized away, which a chat can't pick up from (it would
+ * open with the agent knowing none of it).
+ */
+export function carried(rows: ExportedRow[], rowId: number): ExportedRow[] | null {
+  // (Ids run in the order the agent reads the conversation.)
+  const at = rows.findIndex((r) => r.id === rowId)
+  if (at < 0 || !inPlay(rows[at])) return null
+  // The results of any calls that row made answer it, so they go with it: Hermes's own cut does the same.
+  let through = rowId
+  for (const row of rows.slice(at + 1)) {
+    if (!inPlay(row)) continue
+    if (row.role !== 'tool') break
+    through = row.id
+  }
+  return rows.filter((r) => r.id <= through && (inPlay(r) || on(r.compacted)))
+}
+
+/**
+ * Copies a chat in Hermes, up to and including the row `rowId`: your
+ * messages, the agent's replies, every step and what it found. Gives back the
+ * copy's id, when it was made, and what the chat it came from is called. The
+ * chat it came from isn't touched. Throws a ContinueError, with nothing made,
+ * if it couldn't.
+ */
+export async function copyChat(id: string, profile: string, rowId: number) {
+  const q = `profile=${encodeURIComponent(profile)}`
+  const exported = await api.get<Exported>(`/api/sessions/${encodeURIComponent(id)}/export?${q}`)
+  const messages = carried((exported.messages ?? []).filter((r) => typeof r?.id === 'number'), rowId)
+  if (!messages) throw new ContinueError('summarized')
+
+  const copy = newChatId()
+  const startedAt = Date.now() / 1000
+  const config: Record<string, unknown> = { ...configOf(exported), _branched_from: id }
+  // (How full the original was is its own count; the copy's is taken on its first turn.)
+  delete config._usage_anchor
+  const session = {
+    ...Object.fromEntries(CARRIED.map((key) => [key, exported[key] ?? null])),
+    id: copy,
+    source: 'desktop',
+    // Unnamed, the first thing said in it names it (Hermes names a chat that has none).
+    title: null,
+    parent_session_id: id,
+    started_at: startedAt,
+    model_config: JSON.stringify(config),
+    messages,
+  }
+  // From Hermes 0.22.3 a change to its chats carries a revision, and an id of its own so a retry can't apply twice.
+  const snapshot = await api.get<{ runtime_revision?: number }>(`/api/sessions/${copy}/mutation-snapshot?${q}`).catch(() => null)
+  let res: { imported?: number } | null
+  try {
+    res = await api.post<{ imported?: number } | null>('/api/sessions/import', {
+      profile,
+      request_id: `continue-${copy}`,
+      expected_revision: snapshot?.runtime_revision ?? 0,
+      sessions: [session],
+    })
+  } catch (e) {
+    // Hermes takes a chat of up to 5 MB this way.
+    if (e instanceof HermesError && (e.status === 413 || /size limit|too large|import limit/i.test(JSON.stringify(e.detail ?? e.message))))
+      throw new ContinueError('large')
+    throw e
+  }
+  if (res?.imported !== 1) throw new ContinueError('failed')
+  return { id: copy, at: startedAt * 1000, from: exported.title ?? '' }
+}
+
+/**
+ * Carry a chat on in a new one, from one of the agent's replies: everything
+ * up to and including it is copied, the new chat is opened, and its id comes
+ * back so the screen can move to it. Throws a ContinueError if it couldn't.
+ */
+export async function continueFrom(id: string, itemId: string) {
+  const chat = getChat(id)
+  const reply = chat?.items.find((i) => i.id === itemId)
+  if (!chat || reply?.kind !== 'assistant' || reply.rowId == null) throw new ContinueError('failed')
+  const { profile, speaker } = chat
+  const made = await copyChat(id, profile, reply.rowId)
+  const copy = made.id
+  ensure(copy, profile)
+  patch(copy, () => ({ from: { id, title: made.from, at: made.at } }))
+  // The screen can move to it once it has a name and its messages are read; attaching to it carries on meanwhile.
+  const opened = openChat(copy, profile, speaker)
+  opened.catch(() => {})
+  const [standIn] = await Promise.all([
+    nameCopy(copy, profile, made.from).catch(() => undefined),
+    Promise.race([opened, until(copy, (c) => c.ready, 10_000)]).catch(() => {}),
+  ])
+  if (standIn) patch(copy, () => ({ title: standIn }))
+  return copy
+}
+
+// Until something is said in it, a copy goes by the name of the chat it came
+// from, numbered the way Hermes numbers its own copies ("Lisbon in May #2"),
+// so it has a name in every list at once. Hermes only renames a chat it named
+// itself, and a name given this way reads as yours, so the copy's first
+// message lets go of it first: Hermes then names the chat for what's said.
+
+const STAND_IN = scoped('murmur:stand-in:')
+const NUMBERED = /^(.*?) #(\d+)$/
+
+function standInOf(id: string) {
+  try {
+    return localStorage.getItem(STAND_IN + id) ?? undefined
+  } catch {
+    return undefined
+  }
+}
+
+function keepStandIn(id: string, title?: string) {
+  try {
+    if (title) localStorage.setItem(STAND_IN + id, title)
+    else localStorage.removeItem(STAND_IN + id)
+  } catch {
+    /* storage unavailable: the name just stays */
+  }
+}
+
+/** Names a copy after the chat it came from, with the next number nobody has. An unnamed chat's copy stays unnamed. */
+export async function nameCopy(copy: string, profile: string, title: string | null | undefined) {
+  // (An agent's main chat is "Bot Chat" to Hermes, hidden under that exact name: there's only ever one.)
+  const from = title?.trim()
+  if (!from || from === 'Bot Chat') return undefined
+  const numbered = NUMBERED.exec(from)
+  const stem = numbered ? numbered[1] : from
+  const first = numbered ? Number(numbered[2]) + 1 : 2
+  for (let n = first; n < first + 12; n++) {
+    const name = `${stem} #${n}`
+    try {
+      await patchSession(copy, profile, { title: name }, 'continue')
+      keepStandIn(copy, name)
+      return name
+    } catch (e) {
+      // Taken: an older Hermes says so, a newer one (0.22.5 on) answers a bare 409. The next number, then.
+      if (!saysTitleTaken(e) && !(e instanceof HermesError && e.status === 409)) throw e
+    }
+  }
+  return undefined
+}
+
+/** Before the first message in a copy: lets go of the name it was lent, if it still has it, so Hermes names it. */
+async function releaseStandIn(id: string) {
+  const lent = standInOf(id)
+  if (!lent) return
+  keepStandIn(id)
+  const chat = getChat(id)
+  if (!chat) return
+  try {
+    if ((await readSession(id, chat.profile))?.title !== lent) return
+    await patchSession(id, chat.profile, { title: '' }, 'continue')
+    patch(id, (c) => (c.title === lent ? { title: undefined } : undefined))
+  } catch {
+    /* it keeps the name */
+  }
 }
 
 export async function sendHidden(id: string, text: string) {

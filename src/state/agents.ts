@@ -17,7 +17,7 @@ import { ensureUmbrelContext } from '@/state/umbrel-context'
 import { ensureUmbrelMcp } from '@/state/umbrel-mcp'
 import { hexHue, hueFor } from '@/lib/hues'
 import { personalityPrompt, type Personality } from '@/features/agents/agent-editor'
-import { parseUserMessage } from '@/features/media/parse'
+import { parseUserMessage, splitQuote } from '@/features/media/parse'
 import type { Speaker } from '@/features/chat/types'
 import { scoped } from '@/hermes/instance'
 import { listProfiles } from '@/hermes/compat'
@@ -183,7 +183,10 @@ export function readable(raw: string | null | undefined, { files = true } = {}) 
   // Hermes names a chat started on a call after the note it adds for the model, when it can't reach
   // the model to name it properly. That's nobody's title: the chat goes by your words instead.
   if (!raw || raw.startsWith(VOICE_NOTE)) return ''
-  const { text, attachments } = parseUserMessage(raw)
+  const { text: whole, attachments } = parseUserMessage(raw)
+  // A message that answers a part of a reply goes by what was written under it (or the passage, sent by itself).
+  const { quote, text: under } = splitQuote(whole)
+  const text = under || quote || ''
   const line = text
     .replace(/MEDIA:\s*(`[^`\n]+`|"[^"\n]+"|\S+)/g, (_, path: string) => fileName(path))
     .split('\n')

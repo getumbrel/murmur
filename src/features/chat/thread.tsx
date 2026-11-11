@@ -47,7 +47,10 @@ import { WakeLine } from './wake-line'
 import { clock, dayName, timeHeaders, useToday } from './times'
 import { FailedLine, FindingLine } from '@/features/routines/finding-line'
 import { RoutineCard } from '@/features/routines/routine-card'
-import { ReactionBadge, ReactionPills, Tapback, useHoldToReact } from './reactions'
+import { ReactionBadge, ReactionPills, Tapback } from './reactions'
+import { BubbleQuote, REPLY_SURFACE, ReplyFace, ReplyPill, passageRange, sourceOf, usePassage, washPassage } from './quote'
+import { splitQuote } from '@/features/media/parse'
+import { useMedia } from '@/lib/use-media'
 import { BrowserCard, browserKey, foldedIn, HandCard, placeBrowsers } from '@/features/screen'
 import { ASK_TOOL, OPENS_PAGES } from '@/state/screen'
 
@@ -95,6 +98,8 @@ const SETTLE_MS = 1200
 const WINDOW = 60
 /** Rows kept above a message the thread was opened at, for what led up to it. */
 const LEADUP = 8
+/** How long the thread takes to settle on a reply the chat is being carried on from. */
+const CUT_MS = 320
 
 /**
  * Folds the flat item list into user messages and assistant turns. Settled
@@ -363,6 +368,8 @@ type Handlers = {
   onReact?: (itemId: string, emoji: string) => void
   /** Call back a helper the agent sent off. */
   onStopHelper?: (subagentId: string) => void
+  /** Carries the chat on in a new one from a reply Hermes has saved (the reply's item id). */
+  onContinue?: (itemId: string) => void
 }
 
 type Extras = {
@@ -373,6 +380,13 @@ type Extras = {
   onEdit?: (item: Of<'user'>) => void
   /** Puts away a side answer or command card. */
   onDismiss?: (itemId: string) => void
+  /** Some of a reply was selected and Reply chosen: the passage goes above the message box. */
+  onQuote?: (passage: string) => void
+  /**
+   * The reply the chat is being carried on from, while its copy is made: what
+   * came after it falls away, and it settles where the new chat will show it.
+   */
+  cut?: string
 }
 
 type Props = Handlers &
@@ -392,13 +406,16 @@ type Props = Handlers &
      * A message to open at (a search result's), the words to mark in it, and when that was asked: asked again, it opens there again.
      * With `spot` it's a place inside the message (Find's), which marks its own words: the thread only moves if that place is out of sight.
      */
-    focus?: { id: string; at: number; words?: string[]; spot?: (message: HTMLElement) => DOMRect | undefined }
+    focus?: Focus
     /** Pinned under the messages, e.g. the composer. Messages scroll beneath it. */
     footer?: ReactNode
     className?: string
     /** Which chat the files in it belong to, and how widgets talk back. */
     media?: MediaContext
   }
+
+/** `quote`: a passage inside the message to bring into sight and wash, the way a quote in your bubble goes back to it. */
+type Focus = { id: string; at: number; words?: string[]; spot?: (message: HTMLElement) => DOMRect | undefined; quote?: string }
 
 const NO_MEDIA: MediaContext = {}
 
@@ -461,7 +478,7 @@ export function Thread({
   lead,
   onOlder,
   waiting,
-  focus,
+  focus: asked,
   footer,
   className,
   media = NO_MEDIA,
@@ -469,6 +486,8 @@ export function Thread({
   editingId,
   onEdit,
   onDismiss,
+  onQuote,
+  cut,
   ...handlers
 }: Props) {
   // The thread follows a reply as it grows with a soft spring, but a chat
@@ -496,9 +515,33 @@ export function Thread({
       onErrorAction: (action) => latest.current.onErrorAction?.(action),
       onReact: (itemId, emoji) => latest.current.onReact?.(itemId, emoji),
       onStopHelper: (subagentId) => latest.current.onStopHelper?.(subagentId),
+      onContinue: (itemId) => latest.current.onContinue?.(itemId),
     }),
     [],
   )
+
+  // A quote in your bubble goes back to the passage it was taken from: the
+  // newest of that and wherever the screen last asked to open is where it is.
+  const [jump, setJump] = useState<Focus>()
+  const focus = jump && (!asked || jump.at >= asked.at) ? jump : asked
+  const said = useRef(items)
+  said.current = items
+  const openQuote = useCallback((itemId: string, quote: string) => {
+    const id = sourceOf(said.current, itemId, quote)
+    // (Asked again, even within the same millisecond, it's asked anew. Not found, it stays where it is.)
+    if (id) setJump((was) => ({ id, quote, at: Math.max(Date.now(), (was?.at ?? 0) + 1) }))
+  }, [])
+
+  // Some of a reply, selected: Reply floats over it under a pointer, and rises from the message box on touch.
+  const touch = useMedia('(pointer: coarse)')
+  const [passage, clearPassage] = usePassage(scrollRef, !!onQuote)
+  const reply = (text: string) => {
+    clearPassage()
+    onQuote?.(text)
+  }
+  // On touch it takes the place of Latest above the message box, where it never
+  // sits under the system's own Copy and Look Up: one pill there, saying one or the other.
+  const replying = touch ? passage : null
 
   const watched = useRef(new Set<string>())
   for (const i of items) if (i.kind === 'approval' && i.status === 'pending') watched.current.add(i.id)
@@ -529,7 +572,7 @@ export function Thread({
     setOpened(focus.at)
     // A place among the rows already shown leaves them as they are.
     const here = span(first, last)
-    if (!focus.spot || target < here.from || target >= here.to) {
+    if (!(focus.spot || focus.quote) || target < here.from || target >= here.to) {
       first = rows[Math.max(0, target - LEADUP)].id
       last = target + WINDOW < rows.length - 1 ? rows[target + WINDOW].id : undefined
       setOldest(first)
@@ -598,6 +641,8 @@ export function Thread({
   // Who reads replies aloud: the agent in a one-to-one chat.
   const voice = media.profile ?? agent?.id
   const editingAt = editingId ? shown.findIndex((r) => r.id === editingId) : -1
+  const cutAt = cut ? shown.findIndex((r) => holds(r, cut)) : -1
+  const cutRow = cutAt >= 0 ? shown[cutAt].id : undefined
 
   // The composer floats over the end of the thread, outside the message log;
   // the log keeps room for it underneath.
@@ -747,14 +792,17 @@ export function Thread({
     placed.current = focus.at
     settling.current?.()
     stopScroll()
+    // A passage it quotes is a place inside it too.
+    const quoted = focus.quote ? passageRange(message, focus.quote) : undefined
+    const spotOf = focus.spot ?? (quoted && (() => quoted.getBoundingClientRect()))
     const place = () => {
       if (!message.isConnected) return done()
       const top = parseFloat(getComputedStyle(el).paddingTop) || 0
       const room = el.clientHeight - top - under
       const frame = el.getBoundingClientRect()
-      if (focus.spot) {
+      if (spotOf) {
         // A place inside the message, once it's drawn: left alone where it can be read already.
-        const spot = focus.spot(message)
+        const spot = spotOf(message)
         if (!spot) return
         const clear = spot.top >= frame.top + top + 12 && spot.bottom <= frame.bottom - under - 12
         if (!clear) el.scrollTop += spot.top - frame.top - (top + Math.max(16, (room - spot.height) * 0.4))
@@ -764,7 +812,8 @@ export function Thread({
       el.scrollTop += message.getBoundingClientRect().top - frame.top - offset
     }
     place()
-    if (!focus.spot && !popWords(message, wordRanges(message, focus.words ?? []))) {
+    if (quoted) washPassage(message, quoted)
+    else if (!focus.spot && !popWords(message, wordRanges(message, focus.words ?? []))) {
       message.classList.remove('found')
       void message.offsetWidth
       message.classList.add('found')
@@ -785,6 +834,38 @@ export function Thread({
     settling.current = done
   })
   useEffect(() => () => settling.current?.(), [])
+
+  // Carrying on in a new chat: the reply it's cut at glides to where the new
+  // chat will show it, at the end above the message box, while what came
+  // after it falls away. The new chat then takes over without anything moving.
+  useLayoutEffect(() => {
+    const el = scrollRef.current
+    const row = cutRow ? el?.querySelector<HTMLElement>(`[data-row="${CSS.escape(cutRow)}"]`) : null
+    if (!el || !row?.parentElement) return
+    const pad = parseFloat(getComputedStyle(row.parentElement).paddingBottom) || 0
+    const end = row.getBoundingClientRect().bottom - el.getBoundingClientRect().top + el.scrollTop
+    const to = Math.max(0, Math.round(end + pad + (spacerRef.current?.offsetHeight ?? 0) - el.clientHeight))
+    const from = el.scrollTop
+    settling.current?.()
+    stopScroll()
+    if (reduced || Math.abs(to - from) < 1) return void (el.scrollTop = to)
+    const began = performance.now()
+    let frame = requestAnimationFrame(function step(now) {
+      const t = Math.min(1, (now - began) / CUT_MS)
+      el.scrollTop = from + (to - from) * (1 - (1 - t) ** 3)
+      if (t < 1) frame = requestAnimationFrame(step)
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [cutRow, reduced, scrollRef, stopScroll])
+
+  // What can be seen of the thread, between the header and the message box: where Reply may float.
+  const sight = () => {
+    const el = scrollRef.current
+    return {
+      top: el ? el.getBoundingClientRect().top + (parseFloat(getComputedStyle(el).paddingTop) || 0) : 0,
+      bottom: footerRef.current?.getBoundingClientRect().top ?? window.innerHeight,
+    }
+  }
 
   return (
     <MotionConfig reducedMotion="user">
@@ -823,6 +904,7 @@ export function Thread({
                               onEdit={row.id === editableId ? onEdit : undefined}
                               editing={i === editingAt}
                               waiting={waiting && row.item.pending}
+                              onQuote={openQuote}
                             />
                           )
                         else if (row.kind === 'notice')
@@ -857,16 +939,21 @@ export function Thread({
                               // What a routine found is kept with its run, not here: there's nothing to react to.
                               onReact={handlers.onReact && !row.found ? stable.onReact : undefined}
                               onStopHelper={handlers.onStopHelper ? stable.onStopHelper : undefined}
+                              // What a routine found is its run's to carry on, and one copy at a time is plenty.
+                              onContinue={handlers.onContinue && !row.found && !cut ? stable.onContinue : undefined}
                             />
                           )
                         }
                         return (
                           <motion.div
                             key={key}
+                            data-row={row.id}
                             className={cn(
                               gap,
-                              'transition-opacity duration-300 ease-(--ease-out)',
+                              'transition-[opacity,translate] duration-300 ease-(--ease-out)',
                               editingAt >= 0 && i > editingAt && 'opacity-40',
+                              // Carried on from the reply above: these aren't part of the new chat.
+                              cutAt >= 0 && i > cutAt && 'pointer-events-none translate-y-2 opacity-0',
                             )}
                             exit={{
                               opacity: 0,
@@ -913,20 +1000,44 @@ export function Thread({
                         />
                       </motion.div>
                     )}
-                    {(!isAtBottom || back) && (
+                    {(replying || !isAtBottom || back) && (
                       <motion.button
                         key="latest"
                         type="button"
                         layout="position"
-                        onClick={toLatest}
+                        data-reply-pill={replying ? '' : undefined}
+                        // Pressing Reply leaves the selection, and the focus, where they are.
+                        onPointerDown={replying ? (e) => e.preventDefault() : undefined}
+                        onClick={() => (replying ? reply(replying.text) : toLatest())}
                         initial={{ opacity: 0, y: 8, scale: 0.94 }}
                         animate={{ opacity: 1, y: 0, scale: 1 }}
                         exit={{ opacity: 0, y: 8, scale: 0.94 }}
                         transition={FLOAT}
-                        className="glass pointer-events-auto relative flex h-9 flex-none items-center gap-1.5 rounded-full pr-3.5 pl-3 text-footnote font-medium text-ink shadow-float ring-[0.5px] ring-line-strong after:absolute after:-inset-1"
+                        className={cn(
+                          'pointer-events-auto relative flex h-9 flex-none items-center rounded-full pr-3.5 pl-3 text-footnote font-medium text-ink shadow-float ring-[0.5px] ring-line-strong transition-colors duration-200 after:absolute after:-inset-1',
+                          replying ? REPLY_SURFACE : 'glass',
+                        )}
                       >
-                        <ArrowDown size={15} strokeWidth={2} aria-hidden />
-                        Latest
+                        {/* The one gives way to the other in place: its words change, the pill stays. */}
+                        <AnimatePresence mode="popLayout" initial={false}>
+                          <motion.span
+                            key={replying ? 'reply' : 'latest'}
+                            className="flex items-center gap-1.5"
+                            initial={{ opacity: 0, y: 6 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: -6, transition: { duration: 0.12 } }}
+                            transition={FLOAT}
+                          >
+                            {replying ? (
+                              <ReplyFace />
+                            ) : (
+                              <>
+                                <ArrowDown size={15} strokeWidth={2} aria-hidden />
+                                Latest
+                              </>
+                            )}
+                          </motion.span>
+                        </AnimatePresence>
                       </motion.button>
                     )}
                   </AnimatePresence>
@@ -934,6 +1045,7 @@ export function Thread({
                 {footer}
               </div>
             </div>
+            {!touch && <ReplyPill passage={passage} {...(passage ? sight() : { top: 0, bottom: 0 })} onReply={reply} />}
           </div>
         </MentionsProvider>
       </MediaProvider>
@@ -966,6 +1078,7 @@ const UserMessage = memo(function UserMessage({
   onEdit,
   editing,
   waiting,
+  onQuote,
   className,
 }: {
   item: Of<'user'>
@@ -976,15 +1089,21 @@ const UserMessage = memo(function UserMessage({
   editing?: boolean
   /** Not with Hermes yet, and the connection is down: it goes once it's back. */
   waiting?: boolean
+  /** A tap on the passage it quotes goes back to where that was said. */
+  onQuote?: (itemId: string, quote: string) => void
   className?: string
 }) {
   const { copied, copy } = useCopy()
   const [held, setHeld] = useState<HTMLElement | null>(null)
   const close = useCallback(() => setHeld(null), [])
   const press = useLongPress(setHeld)
+  // The part of a reply it answers, when it opens with one, and the words under it.
+  const { quote, text } = useMemo(() => splitQuote(item.text), [item.text])
+  // (What you wrote is what's copied; a passage sent by itself, that.)
+  const mine = text || quote || ''
   const actions: MenuAction[] = [
     ...(onEdit ? [{ label: 'Edit', icon: PencilLine, onSelect: () => onEdit(item) }] : []),
-    { label: 'Copy', icon: Copy, onSelect: () => void copy(item.text) },
+    { label: 'Copy', icon: Copy, onSelect: () => void copy(mine) },
   ]
 
   return (
@@ -1038,7 +1157,12 @@ const UserMessage = memo(function UserMessage({
               )}
               {/* An edit swaps the words in place. */}
               <span key={item.text} className={cn(item.was && 'animate-fade')}>
-                <MentionText text={item.text} />
+                {quote && (
+                  <span className={cn('block', text ? 'mb-1.5' : '-mb-0.5')}>
+                    <BubbleQuote quote={quote} onOpen={onQuote && (() => onQuote(item.id, quote))} />
+                  </span>
+                )}
+                <MentionText text={text} />
               </span>
             </div>
             {waiting && <Waiting />}
@@ -1066,7 +1190,7 @@ const UserMessage = memo(function UserMessage({
               <button
                 type="button"
                 className={quiet}
-                onClick={() => copy(item.text)}
+                onClick={() => copy(mine)}
                 aria-label={copied ? 'Copied' : 'Copy'}
                 title="Copy"
               >
@@ -1091,7 +1215,12 @@ const UserMessage = memo(function UserMessage({
             }
             bubble={
               <div className={cn(BUBBLE, 'w-full shadow-float')}>
-                <MentionText text={item.text} still />
+                {quote && (
+                  <span className={cn('block', text ? 'mb-1.5' : '-mb-0.5')}>
+                    <BubbleQuote quote={quote} still />
+                  </span>
+                )}
+                <MentionText text={text} still />
               </div>
             }
           />
@@ -1157,6 +1286,7 @@ const Turn = memo(function Turn({
   onErrorAction,
   onReact,
   onStopHelper,
+  onContinue,
 }: TurnProps) {
   const texts = sections
     .flatMap((s) => s.blocks)
@@ -1228,7 +1358,8 @@ const Turn = memo(function Turn({
   const reactTo = onReact && reply?.text && (reply.rowId != null || last) ? reply : undefined
   const [tapAt, setTapAt] = useState<HTMLElement | null>(null)
   const closeTap = useCallback(() => setTapAt(null), [])
-  const hold = useHoldToReact(setTapAt)
+  // Carrying on from here needs the reply to be Hermes's own: saved, with a place in the chat.
+  const carryOn = onContinue && reply?.text && reply.rowId != null ? reply : undefined
   const mine = reactTo?.reactions?.find((r) => r.author === 'user')?.emoji
   // When it was said: its last words' time. (What a routine found says when at its top.)
   const blocks = sections.flatMap((s) => s.blocks)
@@ -1292,18 +1423,10 @@ const Turn = memo(function Turn({
                 }
                 case 'text':
                   if (!block.item.text) return null
-                  return block.item === reactTo ? (
-                    // Touch: hold the reply to react, as you would a message in Messages.
-                    <div
-                      key={block.id}
-                      data-message={block.id}
-                      {...hold}
-                      className="[@media(pointer:coarse)]:[-webkit-touch-callout:none]"
-                    >
-                      <RichText text={block.item.text} streaming={block.item.streaming} />
-                    </div>
-                  ) : (
-                    <div key={block.id} data-message={block.id}>
+                  return (
+                    // Its words can be selected (a hold, on touch) and answered part by part, once
+                    // they're all there.
+                    <div key={block.id} data-message={block.id} data-quotable={block.item.streaming ? undefined : ''}>
                       <RichText text={block.item.text} streaming={block.item.streaming} />
                     </div>
                   )
@@ -1388,6 +1511,7 @@ const Turn = memo(function Turn({
           at={saidAt}
           onRetry={onRetry}
           onReact={reactTo ? setTapAt : undefined}
+          onContinue={carryOn && (() => onContinue?.(carryOn.id))}
           speak={{ key: speakKey, profile: sections.at(-1)?.speaker?.id ?? voice }}
           // Touch: always there, under the reply. Pointer: they appear on hover in
           // the space below it, so they never push the conversation apart.

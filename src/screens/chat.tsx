@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { useLocation } from 'wouter'
 import { MotionConfig } from 'motion/react'
 import { Info } from 'lucide-react'
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { Thread } from '@/features/chat/thread'
 import { RunHeader, useRunItems } from '@/features/routines/run-view'
@@ -14,6 +14,8 @@ import type { MediaContext } from '@/features/media/context'
 import type { ChatItem } from '@/features/chat/types'
 import { ChatHeader } from '@/features/chat-screen/chat-header'
 import { EmptyState } from '@/features/chat-screen/empty-state'
+import { ContinuedFrom } from '@/features/chat-screen/continued'
+import { splitQuote } from '@/features/media/parse'
 import { takeOpeningLine } from '@/features/chat-screen/opening-line'
 import { CantOpen, NotFound } from '@/features/chat-screen/not-found'
 import { ThreadSkeleton } from '@/features/chat-screen/thread-skeleton'
@@ -71,6 +73,9 @@ import {
   answerSecret,
   askAside,
   attachmentsOf,
+  canContinue,
+  ContinueError,
+  continueFrom,
   continueHere,
   createChat,
   dismissItem,
@@ -99,15 +104,28 @@ import {
   useChats,
 } from '@/state/chats'
 import {
+  BOT_CHAT,
+  MAIN_CHAT,
+  readable,
   speakerOf,
   useAgentChats,
   useAgentGone,
   useAgents,
   type Agent,
 } from '@/state/agents'
-import { doneSeeking, findOlder, findRead, matchOf, useSeek } from '@/state/seek'
+import { doneSeeking, findOlder, findRead, matchOf, seekSaid, useSeek } from '@/state/seek'
 
 const NONE: ChatItem[] = []
+/** How long the thread takes to settle on the reply a chat is carried on from (CUT_MS in thread.tsx), and a breath. */
+const SETTLE_MS = 360
+
+/** Why a chat couldn't be carried on in a new one, said plainly. */
+function cantContinue(e: unknown) {
+  const why = e instanceof ContinueError ? e.why : 'failed'
+  if (why === 'summarized') return 'That part of the chat has been summarized, so a new chat can’t pick up from it. Try a later reply.'
+  if (why === 'large') return 'This chat is too long to carry into a new one.'
+  return 'Couldn’t continue in a new chat. Check that Hermes is running, then try again.'
+}
 
 // One agent, one conversation. /chat/:agent opens the latest chat (or a new
 // one), /chat/:agent/new is a blank chat that Hermes only creates on the first
@@ -282,15 +300,30 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
   const editable = useChats((s) => (id ? editableMessage(s.chats[id]) : undefined))
   const [rewrite, setRewrite] = useState<string | null>(null)
   if (rewrite && editable?.id !== rewrite) setRewrite(null)
+  /** A message back in the box: the passage it answers above, its words under it. */
+  const refill = (message: string) => {
+    const { quote, text } = splitQuote(message)
+    composer.current?.setQuote(quote ?? '')
+    composer.current?.setText(text)
+    composer.current?.focus()
+  }
   const onEditMessage = useCallback((item: { id: string; text: string }) => {
     setRewrite(item.id)
-    composer.current?.setText(item.text)
+    const { quote, text } = splitQuote(item.text)
+    composer.current?.setQuote(quote ?? '')
+    composer.current?.setText(text)
     composer.current?.focus()
   }, [])
   const cancelRewrite = () => {
     setRewrite(null)
+    composer.current?.setQuote('')
     composer.current?.setText('')
   }
+  // Reply to a part of what the agent said: the passage waits above the box for your words.
+  const onQuote = useCallback((passage: string) => {
+    composer.current?.setQuote(passage)
+    composer.current?.focus()
+  }, [])
 
   // This chat as one of the agent's: pinned, archived, or the main one.
   const listed = useAgentChatList(id ? agentId : undefined)
@@ -331,7 +364,7 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
       setRewrite(null)
       resend(id, rewrite, text).catch(() => {
         toast.error('Couldn’t send your edit. Try again.')
-        fill(text)
+        refill(text)
       })
       return
     }
@@ -396,7 +429,7 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
           setRewrite(null)
           return void undo(id).then((text) => {
             if (text === undefined) return void toast('Nothing to undo yet.')
-            if (text) fill(text)
+            if (text) refill(text)
             toast('Took back your last message.')
           }, oops('Couldn’t undo that. Try again.'))
         case 'rename':
@@ -504,6 +537,37 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
   }, [])
 
   const newChat = () => navigate(`/chat/${agentId}/new`)
+
+  // Continue in a new chat, under a reply: the chat up to there becomes one of its own, and
+  // you're in it. While it's made, what came after the reply falls away; if it can't be, it
+  // all comes back and you're where you were. Offered where this Hermes can do it, and not in
+  // a routine's run, which is a report.
+  const canCarryOn = useQuery({ queryKey: ['can-continue-chats'], queryFn: canContinue, staleTime: Infinity, retry: false }).data
+  const [cut, setCut] = useState<{ chat: string; item: string }>()
+  /** The chat made that way just now: its "Continued from" line opens into place. */
+  const [continued, setContinued] = useState<string>()
+  const carryOn = (itemId: string) => {
+    if (!id || cut) return
+    setCut({ chat: id, item: itemId })
+    const settled = new Promise((resolve) => setTimeout(resolve, SETTLE_MS))
+    continueFrom(id, itemId)
+      .then(async (copy) => {
+        await settled
+        setContinued(copy)
+        void qc.invalidateQueries({ queryKey: ['chats', agentId] })
+        navigate(`/chat/${agentId}/${copy}`)
+      })
+      .catch((e) => toast.error(cantContinue(e)))
+      .finally(() => setCut(undefined))
+  }
+  // Where this chat was carried on from, and the way back: to that chat, at the reply it left from.
+  const from = chat?.from
+  const backToOrigin = () => {
+    if (!from) return
+    const left = chat.items.findLast((i) => i.kind === 'assistant' && i.at < from.at)
+    if (left?.kind === 'assistant') seekSaid(from.id, { at: left.at, text: left.text })
+    navigate(`/chat/${agentId}/${from.id}`)
+  }
 
   // A call with the agent, over this chat. Every turn lands in the thread.
   // (A call started in a blank chat carries on into the chat its first turn makes.)
@@ -767,6 +831,12 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
                 title={chat?.title}
                 ranAt={run.ranAt}
               />
+            ) : id && from && runOfChat === null ? (
+              <ContinuedFrom
+                name={from.title === BOT_CHAT ? MAIN_CHAT : readable(from.title, { files: false })}
+                fresh={id === continued}
+                onOpen={backToOrigin}
+              />
             ) : undefined
           }
           media={media}
@@ -821,6 +891,9 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
           onDismiss={id ? (itemId) => dismissItem(id, itemId) : undefined}
           onReact={id ? (itemId, emoji) => void react(id, itemId, emoji).catch(() => toast.error('Couldn’t react to that. Try again.')) : undefined}
           onStopHelper={id ? (helper) => void stopHelper(id, helper).catch(() => toast.error('Couldn’t stop that helper. Try again.')) : undefined}
+          onContinue={id && canCarryOn && runOfChat === null ? carryOn : undefined}
+          cut={cut && cut.chat === id ? cut.item : undefined}
+          onQuote={typable ? onQuote : undefined}
           footer={
             <Composer
               handle={composer}

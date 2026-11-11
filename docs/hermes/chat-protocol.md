@@ -801,3 +801,23 @@ Configuration:
 `04` (with `PROFILE`) and `15` need a profile with `approvals: {mode: manual, timeout: 25}` in its
 `config.yaml`. Create one with `05-profiles-setup.mjs`, then append that block to
 `/opt/data/profiles/murmur-test-a/config.yaml`.
+
+## Copying a chat (checked on 0.23.1)
+
+What each way of copying a chat keeps, for a chat whose second turn ran a tool (`test/contract/chat.contract.ts`, "carrying a chat on in a new one"):
+
+| Call | Cuts at a point | Keeps tool calls and results |
+|---|---|---|
+| `session.mutate` `operation: "branch"`, `payload.through_message_id` | yes | yes, but it lives on Hermes's session authority: the dashboard's `/api/ws` answers `-32601 unknown method` |
+| `session.branch` `{session_id, count}` | yes (`count` user/assistant rows with text) | no: only role, content, reasoning and display fields are copied, and the model is no longer sent the tool's result |
+| `session.branch_stored` `{parent_session_id}` | no (whole chat) | no, the same |
+| `GET /api/sessions/{id}/export`, then `POST /api/sessions/import` under a new id | yes (the client cuts the rows) | yes: every row as stored |
+
+Murmur's "Continue in a new chat" uses the last (`copyChat` in `src/state/chats.ts`). Notes:
+
+- The import body is `{profile, request_id, expected_revision, sessions:[{id, …, messages}]}`; `expected_revision` is the new id's `runtime_revision` from `mutation-snapshot` (0, `exists:false`). An id that exists is skipped.
+- Kept from the session: `model`, `model_config`, `system_prompt`, `cwd`, the git and billing fields, `user_id`, `title`, the flags. `title_source` and `parent_session_id` aren't (the parent comes back detached); `model_config._branched_from` is, and Hermes keeps it through later turns.
+- A `title` another chat has fails the whole import with `503 storage_unavailable`. Imported with `title: null`, the chat is named by its first turn, like any unnamed chat. A title set afterwards by `PATCH` reads as the user's and is never replaced; `PATCH {title: ""}` clears it.
+- Limits: 5 MB a chat, 10,000 messages.
+- Message timestamps are kept, so rows copied are older than the copy's `started_at`.
+

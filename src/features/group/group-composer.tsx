@@ -1,6 +1,7 @@
 import {
   useEffect,
   useId,
+  useImperativeHandle,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -8,6 +9,7 @@ import {
   type CSSProperties,
   type KeyboardEvent,
   type ReactNode,
+  type Ref,
 } from 'react'
 import { AnimatePresence, MotionConfig, motion } from 'motion/react'
 import { ArrowUp, AtSign, Square } from 'lucide-react'
@@ -15,8 +17,10 @@ import { Buddy, BuddyStack } from '@/ui/buddy'
 import { useMedia } from '@/lib/use-media'
 import { cn } from '@/lib/cn'
 import type { GroupMember } from '@/state/groups'
-import { activeQuery, mentionRanges, mentionedIds } from '@shared/mentions.ts'
-import { useAutoGrow, useDraft } from '@/features/chat/use-draft'
+import { activeQuery, mentionRanges, mentionedIds, unmention } from '@shared/mentions.ts'
+import { useAutoGrow, useDraft, useDraftQuote } from '@/features/chat/use-draft'
+import { ComposerQuote } from '@/features/chat/quote'
+import { withQuote } from '@/features/media/parse'
 import { useKeyboardInset } from '@/features/chat/use-keyboard-inset'
 import { haptic } from '@/lib/haptics'
 import '@/features/chat/composer.css'
@@ -39,7 +43,11 @@ type Props = {
   className?: string
   /** Takes focus as soon as there's a group to type to. */
   autoFocus?: boolean
+  /** Lets the screen put a passage to answer above what's typed. */
+  handle?: Ref<GroupComposerHandle>
 }
+
+export type GroupComposerHandle = { setQuote: (quote: string) => void; focus: () => void }
 
 type Option = { id: string; name: string; hue?: number; everyone?: boolean }
 
@@ -55,8 +63,11 @@ export function GroupComposer({
   placeholder = 'Message the group',
   className,
   autoFocus,
+  handle,
 }: Props) {
   const [text, setText, clearDraft] = useDraft(draftKey)
+  // The part of a reply this message answers: it goes above your words, as a quote.
+  const [quote, setQuote] = useDraftQuote(draftKey)
   const [caret, setCaret] = useState(0)
   const [focused, setFocused] = useState(false)
   const [highlight, setHighlight] = useState(0)
@@ -87,6 +98,12 @@ export function GroupComposer({
     focusedOnce.current = true
     area.current?.focus({ preventScroll: true })
   }, [autoFocus, disabled])
+
+  useImperativeHandle(handle, () => ({
+    // (A name in the passage asks no one: only the ones in your own words do.)
+    setQuote: (next) => setQuote(unmention(next, roster)),
+    focus: () => area.current?.focus({ preventScroll: true }),
+  }))
 
   useAutoGrow(area, text)
   // The tinted copy scrolls with the field.
@@ -154,13 +171,14 @@ export function GroupComposer({
   }
 
   // ── Sending ───────────────────────────────────────────────────────────────
-  const hasContent = text.trim().length > 0
+  const hasContent = text.trim().length > 0 || !!quote
   const mode: 'send' | 'stop' = busy && !hasContent ? 'stop' : 'send'
 
   const send = () => {
     if (disabled || !hasContent) return
     haptic()
-    onSend(text.trim())
+    onSend(withQuote(quote, text.trim()))
+    setQuote('')
     clearDraft()
     setCaret(0)
   }
@@ -212,6 +230,7 @@ export function GroupComposer({
 
           <div className="composer glass relative rounded-[26px] shadow-float" data-busy={busy || undefined}>
             <span aria-hidden className="composer-rim" />
+            <ComposerQuote quote={quote} onRemove={() => (setQuote(''), area.current?.focus({ preventScroll: true }))} />
             {/* The same card as a one-to-one chat's: what you write on top, the
                 controls in a row beneath (features/chat/composer.tsx). */}
             <div className="relative">

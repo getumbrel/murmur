@@ -21,7 +21,9 @@ import { formatSize } from '@/features/media/files'
 import { MAX_UPLOAD, isPhoto } from '@/features/media/upload'
 import { CommandPalette, useCommandPalette } from '@/features/commands/command-palette'
 import { parseCommand, type Command } from '@/features/commands/commands'
-import { useAutoGrow, useDraft } from './use-draft'
+import { useAutoGrow, useDraft, useDraftQuote } from './use-draft'
+import { ComposerQuote } from './quote'
+import { withQuote } from '@/features/media/parse'
 import { useKeyboardInset } from './use-keyboard-inset'
 import { DictationNote, DictationPanel, MicButton, canDictate, useDictation } from '@/features/voice/dictation'
 import { IconChip, PicturesIcon } from '@/ui/icons'
@@ -35,6 +37,8 @@ export type { PlusItem } from './plus-menu'
 export type ComposerHandle = {
   addFiles: (files: File[]) => void
   setText: (text: string) => void
+  /** The passage the next message answers, above what's typed (one at a time; '' drops it). */
+  setQuote: (quote: string) => void
   /** What's in the box now. */
   text: () => string
   focus: () => void
@@ -119,6 +123,8 @@ export function Composer({
   more,
 }: Props) {
   const [text, setText, clearDraft] = useDraft(draftKey)
+  // The part of a reply this message answers: it goes above your words, as a quote.
+  const [quote, setQuote] = useDraftQuote(draftKey)
 
   const [images, setImages] = useState<Attachment[]>([])
   const [dragging, setDragging] = useState(false)
@@ -177,6 +183,7 @@ export function Composer({
   useImperativeHandle(handle, () => ({
     addFiles: (files) => addImages(files),
     setText: (next) => setText(next),
+    setQuote: (next) => setQuote(next),
     text: () => text,
     focus,
   }))
@@ -233,7 +240,8 @@ export function Composer({
     if (disabled || dictation.active) closePlus()
   }, [disabled, dictation.active, closePlus])
 
-  const hasContent = text.trim().length > 0 || images.length > 0
+  // (A passage can go by itself: "this", with nothing to add.)
+  const hasContent = text.trim().length > 0 || images.length > 0 || !!quote
   const mode: 'send' | 'stop' | 'mic' =
     busy && !hasContent ? 'stop' : !hasContent && voice !== undefined && micOk && !editing ? 'mic' : 'send'
 
@@ -248,9 +256,10 @@ export function Composer({
     }
     haptic()
     onSend(
-      text.trim(),
+      withQuote(quote, text.trim()),
       images.map((a) => a.file),
     )
+    setQuote('')
     // (The thread keeps its own previews; ours can go.)
     images.forEach((a) => a.url && URL.revokeObjectURL(a.url))
     setImages([])
@@ -446,6 +455,8 @@ export function Composer({
                 </motion.div>
               )}
             </AnimatePresence>
+
+            <ComposerQuote quote={quote} onRemove={() => (setQuote(''), focus())} />
 
             <DictationNote dictation={dictation} />
 

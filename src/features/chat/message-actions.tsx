@@ -1,4 +1,5 @@
 import { Check, Copy, RotateCcw, SmilePlus, Square, Volume2 } from 'lucide-react'
+import { ContinueIcon } from './continue-icon'
 import { AnimatePresence, motion } from 'motion/react'
 import { cn } from '@/lib/cn'
 import { Spinner } from '@/ui/spinner'
@@ -30,6 +31,7 @@ export function MessageActions({
   at,
   onRetry,
   onReact,
+  onContinue,
   speak,
   className,
 }: {
@@ -39,6 +41,8 @@ export function MessageActions({
   onRetry?: () => void
   /** Opens the tapbacks, springing out of this button. */
   onReact?: (anchor: HTMLElement) => void
+  /** Carries the chat on from this reply in a new chat of its own; the one it's in stays as it is. */
+  onContinue?: () => void
   /** Read aloud in this agent's voice; `key` tells this reply apart. */
   speak?: { key: string; profile?: string }
   className?: string
@@ -49,7 +53,8 @@ export function MessageActions({
   return (
     <div
       className={cn(
-        'flex items-center gap-0.5 transition-opacity duration-200',
+        // (Never part of what's selected: a selection ends with the reply's words.)
+        'flex items-center gap-0.5 transition-opacity duration-200 select-none',
         !phase &&
           '[@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/turn:opacity-100 [@media(hover:hover)]:focus-within:opacity-100',
         className,
@@ -105,6 +110,17 @@ export function MessageActions({
       {onRetry && (
         <button type="button" className={action} onClick={onRetry} aria-label="Try again" title="Try again">
           <RotateCcw size={16} strokeWidth={1.75} />
+        </button>
+      )}
+      {onContinue && (
+        <button
+          type="button"
+          className={action}
+          onClick={onContinue}
+          aria-label="Continue in a new chat"
+          title="Continue in a new chat"
+        >
+          <ContinueIcon size={17} />
         </button>
       )}
       {!!at && (

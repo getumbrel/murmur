@@ -13,6 +13,7 @@ vi.mock('@/state/chats', () => ({
 }))
 
 const { findOlder, findRead, fit, matchOf, needleOf } = await import('./seek')
+const at = (id: string, text: string, when: number): ChatItem => ({ kind: 'assistant', id, text, streaming: false, at: when })
 
 const user = (id: string, text: string): ChatItem => ({ kind: 'user', id, text, at: 0 })
 const said = (id: string, text: string): ChatItem => ({ kind: 'assistant', id, text, streaming: false, at: 0 })
@@ -127,5 +128,30 @@ describe('finding the message a result was found in', () => {
     await expect(
       findOlder('c', { snippet: 'one >>>pelican<<< over the harbour', role: 'assistant' }),
     ).resolves.toBeUndefined()
+  })
+})
+
+describe('going back to the reply a chat was carried on from', () => {
+  it('is the reply that says it, said then', () => {
+    reading([at('a1', 'Take the 28', 100), user('u', 'again?'), at('a2', 'Take the 28', 200)])
+    expect(findRead('c', { at: 100, text: 'Take the 28' })).toEqual({ id: 'a1', more: false })
+    expect(matchOf({ at: 100, text: 'Take the 28' })).toEqual([])
+  })
+
+  it('will take the same words said at another time, when that’s all there is', () => {
+    reading([at('a1', 'Take the 28', 100)])
+    expect(findRead('c', { at: 999, text: 'Take the 28' })).toEqual({ id: 'a1', more: false })
+  })
+
+  it('reads back through older pages for it', async () => {
+    reading([at('a9', 'Something else', 900)], [at('a5', 'Nor this', 500)], [at('a1', 'Take the 28', 100)])
+    expect(findRead('c', { at: 100, text: 'Take the 28' })).toEqual({ id: undefined, more: true })
+    expect(await findOlder('c', { at: 100, text: 'Take the 28' })).toBe('a1')
+  })
+
+  it('is nowhere once the whole chat has been read without it', async () => {
+    reading([at('a9', 'Something else', 900)])
+    expect(findRead('c', { at: 100, text: 'Take the 28' })).toEqual({ id: undefined, more: false })
+    expect(await findOlder('c', { at: 100, text: 'Take the 28' })).toBeUndefined()
   })
 })

@@ -1,35 +1,20 @@
-import { useEffect, useLayoutEffect, useState, type CSSProperties, type PointerEvent } from 'react'
+import { useEffect, useLayoutEffect, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { cn } from '@/lib/cn'
 import { haptic } from '@/lib/haptics'
 import type { Reaction } from './types'
-import { useLongPress } from './message-menu'
 
-// Tapbacks, the way Messages does them: hold a reply (or tap the smiley under
-// it) and pick one of six. Yours sit under the agent's reply; the agent's sit
-// on the corner of your bubble.
+// Tapbacks, the way Messages does them: tap the smiley under a reply and pick
+// one of six. Yours sit under the agent's reply; the agent's sit on the corner
+// of your bubble. Holding a reply is left to the system: that's how its words
+// are selected.
 
 export const TAPBACKS = ['❤️', '👍', '👎', '😂', '‼️', '❓']
 
 const spring = { type: 'spring', duration: 0.32, bounce: 0.22 } as const
 const pop = { type: 'spring', duration: 0.4, bounce: 0.5 } as const
 const out = { duration: 0.14, ease: [0.16, 1, 0.3, 1] } as const
-
-/** Press and hold (touch only: a mouse keeps its own right-click and selection). */
-export function useHoldToReact(onOpen: (target: HTMLElement) => void) {
-  const { onPointerDown, onPointerMove, onPointerUp, onPointerCancel, onPointerLeave } = useLongPress((target) => {
-    window.getSelection()?.removeAllRanges()
-    onOpen(target)
-  })
-  return {
-    onPointerDown: (e: PointerEvent<HTMLElement>) => e.pointerType === 'touch' && onPointerDown(e),
-    onPointerMove,
-    onPointerUp,
-    onPointerCancel,
-    onPointerLeave,
-  }
-}
 
 /** The six choices, in a capsule that springs out of the reply it's about. */
 export function Tapback({

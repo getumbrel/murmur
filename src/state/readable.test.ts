@@ -16,4 +16,8 @@ describe('a chat’s title', () => {
     expect(readable('Plan my week')).toBe('Plan my week')
     expect(readable('[Note] from the meeting')).toBe('[Note] from the meeting')
   })
+  it('goes by what was written under a quoted passage, or the passage sent by itself', () => {
+    expect(readable('> Pack a light jacket\n\nHow cold is it?')).toBe('How cold is it?')
+    expect(readable('> Pack a light jacket')).toBe('Pack a light jacket')
+  })
 })

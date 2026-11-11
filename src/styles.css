@@ -509,6 +509,23 @@ html[data-text-size='largest'] {
   pointer-events: none;
   animation: found 2.6s var(--ease-out) forwards;
 }
+/* The passage a message quotes, when you go back to it (features/chat/quote.tsx):
+   the same wash behind just those words, a soft block on each line. */
+.passage-washed {
+  position: relative;
+  isolation: isolate;
+}
+.passage-wash {
+  position: absolute;
+  z-index: -1;
+  pointer-events: none;
+  animation: found 2.6s var(--ease-out) forwards;
+}
+.passage-wash > span {
+  position: absolute;
+  border-radius: 5px;
+  background: var(--found);
+}
 @keyframes found {
   40% {
     opacity: 1;
@@ -540,7 +557,8 @@ html[data-text-size='largest'] {
     animation-iteration-count: infinite !important;
   }
   /* (Nothing moves: they only fade.) */
-  .found::before {
+  .found::before,
+  .passage-wash {
     animation-duration: 2.6s !important;
   }
   .find {

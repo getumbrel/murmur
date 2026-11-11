@@ -92,3 +92,67 @@ describe('a message Hermes saved in parts', () => {
     })
   })
 })
+
+const { splitQuote, tidyQuote, withQuote } = await import('./parse')
+
+describe('replying to a part of a reply', () => {
+  it('sends the passage as a blockquote, a blank line, then your words', () => {
+    expect(withQuote('The 28 tram is the scenic one.', 'Is it crowded?')).toBe('> The 28 tram is the scenic one.\n\nIs it crowded?')
+  })
+
+  it('quotes every line of a passage, blank ones too', () => {
+    expect(withQuote('Day one\n\nDay two', 'Swap these')).toBe('> Day one\n>\n> Day two\n\nSwap these')
+  })
+
+  it('sends a passage with nothing under it, and words with no passage as they are', () => {
+    expect(withQuote('Just this', '')).toBe('> Just this')
+    expect(withQuote(undefined, 'Hello')).toBe('Hello')
+    expect(withQuote('  \n ', 'Hello')).toBe('Hello')
+  })
+
+  it('tidies what was selected: line ends, runs of blank lines, the ends', () => {
+    expect(tidyQuote('\n  One  \r\n\r\n\r\n\r\nTwo\t\n')).toBe('One\n\nTwo')
+  })
+
+  it('reads the passage back out of a message', () => {
+    expect(splitQuote('> The 28 tram is the scenic one.\n\nIs it crowded?')).toEqual({
+      quote: 'The 28 tram is the scenic one.',
+      text: 'Is it crowded?',
+    })
+    expect(splitQuote('> Day one\n>\n> Day two\n\nSwap these\n\nPlease')).toEqual({
+      quote: 'Day one\n\nDay two',
+      text: 'Swap these\n\nPlease',
+    })
+  })
+
+  it('reads a message that is only a passage', () => {
+    expect(splitQuote('> Just this')).toEqual({ quote: 'Just this', text: '' })
+  })
+
+  it('round-trips whatever was quoted', () => {
+    for (const [quote, text] of [
+      ['One line', 'Words'],
+      ['Two\nlines', 'Words\n\nover two paragraphs'],
+      ['> already quoted\nand more', 'Why?'],
+      ['const a = 1\n\n  indented()', ''],
+    ]) {
+      expect(splitQuote(withQuote(quote, text))).toEqual({ quote, text })
+    }
+  })
+
+  it('leaves a message alone when it doesn’t open with a passage', () => {
+    expect(splitQuote('Hello\n\n> not at the top')).toEqual({ text: 'Hello\n\n> not at the top' })
+    // More typed straight under it: that's the person's own ">".
+    expect(splitQuote('> 5 is what I meant\nand < 9')).toEqual({ text: '> 5 is what I meant\nand < 9' })
+    expect(splitQuote('>no space')).toEqual({ text: '>no space' })
+    expect(splitQuote('>\n\nHello')).toEqual({ text: '>\n\nHello' })
+    expect(splitQuote('')).toEqual({ text: '' })
+  })
+
+  it('reads the passage from a message as Hermes stored it, files and all', () => {
+    const stored = `> The 28 tram\n\nIs it crowded?\n\n${fileRef('attachments/map.pdf')}`
+    const { text, attachments } = parseUserMessage(stored)
+    expect(attachments).toEqual([{ kind: 'file', name: 'map.pdf', path: 'attachments/map.pdf' }])
+    expect(splitQuote(text)).toEqual({ quote: 'The 28 tram', text: 'Is it crowded?' })
+  })
+})

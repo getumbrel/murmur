@@ -81,6 +81,17 @@ export function mentionedIds(text: string, members: Mentionable[]): string[] {
   return members.filter((m) => ids.has(m.id)).map((m) => m.id)
 }
 
+/**
+ * "Ask @Atlas about it" → "Ask Atlas about it": the words of a passage being
+ * quoted. They name someone without asking them, so the message goes to who
+ * you ask in your own words (Hermes routes on every "@handle" it's sent).
+ */
+export function unmention(text: string, members: Mentionable[]) {
+  let out = text
+  for (const r of mentionRanges(text, members).reverse()) out = out.slice(0, r.start) + out.slice(r.start + 1)
+  return out
+}
+
 /** The "@que" being typed right before the caret, if any. */
 export function activeQuery(text: string, caret: number): { start: number; query: string } | null {
   const before = text.slice(0, caret)
