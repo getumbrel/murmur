@@ -7,7 +7,7 @@ import { toast } from 'sonner'
 import { Thread } from '@/features/chat/thread'
 import { RunHeader, useRunItems } from '@/features/routines/run-view'
 import { useChatName } from '@/features/chat-screen/chat-name'
-import { Composer, useKeyboardInset, type ComposerHandle } from '@/features/chat/composer'
+import { Composer, type ComposerHandle } from '@/features/chat/composer'
 import { newChatDraft } from '@/features/chat/use-draft'
 import { DropZone } from '@/features/chat-screen/drop-zone'
 import type { MediaContext } from '@/features/media/context'
@@ -142,7 +142,6 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
   const [, navigate] = useLocation()
   const wide = useIsWide()
   const fine = useFinePointer()
-  const inset = useKeyboardInset()
 
   // No chat in the URL: pick up where you left off, or start fresh.
   const recent = useAgentChats(chatId ? undefined : agentId)
@@ -786,9 +785,10 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
     <MotionConfig reducedMotion="user">
       <div
         ref={root}
-        className="hue-scope relative flex h-dvh flex-col overflow-hidden bg-bg talk-under"
+        // With the keyboard up, the chat is what's left above it.
+        className="hue-scope relative flex h-dvh flex-col overflow-hidden bg-bg talk-under keyboard:h-[calc(100dvh-var(--keyboard))]"
         data-talk={talkOpen || undefined}
-        style={{ '--hue': agent?.hue ?? 278, height: inset ? `calc(100dvh - ${inset}px)` : undefined } as CSSProperties}
+        style={{ '--hue': agent?.hue ?? 278 } as CSSProperties}
       >
         {/* The agent's colour, barely there, behind the header. */}
         <div

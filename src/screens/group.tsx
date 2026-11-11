@@ -4,7 +4,6 @@ import { MotionConfig } from 'motion/react'
 import { toast } from 'sonner'
 import { useQueryClient } from '@tanstack/react-query'
 import { Thread } from '@/features/chat/thread'
-import { useKeyboardInset } from '@/features/chat/use-keyboard-inset'
 import { groupDraft } from '@/features/chat/use-draft'
 import { GroupHeader } from '@/features/group/group-header'
 import { GroupComposer, type GroupComposerHandle } from '@/features/group/group-composer'
@@ -36,7 +35,6 @@ export function GroupScreen({ groupId }: { groupId: string }) {
   const { group, items, loaded, missing, working, stopping, active } = useGroup(groupId)
   const wide = useIsWide()
   const fine = useFinePointer()
-  const inset = useKeyboardInset()
   const [, navigate] = useLocation()
   const root = useRef<HTMLDivElement>(null)
   const scrolled = useScrolled(root)
@@ -77,9 +75,9 @@ export function GroupScreen({ groupId }: { groupId: string }) {
     <MotionConfig reducedMotion="user">
       <div
         ref={root}
-        className="hue-scope relative h-dvh overflow-hidden bg-bg"
         // The keyboard takes its share of the screen, as in a one-to-one chat.
-        style={{ '--hue': HUE, height: inset ? `calc(100dvh - ${inset}px)` : undefined } as CSSProperties}
+        className="hue-scope relative h-dvh overflow-hidden bg-bg keyboard:h-[calc(100dvh-var(--keyboard))]"
+        style={{ '--hue': HUE } as CSSProperties}
       >
         <Wash hues={members.map((m) => m.hue)} />
         {/* The screen's heading, for finding your way by headings; the header shows the name. */}

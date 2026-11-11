@@ -741,6 +741,9 @@ html [data-sonner-toast].murmur-toast .sonner-loading-bar {
 
 @custom-variant desktop (&:where([data-desktop], [data-desktop] *));
 @custom-variant mac (&:where([data-desktop='mac'], [data-desktop='mac'] *));
+/* While the on-screen keyboard is up (src/features/chat/use-keyboard-inset.ts). It
+   outranks .h-dvh, which a Home Screen app swaps for 100lvh below. */
+@custom-variant keyboard (html[data-keyboard] &);
 
 html[data-desktop='mac'] {
   --titlebar-h: 52px;
