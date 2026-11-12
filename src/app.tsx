@@ -9,6 +9,8 @@ import { MurmurMark } from '@/ui/brand'
 import { startGateway } from '@/hermes/gateway'
 import { wireChats } from '@/state/chats'
 import { wireSessionLists } from '@/state/sync'
+import { keepLists } from '@/state/kept'
+import { wireReach } from '@/state/reach'
 import { wireChatConnects } from '@/state/hosted-apps-chat'
 import { markWelcomed, useReadiness, useWelcomed } from '@/state/readiness'
 import { useAgents, useAgentsAsTheyAre, useFreshAgents } from '@/state/agents'
@@ -51,9 +53,12 @@ const AgentsScreen = lazyComponent(() => import('@/screens/agents').then((m) => 
 export const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: retryUnlessMissing, refetchOnWindowFocus: true } },
 })
+// The lists this device last saw are there from the start, behind whatever Hermes says now.
+keepLists(queryClient)
 
 export function App() {
   useEffect(() => {
+    wireReach()
     wireChats()
     wireNotices()
     wireSessionLists(queryClient)

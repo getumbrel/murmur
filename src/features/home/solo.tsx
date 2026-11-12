@@ -7,6 +7,7 @@ import { cn } from '@/lib/cn'
 import { useAgents, type Agent } from '@/state/agents'
 import { useGroupSummaries } from '@/state/groups'
 import { useAgentStatus } from '@/state/status'
+import { useAway } from '@/state/reach'
 import { ChatList } from '@/features/agent-page/chat-list'
 import { useAgentChatList } from '@/features/agent-page/chats'
 import { noteArrivals } from './roster'
@@ -54,7 +55,10 @@ export function SoloChats({ agent, title }: { agent: Agent; title: React.ReactNo
 function AgentCard({ agent }: { agent: Agent }) {
   const status = useAgentStatus(agent.id)
   const busy = Boolean(status.activity && status.state !== 'idle' && status.state !== 'done')
-  const line = busy ? status.activity! : agent.role || (agent.isDefault ? 'Your main agent' : 'Your agent')
+  // Out of reach, it says so here for as long as it lasts: the island only says it once (state/reach.ts).
+  const away = useAway()
+  const asleep = away === 'offline' ? 'Asleep while you’re offline' : away ? 'Out of reach right now' : undefined
+  const line = asleep ?? (busy ? status.activity! : agent.role || (agent.isDefault ? 'Your main agent' : 'Your agent'))
   return (
     <Link
       href={`/agent/${agent.id}`}
@@ -74,14 +78,14 @@ function AgentCard({ agent }: { agent: Agent }) {
         <span className="relative block h-5 overflow-hidden">
           <AnimatePresence mode="popLayout" initial={false}>
             <motion.span
-              key={busy ? `busy:${line}` : 'idle'}
+              key={asleep ? `away:${line}` : busy ? `busy:${line}` : 'idle'}
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}
               transition={{ duration: 0.26, ease }}
               className={cn(
                 'block truncate text-subhead',
-                busy ? (status.state === 'waiting' ? 'font-medium text-accent' : 'text-shimmer') : 'text-ink-2',
+                busy && !asleep ? (status.state === 'waiting' ? 'font-medium text-accent' : 'text-shimmer') : 'text-ink-2',
               )}
             >
               {line}

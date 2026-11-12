@@ -23,6 +23,7 @@ import { Orb, OrbStack } from '@/ui/orb'
 import { Buddy, BuddyStack } from '@/ui/buddy'
 import { Button } from '@/ui/button'
 import { fetchAgentChats, useAgentChats, useAgents, type Agent } from '@/state/agents'
+import { useAway } from '@/state/reach'
 import { settledAt, useAgentStatus, useBusyAgents, useChatUnread, useNeedsYou, useUnreadCount } from '@/state/status'
 import { sectionOf, setFolded, useFoldedMap, type Section } from '@/state/sections'
 import { newGroupChat, prefetchGroup, useGroupSummaries } from '@/state/groups'
@@ -74,6 +75,7 @@ export function Roster({
   sections: shelves,
 }: RosterProps) {
   const { data: agents, isPending, isError, refetch, isRefetching } = useAgents()
+  const away = useAway()
   const groups = useGroupRows()
   const groupsLoaded = !useGroupSummaries().isPending
   const busy = useBusyAgents()
@@ -96,7 +98,7 @@ export function Roster({
       >
         <Orb hue={278} size={density === 'roomy' ? 52 : 40} state="offline" seed="murmur" />
         <p className={cn('mt-4 font-semibold tracking-[-0.015em]', density === 'roomy' ? 'text-body' : 'text-subhead')}>
-          Can’t reach Hermes
+          {away === 'offline' ? 'You’re offline' : away === 'murmur' ? 'Can’t reach Murmur' : 'Can’t reach Hermes'}
         </p>
         <p
           className={cn(
@@ -104,7 +106,11 @@ export function Roster({
             density === 'roomy' ? 'text-subhead' : 'text-footnote',
           )}
         >
-          Check that it’s running, then try again.
+          {away === 'offline'
+            ? 'Murmur will be back when you are.'
+            : away === 'murmur'
+              ? 'Check your connection, then try again.'
+              : 'Check that it’s running, then try again.'}
         </p>
         <Button variant="secondary" size="sm" className="mt-5" loading={isRefetching} onClick={() => refetch()}>
           Try again

@@ -44,6 +44,8 @@ import { errandsOf, isYours, sentItems, wakeItems, withSeenHelpers, type Errand 
 import { sameRunning, stillRunning, type Kept, type Running } from '@/features/chat/running'
 import { along, madeRoutine, soundsScheduled, toldIn, type Carried } from '@shared/routines.ts'
 import { reportHere } from '@/state/routines'
+import { forgetKeptChat, keepChat, keptChat } from '@/state/kept'
+import { away, useReach } from '@/state/reach'
 
 export type Chat = {
   id: string
@@ -57,6 +59,13 @@ export type Chat = {
   reasoning?: string
   /** History has been loaded (or the chat is brand new). */
   ready: boolean
+  /**
+   * Hermes hasn't been read yet, and can't be right now: these are the messages
+   * as this device last saw them, then (state/kept.ts). Gone once it's read.
+   */
+  asOf?: number
+  /** This device kept no copy of it to show meanwhile. */
+  unkept?: boolean
   /** It couldn't be read or opened for a while: it's still being tried, and you can ask for it now. */
   stalled?: boolean
   /** Hermes has older history than what's been read: loadOlder brings it in. */
@@ -398,6 +407,8 @@ export async function readRows(id: string, profile: string, offset = 0, { limit 
     (pictures ? '' : '&inline_images=false')
   const res = await api.get<Res>(
     `/api/sessions/${encodeURIComponent(id)}/messages?${query}${offset ? `&offset=${offset}` : ''}`,
+    // A server that has gone out of reach can leave a request hanging for minutes: give up, and try again.
+    { signal: AbortSignal.timeout(30_000) },
   )
   const rows = (res.messages ?? res.data ?? []).map(plain)
   // An older Hermes gave a "latest" page newest first; put it back in reading order. (A row
@@ -552,6 +563,7 @@ export function openChat(id: string, profile: string, speaker?: Speaker): Promis
   const existing = opening.get(id)
   if (existing) return existing
   if (!chat.named) void readTitle(id, profile)
+  if (!chat.ready) void findKept(id)
   const task = (async () => {
     try {
       if (!chat.ready && !(await readHistory(id, profile, speaker))) return
@@ -587,6 +599,8 @@ async function readHistory(id: string, profile: string, speaker?: Speaker) {
       else absent.delete(id)
       items = rowsToItems(rows, speaker)
     } catch {
+      // It can't be read right now: as it was last seen here, meanwhile.
+      showKept(id)
       // A few seconds of trying, then it says so.
       if (tries === 2) patch(id, () => ({ stalled: true }))
       await nextTry(id, Math.min(30_000, 1000 * 2 ** tries))
@@ -597,15 +611,40 @@ async function readHistory(id: string, profile: string, speaker?: Speaker) {
     // Anything sent while it loaded comes after the history, once: a message
     // Hermes saved meanwhile is in the history already.
     const saved = new Set(items.map(rowOf))
+    // What stood in for it meanwhile (state/kept.ts) gives way to it.
+    const stoodIn = new Set(lastSeen.get(id)?.items.map((i) => i.id))
+    lastSeen.delete(id)
     patch(id, (c) => ({
-      items: [...items, ...c.items.filter((i) => rowOf(i) == null || !saved.has(rowOf(i)))],
+      items: [...items, ...c.items.filter((i) => !stoodIn.has(i.id) && (rowOf(i) == null || !saved.has(rowOf(i))))],
       ready: true,
+      asOf: undefined,
+      unkept: undefined,
       stalled: undefined,
       older: rows.length >= PAGE,
       told: c.told || rows.some((r) => r.role === 'user' && toldIn(r.content ?? '')),
     }))
     return true
   }
+}
+
+/** Chats being opened that this device kept a copy of, to show if Hermes can't be read. */
+const lastSeen = new Map<string, { items: ChatItem[]; title?: string; at: number }>()
+
+/** Looks for this device's copy of a chat being opened, and shows it at once when nothing can be reached. */
+async function findKept(id: string) {
+  const kept = await keptChat(id)
+  const chat = getChat(id)
+  if (!chat || chat.ready || !viewing.has(id)) return
+  if (!kept) return patch(id, () => ({ unkept: true }))
+  lastSeen.set(id, kept)
+  if (away()) showKept(id)
+}
+
+/** The chat as it was last seen here, while it can't be read. Nothing to do once anything of it is on screen. */
+function showKept(id: string) {
+  const kept = lastSeen.get(id)
+  if (!kept) return
+  patch(id, (c) => (c.ready || c.items.length ? undefined : { items: kept.items, asOf: kept.at, title: c.title ?? kept.title }))
 }
 
 /** Chats Hermes had no history for when asked: new ones, and ones that are gone. */
@@ -696,6 +735,7 @@ export function readUnread() {
 /** The chat is off screen. Hermes lets it go once nothing holds it (see the reconnect below). */
 export function leaveChat(id: string) {
   viewing.delete(id)
+  if (!getChat(id)?.asOf) lastSeen.delete(id)
   // Its history stops being tried; coming back tries at once.
   unread.get(id)?.()
 }
@@ -1957,6 +1997,7 @@ export async function deleteChat(id: string, profile = getChat(id)?.profile ?? '
     await rpc('session.delete', { session_id: id, profile })
   }
   forget(id)
+  forgetKeptChat(id)
   // The pictures of its agent's browser go with it.
   void forgetFrames(id)
   useChats.setState((s) => {
@@ -2682,6 +2723,24 @@ let wired = false
 export function wireChats() {
   if (wired) return
   wired = true
+  // Out of reach: chats waiting to be read show as they were last seen.
+  useReach.subscribe((s) => s.away && [...lastSeen.keys()].forEach(showKept))
+  // Each conversation is kept as it comes to rest, to show when it can't be read (state/kept.ts).
+  const resting = new Map<string, ReturnType<typeof setTimeout>>()
+  useChats.subscribe((now, before) => {
+    for (const chat of Object.values(now.chats)) {
+      if (chat === before.chats[chat.id] || !chat.ready || chat.status !== 'idle' || !chat.items.length) continue
+      clearTimeout(resting.get(chat.id))
+      resting.set(
+        chat.id,
+        setTimeout(() => {
+          resting.delete(chat.id)
+          const settled = getChat(chat.id)
+          if (settled?.ready && settled.status === 'idle') void keepChat(settled)
+        }, 1500),
+      )
+    }
+  })
   gateway.onEvent(onEvent)
   gateway.onRequest(onServerRequest)
   gateway.onEvent((ev) => {

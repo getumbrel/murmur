@@ -1,5 +1,6 @@
 import { Orb } from '@/ui/orb'
 import { Button } from '@/ui/button'
+import { sinceWords } from '@/features/home/time'
 
 /** Something you followed a link to isn't there: a sleeping orb, what happened, and one way on. */
 export function NotFound({
@@ -11,8 +12,9 @@ export function NotFound({
 }: {
   title: string
   body: string
-  action: string
-  onAction: () => void
+  /** One way on, where there is one. */
+  action?: string
+  onAction?: () => void
   hue?: number
 }) {
   return (
@@ -20,9 +22,11 @@ export function NotFound({
       <Orb hue={hue} size={72} state="offline" />
       <h1 className="mt-5 text-title font-semibold tracking-[-0.02em] text-balance">{title}</h1>
       <p className="mt-1 max-w-72 text-subhead text-pretty text-ink-2">{body}</p>
-      <Button className="mt-7" variant="secondary" onClick={onAction}>
-        {action}
-      </Button>
+      {action && (
+        <Button className="mt-7" variant="secondary" onClick={onAction}>
+          {action}
+        </Button>
+      )}
     </div>
   )
 }
@@ -35,6 +39,19 @@ export function CantOpen({ onRetry }: { onRetry: () => void }) {
       <button type="button" onClick={onRetry} className="pressable font-medium text-accent">
         Try again
       </button>
+    </p>
+  )
+}
+
+/**
+ * The chat can't be read right now, so these are its messages as this device
+ * last saw them (state/kept.ts): said quietly over the message box, where the
+ * newest of them end, and gone the moment the chat is read.
+ */
+export function LastSeen({ at }: { at: number }) {
+  return (
+    <p role="status" className="animate-fade pb-2 text-center text-footnote text-balance text-ink-3">
+      As you last saw it, {sinceWords(at)}
     </p>
   )
 }

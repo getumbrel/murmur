@@ -11,7 +11,9 @@ import { useCallback, useEffect, useState } from 'react'
 import { create } from 'zustand'
 import { hermesHeaders, SESSION_CHECK } from '@/hermes/rest'
 import { stopGateway } from '@/hermes/gateway'
-import { adoptHermes, browserHermes, forgetForEveryHermes, forgetHermesStorage, HERMES_GONE, tabHermes } from '@/hermes/instance'
+import { adoptHermes, browserHermes, forgetForEveryHermes, forgetHermesStorage, HERMES_GONE, scoped, tabHermes } from '@/hermes/instance'
+import { forgetKept, forgetKeptFor } from '@/state/kept'
+import { openedKept } from '@/lib/keep-app'
 
 export type ConnectionMode = 'token' | 'password' | 'sso' | 'unknown'
 /** How a Hermes behind a sign-in lets people in: a password, single sign-on, or both. */
@@ -92,8 +94,40 @@ async function callList<T = HermesList>(method: string, path: string, body?: unk
   throw new Error((data?.error as string | undefined) ?? `Murmur returned ${res.status}`)
 }
 
+// The Hermes this browser was last connected to, as Murmur's server described
+// it, so the app can open on it without waiting for a server that may not
+// answer (away from home, say). Kept when it worked; let go when the server
+// says it's no longer the one to open on (it needs signing in to again, it's
+// too old, or there's none chosen). A Hermes that's only down, or slow to
+// answer, is still the one: the app opens on it and says it can't reach it.
+// Signing out forgets it, like the roster.
+const KEPT_KEY = 'murmur:connection'
+
+function keptConnection(): HermesConnection | undefined {
+  try {
+    const kept = JSON.parse(localStorage.getItem(scoped(KEPT_KEY)) ?? 'null') as HermesConnection | null
+    return kept?.status === 'connected' ? kept : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function keepConnection(connection: HermesConnection) {
+  try {
+    if (connection.status === 'connected' && !connection.outdated) localStorage.setItem(scoped(KEPT_KEY), JSON.stringify(connection))
+    else if (connection.status !== 'unreachable' || connection.outdated || connection.source === 'default')
+      localStorage.removeItem(scoped(KEPT_KEY))
+  } catch {
+    // No storage here: the next open waits for the server.
+  }
+  return connection
+}
+
+/** The connection query's start: what was kept, shown now and asked for now (timeless, like the kept roster). */
+export const connectionStart = { initialData: keptConnection, initialDataUpdatedAt: 0 }
+
 export const connectionApi = {
-  get: () => call('GET', '/murmur/connection'),
+  get: () => call('GET', '/murmur/connection').then(keepConnection),
   test: (req: ConnectionRequest, signal?: AbortSignal) => call('POST', '/murmur/connection/test', req, signal),
   save: (req: ConnectionRequest) => call('PUT', '/murmur/connection', req),
   reset: () => call('DELETE', '/murmur/connection'),
@@ -122,7 +156,7 @@ export const connectionsApi = {
  */
 export function useHermesConnection() {
   const qc = useQueryClient()
-  const query = useQuery({ queryKey: connectionKey, queryFn: connectionApi.get, staleTime: 15_000 })
+  const query = useQuery({ queryKey: connectionKey, queryFn: connectionApi.get, staleTime: 15_000, ...connectionStart })
 
   const switched = (next: HermesConnection) => {
     // A first run sets up the Hermes it was already showing: carry on with it.
@@ -142,8 +176,8 @@ export function useHermesConnection() {
 // ── Several Hermes ──────────────────────────────────────────────────────────
 
 /** Every Hermes this Murmur knows, with each one's status, and which this browser uses. */
-export function useHermesList() {
-  return useQuery({ queryKey: connectionsKey, queryFn: connectionsApi.list, staleTime: 15_000 })
+export function useHermesList(enabled = true) {
+  return useQuery({ queryKey: connectionsKey, queryFn: connectionsApi.list, staleTime: 15_000, enabled })
 }
 
 /** The list, plus adding, renaming, changing and removing. Switching is `switchHermes`. */
@@ -176,6 +210,7 @@ export function useHermesManager() {
     mutationFn: (id: string) => connectionsApi.remove(id),
     onSuccess: (next, id) => {
       forgetHermesStorage(id)
+      forgetKeptFor(id)
       settle(next)
       // Removed the one in use: the server has moved this browser on.
       if (id === tabHermes()) {
@@ -279,14 +314,32 @@ export function needsConnectionSetup(c: HermesConnection | undefined) {
 
 export type MurmurSession = { required: boolean; signedIn: boolean }
 
+/**
+ * Forget what this browser kept to open quickly and to show when nothing can
+ * be reached: the roster (state/agents.ts), which Hermes it was on, and the
+ * chats and their lists (state/kept.ts). They have names and conversations in
+ * them, for each Hermes.
+ */
+async function forgetAll() {
+  forgetForEveryHermes('murmur:roster')
+  forgetForEveryHermes(KEPT_KEY)
+  await forgetKept()
+}
+
 export function useMurmurSession() {
   const [session, setSession] = useState<MurmurSession | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
+    // The page itself came from this device because the server didn't answer: no waiting on it again.
+    if (openedKept) setSession((s) => s ?? { required: false, signedIn: true })
     try {
-      const res = await fetch('/murmur/session', { cache: 'no-store' })
-      setSession(res.ok ? ((await res.json()) as MurmurSession) : { required: false, signedIn: true })
+      // A server that's out of reach can leave a request hanging for a minute; this is asked before anything is drawn.
+      const res = await fetch('/murmur/session', { cache: 'no-store', signal: AbortSignal.timeout(4000) })
+      const session = res.ok ? ((await res.json()) as MurmurSession) : { required: false, signedIn: true }
+      // Signed out (here or by the cookie running out): what this device kept of the chats goes too.
+      if (session.required && !session.signedIn) await forgetAll()
+      setSession(session)
     } catch {
       // Murmur's server is unreachable; let the app show its own offline state.
       setSession({ required: false, signedIn: true })
@@ -324,8 +377,7 @@ export function useMurmurSession() {
 
   const signOut = useCallback(async () => {
     await fetch('/murmur/logout', { method: 'POST' }).catch(() => {})
-    // The roster kept for a quick open (state/agents.ts) has names and chat titles in it, for each Hermes.
-    forgetForEveryHermes('murmur:roster')
+    await forgetAll()
     location.reload()
   }, [])
 

@@ -3,8 +3,9 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { fileURLToPath } from 'node:url'
 import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
-import { extname, join, resolve } from 'node:path'
+import { extname, join, relative, resolve, sep } from 'node:path'
 import { brotliCompressSync, constants, gzipSync } from 'node:zlib'
+import { createHash } from 'node:crypto'
 
 // In development the Murmur server (npm run dev:server, :3000) proxies Hermes;
 // Vite forwards those paths to it so the browser stays same-origin. Host is
@@ -57,8 +58,48 @@ function precompress(): Plugin {
   }
 }
 
+/**
+ * Tells the service worker (public/sw.js) what this build is made of, so it
+ * can keep the app on the device and open it when the server can't be reached:
+ * every file but the page itself, source maps and the worker, and a version
+ * that changes when any of them does. Runs before `precompress`, which
+ * compresses the worker as written here.
+ */
+function keepApp(): Plugin {
+  const HOLE = 'const SHELL = null'
+  let outDir = 'dist'
+  const walk = (dir: string): string[] =>
+    readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(dir, e.name)) : [join(dir, e.name)]))
+  return {
+    name: 'murmur:keep-app',
+    apply: 'build',
+    configResolved(config) {
+      outDir = resolve(config.root, config.build.outDir)
+    },
+    closeBundle: {
+      order: 'pre',
+      sequential: true,
+      handler() {
+        const worker = join(outDir, 'sw.js')
+        const source = readFileSync(worker, 'utf8')
+        if (!source.includes(HOLE)) throw new Error('public/sw.js has no place for the build’s files')
+        const hash = createHash('sha256')
+        const files = walk(outDir)
+          .map((file) => ({ file, path: '/' + relative(outDir, file).split(sep).join('/') }))
+          .filter(({ path }) => !['/index.html', '/sw.js'].includes(path) && !/\.(map|br|gz)$/.test(path))
+          .sort((a, b) => a.path.localeCompare(b.path))
+        for (const { file, path } of [...files, { file: join(outDir, 'index.html'), path: '/index.html' }]) {
+          hash.update(path).update(readFileSync(file))
+        }
+        const shell = { version: hash.digest('hex').slice(0, 12), files: files.map((f) => f.path) }
+        writeFileSync(worker, source.replace(HOLE, `const SHELL = ${JSON.stringify(shell)}`))
+      },
+    },
+  }
+}
+
 export default defineConfig({
-  plugins: [react(), tailwindcss(), precompress()],
+  plugins: [react(), tailwindcss(), keepApp(), precompress()],
   define: { __MURMUR_VERSION__: JSON.stringify(version) },
   resolve: {
     alias: [

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { followSwitches, liftCurtain, needsConnectionSetup, useHermesConnection, useMurmurSession } from '@/state/connection'
 import { useSetup } from '@/state/setup'
+import { useAway } from '@/state/reach'
 import { restartBoot } from '@/state/readiness'
 import { adoptHermes, browserHermes, tabHermes } from '@/hermes/instance'
 import { SetupFlow } from '@/features/onboarding/setup-flow'
@@ -76,6 +77,7 @@ function Access({ children }: { children: ReactNode }) {
  */
 export function HermesGate({ children }: { children: ReactNode }) {
   const { connection, isLoading, refetch } = useHermesConnection()
+  const away = useAway()
   const [done, setDone] = useState(false)
   // Backed out of a slow first start to choose something else.
   const [rechoosing, setRechoosing] = useState(false)
@@ -112,7 +114,8 @@ export function HermesGate({ children }: { children: ReactNode }) {
     if (choosing) setInFlow(true)
   }, [choosing])
 
-  if (isLoading) return <div className="min-h-dvh bg-bg" />
+  // Murmur's server can't be reached (the app came from this device): there's no answer to wait for.
+  if (isLoading && !away) return <div className="min-h-dvh bg-bg" />
   if (choosing || inFlow) {
     return (
       <SetupFlow

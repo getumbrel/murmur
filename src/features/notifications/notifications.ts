@@ -8,6 +8,7 @@
 
 import { create } from 'zustand'
 import { desktop } from '@/lib/desktop'
+import { worker } from '@/lib/keep-app'
 import { ios, standalone } from '@/lib/device'
 
 const KEY = 'murmur:notifications'
@@ -115,13 +116,7 @@ async function server<T>(method: string, path: string, body?: unknown): Promise<
 
 // ── Pushes ──────────────────────────────────────────────────────────────────
 
-let registering: Promise<ServiceWorkerRegistration> | undefined
-
-/** The service worker that shows pushes (public/sw.js), registered once and ready. */
-const worker = () =>
-  (registering ??= navigator.serviceWorker
-    .register('/sw.js', { updateViaCache: 'none' })
-    .then(() => navigator.serviceWorker.ready))
+// The service worker that shows pushes (public/sw.js) is `worker()`, from lib/keep-app.ts.
 
 const keyBytes = (key: string) => Uint8Array.from(atob(key.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0))
 

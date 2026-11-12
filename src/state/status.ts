@@ -14,6 +14,7 @@ import { secretAskText } from '@shared/notes.ts'
 import type { OrbState } from '@/ui/orb'
 import { scoped } from '@/hermes/instance'
 import { listProfiles } from '@/hermes/compat'
+import { useAway } from '@/state/reach'
 
 type Remote = { status: 'working' | 'waiting'; title: string }
 
@@ -178,6 +179,7 @@ function activityOf(chat: Chat): string {
 /** The agent's state across all its chats: waiting beats working beats error. */
 export function useAgentStatus(agentId: string): AgentStatus {
   wireStatus()
+  const away = useAway()
   const local = useChats(
     useShallow((s) => {
       let best: Chat | undefined
@@ -196,6 +198,8 @@ export function useAgentStatus(agentId: string): AgentStatus {
       return { id, status: id ? s.remote[id].status : undefined, finished: !!s.finished[agentId] }
     }),
   )
+  // Nothing of it can be reached: asleep, whatever it was doing when the connection went.
+  if (away) return { state: 'offline' }
   if (local.state === 'waiting' || remote.status === 'waiting') {
     return { state: 'waiting', activity: 'Needs you', chatId: local.state === 'waiting' ? local.chatId : remote.id }
   }

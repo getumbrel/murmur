@@ -17,7 +17,7 @@ import { EmptyState } from '@/features/chat-screen/empty-state'
 import { ContinuedFrom } from '@/features/chat-screen/continued'
 import { splitQuote } from '@/features/media/parse'
 import { takeOpeningLine } from '@/features/chat-screen/opening-line'
-import { CantOpen, NotFound } from '@/features/chat-screen/not-found'
+import { CantOpen, LastSeen, NotFound } from '@/features/chat-screen/not-found'
 import { ThreadSkeleton } from '@/features/chat-screen/thread-skeleton'
 import { useOrbState } from '@/features/chat-screen/use-orb-state'
 import { GoalChip } from '@/features/chat-screen/goal-chip'
@@ -62,6 +62,7 @@ import {
   type Voice,
 } from '@/features/talk/voice-setup'
 import { useConnection } from '@/hermes/gateway'
+import { useAway } from '@/state/reach'
 import { useChatUsage } from '@/state/insights'
 import { useRunOf } from '@/state/routines'
 import { placeFindings, useChatFindings } from '@/state/findings'
@@ -180,7 +181,9 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
   // A routine's run reads as a report, under what the routine is.
   const runOfChat = useRunOf(agentId, id)
   const run = useRunItems(runOfChat, useSolo(chat?.items ?? (starting ? [starting] : [])))
-  const online = useConnection((s) => s.state === 'open' || !s.everOpened)
+  // Asleep while nothing of the agent can be reached (state/reach.ts).
+  const away = useAway()
+  const online = useConnection((s) => s.state === 'open' || !s.everOpened) && !away
   // Your message is waiting for the connection: Hermes hasn't got it, so nothing's thinking about it yet.
   const connected = useConnection((s) => s.state === 'open')
   const held = !connected && !!run.items.findLast((i) => i.kind === 'user' && i.pending)
@@ -871,7 +874,14 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
                 onAction={readUnread}
               />
             ) : agent && (isDraft || (chat?.ready && !busy)) ? (
-              <EmptyState agent={agent} orb={typing ? 'listening' : 'idle'} onStart={(prompt) => post(prompt)} />
+              <EmptyState agent={agent} orb={!online ? 'offline' : typing ? 'listening' : 'idle'} onStart={(prompt) => post(prompt)} />
+            ) : id && away && chat?.unkept && !chat.ready ? (
+              // Out of reach, and not one this device kept: nothing to try, it comes by itself.
+              <NotFound
+                hue={agent?.hue}
+                title="This chat isn’t on this device"
+                body={`It’ll be here as soon as ${agent ? clip(agent.name) : 'your agent'} is back in reach.`}
+              />
             ) : id && !chat?.ready ? (
               <ThreadSkeleton stalled={chat?.stalled} onRetry={readUnread} />
             ) : null
@@ -921,11 +931,12 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
                 <>
                   {shut && !!chat?.items.length && <CantOpen onRetry={readUnread} />}
                   <StillRunning
-                    // While it's replying the agent is plainly at work; this is for after.
-                    running={busy ? undefined : chat?.running}
+                    // While it's replying the agent is plainly at work; this is for after. Out of reach, it can't be told or stopped.
+                    running={busy || away ? undefined : chat?.running}
                     stopping={chat?.stopping}
                     onStop={() => id && void stopRunning(id).catch(() => toast.error('Couldn’t stop that. Try again.'))}
                   />
+                  {!!chat?.asOf && <LastSeen at={chat.asOf} />}
                   {agent && <ChatConnectCard runtimeId={chat?.runtimeId} agent={agent} />}
                   {umbrelKey.above(text)}
                 </>

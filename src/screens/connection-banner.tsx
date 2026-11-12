@@ -1,18 +1,21 @@
 import { AnimatePresence, MotionConfig, motion, useReducedMotion } from 'motion/react'
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
-import { useQuery } from '@tanstack/react-query'
 import { useConnection } from '@/hermes/gateway'
-import { connectionApi, connectionKey, useHermesList } from '@/state/connection'
+import { useAway, type Away } from '@/state/reach'
+import { useHermesList } from '@/state/connection'
 import { Spinner } from '@/ui/spinner'
 import { Orb } from '@/ui/orb'
 import { cn } from '@/lib/cn'
-import { isBuiltinHermes, isUmbrelHermes } from '@/features/connection/hermes-connection-form'
+import { useAwayWords } from '@/features/connection/away-words'
 import { HermesPicker } from '@/features/connection/switcher'
 
 // A Dynamic Island for the connection. It only speaks up when Hermes has been
 // unreachable for a moment (blips under 1.5s never show): a small capsule drops
 // in and springs open to say what's happening. If Hermes stays away it says
-// what to check. When Hermes is back it says "Connected" with a tick, folds
+// what to check; if it's this device that's offline, or Murmur itself that
+// can't be reached (away from home, say), it says that instead, and that the
+// chats on screen are as they were last seen (state/reach.ts, state/kept.ts).
+// When Hermes is back it says "Connected" with a tick, folds
 // back into the capsule, and goes. It hangs just below the header bar, so the
 // chat's name stays readable, centred on the conversation (beside the sidebar
 // on wide screens, `inset` from the left). While the splash is up (`hold`) it
@@ -26,11 +29,13 @@ const swap = { duration: 0.18, ease: [0.16, 1, 0.3, 1] } as const
 
 export function ConnectionBanner({ inset = 0, hold = false }: { inset?: number; hold?: boolean }) {
   const { state, everOpened } = useConnection()
+  const away = useAway()
   // Idle is before the first dial (Connect to Hermes is up): nothing's away yet.
-  return <Island phase={usePhase(state !== 'open' && state !== 'idle', everOpened, hold)} inset={inset} />
+  return <Island phase={usePhase(state !== 'open' && state !== 'idle', everOpened, hold, !!away)} away={away} inset={inset} />
 }
 
-function usePhase(down: boolean, everOpened: boolean, hold: boolean) {
+/** `away`: it's known what's out of reach, and that it's worth saying (state/reach.ts). */
+function usePhase(down: boolean, everOpened: boolean, hold: boolean, away: boolean) {
   const [phase, setPhase] = useState<Phase>('hidden')
   const shown = useRef(false)
   shown.current = phase === 'connecting' || phase === 'reconnecting' || phase === 'lost'
@@ -54,47 +59,56 @@ function usePhase(down: boolean, everOpened: boolean, hold: boolean) {
       return
     }
     if (hold) return
+    // Still away: say what's out of reach and what to check, not just "reconnecting".
+    if (away) return setPhase('lost')
     const waited = Date.now() - since.current
     const trying = everOpened ? 'reconnecting' : 'connecting'
     const show = setTimeout(() => setPhase((p) => (p === 'lost' ? p : trying)), Math.max(0, 1500 - waited))
-    // Still away: say what to check, not just "reconnecting". Sooner when it
-    // was never reached at all.
-    const give = setTimeout(() => setPhase('lost'), Math.max(0, (everOpened ? 12_000 : 6000) - waited))
-    return () => {
-      clearTimeout(show)
-      clearTimeout(give)
-    }
-  }, [down, everOpened, hold])
+    return () => clearTimeout(show)
+  }, [down, everOpened, hold, away])
 
   return phase
 }
 
 /** The pill itself; `phase` drives it (exported for the UI lab). */
-export function Island({ phase, inset = 0 }: { phase: Phase; inset?: number }) {
+export function Island({ phase, away = 'hermes', inset = 0 }: { phase: Phase; away?: Away; inset?: number }) {
   // Open as a capsule first, then widen; fold back before leaving.
   const [open, setOpen] = useState(false)
   const visible = phase !== 'hidden'
   useEffect(() => {
     if (!visible) return setOpen(false)
-    const t = phase === 'back' ? setTimeout(() => setOpen(false), 1500) : setTimeout(() => setOpen(true), 140)
-    return () => clearTimeout(t)
+    // Back: open to say "Connected" (it may have folded to its face meanwhile), then fold.
+    const show = setTimeout(() => setOpen(true), 140)
+    const fold = phase === 'back' ? setTimeout(() => setOpen(false), 1500) : undefined
+    return () => {
+      clearTimeout(show)
+      clearTimeout(fold)
+    }
   }, [visible, phase])
 
-  // The Umbrel's own Hermes app, not merely an address from the environment:
-  // a standalone Docker run sets HERMES_URL too, and has no Umbrel to check.
-  const current = useQuery({
-    queryKey: connectionKey,
-    queryFn: connectionApi.get,
-    enabled: visible,
-    staleTime: 60_000,
-  }).data
-  const umbrel = isUmbrelHermes(current)
-  // Murmur's own: nothing to check but Murmur itself.
-  const builtin = isBuiltinHermes(current)
+  // Offline, or Murmur out of reach: there's nothing to check and it may last
+  // a train ride, so once it's said the island goes, out of the way of what's
+  // being read. The sleeping Buddies go on saying it, and a chat says it's as
+  // it was last seen. It comes back to say "Connected".
+  const resting = phase === 'lost' && away !== 'hermes'
+  const [said, setSaid] = useState(false)
+  useEffect(() => {
+    if (!resting) return setSaid(false)
+    const fold = setTimeout(() => setOpen(false), 6000)
+    const leave = setTimeout(() => setSaid(true), 6400)
+    return () => {
+      clearTimeout(fold)
+      clearTimeout(leave)
+    }
+  }, [resting, away])
+
+  const [title, body] = useAwayWords(away, visible)!
 
   // With another Hermes to go to, the island offers the way there: it hangs
   // where the phone's home keeps its switcher, and a chat has none.
-  const elsewhere = (useHermesList().data?.connections.length ?? 0) > 1
+  // Hermes is the one away: Murmur's server is there to say what else it knows.
+  const hermes = away === 'hermes'
+  const elsewhere = (useHermesList(hermes).data?.connections.length ?? 0) > 1 && hermes
   const [picking, setPicking] = useState(false)
 
   return (
@@ -108,7 +122,7 @@ export function Island({ phase, inset = 0 }: { phase: Phase; inset?: number }) {
       >
         <AnimatePresence>
           {/* Steps aside while the picker it opened is up; the list says the same. */}
-          {visible && !picking && (
+          {visible && !picking && !(resting && said) && (
             <Pill key="pill">
               {/* Icon and words crossfade together, in place, stacked in one
                   cell: the pill keeps the old size until the old words have
@@ -147,14 +161,8 @@ export function Island({ phase, inset = 0 }: { phase: Phase; inset?: number }) {
                               elsewhere ? 'max-w-[12.25rem]' : 'max-w-[15.5rem]',
                             )}
                           >
-                            <span className="block text-white">
-                              {builtin ? 'Murmur’s built-in Hermes isn’t responding' : 'Can’t reach Hermes'}
-                            </span>
-                            {builtin
-                              ? 'Try restarting Murmur.'
-                              : umbrel
-                                ? 'Make sure the Hermes Agent app is running on your Umbrel.'
-                                : 'Make sure Hermes is running. Murmur keeps trying.'}
+                            <span className="block text-white">{title}</span>
+                            {body}
                           </Hug>
                           {elsewhere && (
                             <button

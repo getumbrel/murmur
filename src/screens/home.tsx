@@ -7,6 +7,8 @@ import { Button, IconButton } from '@/ui/button'
 import { Orb } from '@/ui/orb'
 import { ByUmbrel, MurmurVersion, MurmurWordmark } from '@/ui/brand'
 import { useAgents } from '@/state/agents'
+import { useAway } from '@/state/reach'
+import { useAwayWords } from '@/features/connection/away-words'
 import { useIsWide } from '@/lib/use-media'
 import { cn } from '@/lib/cn'
 import { useAgentActions } from '@/features/home/actions'
@@ -254,6 +256,9 @@ function WideEmpty() {
     if (solo) navigate(`/chat/${solo.id}/new`, { replace: true })
   }, [solo, navigate])
   const hue = agents?.find((a) => a.isDefault)?.hue ?? 278
+  // Nobody to pick while they're out of reach: it says so here for as long as it lasts.
+  const away = useAway()
+  const words = useAwayWords(away)
   if (solo) return null
   return (
     <div
@@ -266,17 +271,21 @@ function WideEmpty() {
           className="pointer-events-none absolute -inset-16 rounded-full bg-[radial-gradient(closest-side,var(--accent-soft),transparent)]"
         />
         <span>
-          <Orb hue={hue} size={112} seed="home" />
+          <Orb hue={hue} size={112} seed="home" state={away ? 'offline' : 'idle'} />
         </span>
       </div>
-      <h1 className="mt-9 text-title font-semibold tracking-[-0.02em] text-balance">Pick an agent to start chatting</h1>
+      <h1 className="mt-9 text-title font-semibold tracking-[-0.02em] text-balance">
+        {words?.[0] ?? 'Pick an agent to start chatting'}
+      </h1>
       <p className="mt-1.5 max-w-80 text-balance text-subhead text-ink-2">
-        Or make a new one for something you do often.
+        {words?.[1] ?? 'Or make a new one for something you do often.'}
       </p>
-      <Button variant="secondary" className="mt-7" onClick={actions.newAgent}>
-        <Plus size={18} strokeWidth={2} className="-ml-1" />
-        New agent
-      </Button>
+      {!away && (
+        <Button variant="secondary" className="mt-7" onClick={actions.newAgent}>
+          <Plus size={18} strokeWidth={2} className="-ml-1" />
+          New agent
+        </Button>
+      )}
       {actions.sheets}
     </div>
   )

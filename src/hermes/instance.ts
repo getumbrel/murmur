@@ -37,7 +37,8 @@ export const tabHermes = () => current
 // unprefixed storage, so nothing anyone had before is lost. The server never
 // lets two of these exist at once.
 const ORIGINAL = new Set(['env', 'main', 'default'])
-const scopeOf = (id: string | null) => (!id || ORIGINAL.has(id) ? '' : id)
+/** What a Hermes's things are filed under on this device: '' for the first. */
+export const scopeOf = (id: string | null) => (!id || ORIGINAL.has(id) ? '' : id)
 
 /**
  * A local-storage key for this Hermes's things: 'murmur:seen' stays as it is
