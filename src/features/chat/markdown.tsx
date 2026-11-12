@@ -8,6 +8,7 @@ import {
 } from 'streamdown'
 import { Check, Copy } from 'lucide-react'
 import { useCopy } from './use-copy'
+import { isDrawn, lines, type Token } from './code-lines'
 import { HostImage, RemoteImage } from '@/features/media/blocks'
 import { useMediaContext } from '@/features/media/context'
 import { linkOut } from '@/lib/device'
@@ -19,7 +20,6 @@ import './markdown.css'
 
 // Shiki is heavy: load the highlighter only once a code block appears.
 type CodePlugin = typeof import('@streamdown/code').code
-type Token = { content: string; htmlStyle?: Record<string, string> }
 let plugin: Promise<CodePlugin> | undefined
 const loadPlugin = () => (plugin ??= import('@streamdown/code').then((m) => m.code))
 const THEMES: ['github-light', 'github-dark'] = ['github-light', 'github-dark']
@@ -56,12 +56,13 @@ function CodeBlock({ className, children }: { className?: string; children?: Rea
   const { copied, copy } = useCopy()
 
   // While streaming the highlight lags a token or two behind; paint what's
-  // highlighted and show the fresh tail as plain text so nothing flickers.
+  // highlighted and show the fresh remainder as plain text so nothing flickers.
   const fresh = result && code.startsWith(result.code) ? result : null
-  const tail = fresh ? code.slice(fresh.code.length) : code
+  const rows = useMemo(() => lines(code, fresh?.tokens), [code, fresh])
+  const drawn = useMemo(() => isDrawn(code), [code])
 
   return (
-    <div className="md-code" data-streamdown="code-block">
+    <div className="md-code" data-streamdown="code-block" data-drawn={drawn || undefined}>
       <div className="md-code-head">
         <span>{language || 'code'}</span>
         <button
@@ -77,17 +78,18 @@ function CodeBlock({ className, children }: { className?: string; children?: Rea
       </div>
       <pre>
         <code>
-          {fresh?.tokens.map((line, i) => (
-            <span key={i} className="md-line">
-              {line.map((t, j) => (
+          {rows.map((row, i) => (
+            <span key={i} className="md-line" style={{ '--hang': row.hang } as CSSProperties}>
+              {row.tokens.map((t, j) => (
                 <span key={j} style={t.htmlStyle as CSSProperties}>
                   {t.content}
                 </span>
               ))}
-              {i < fresh.tokens.length - 1 && '\n'}
+              {row.rest}
+              {/* The line break stays in the text, so selecting by hand copies every line, empty ones too. */}
+              {i < rows.length - 1 && '\n'}
             </span>
           ))}
-          {tail}
         </code>
       </pre>
     </div>

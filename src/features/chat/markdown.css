@@ -151,11 +151,32 @@
   letter-spacing: 0;
   tab-size: 2;
   font-variant-ligatures: none;
+  /* Long lines fold to fit, so nothing hides off the side. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .md-code pre code {
   display: block;
+}
+/* Each line is its own block; where it folds, the rest tucks in under it. */
+.md-line {
+  display: block;
+  min-height: 1.65em;
+  padding-left: calc(var(--hang, 2) * 1ch);
+  text-indent: calc(var(--hang, 2) * -1ch);
+}
+/* Anything drawn with characters keeps its shape and scrolls, like a table. */
+.md-code[data-drawn] pre {
+  white-space: pre;
+  overflow-wrap: normal;
+}
+.md-code[data-drawn] pre code {
   width: max-content;
   min-width: 100%;
+}
+.md-code[data-drawn] .md-line {
+  padding-left: 0;
+  text-indent: 0;
 }
 
 @media (prefers-color-scheme: dark) {
