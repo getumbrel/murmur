@@ -7,7 +7,7 @@
 # ── Build ───────────────────────────────────────────────────────────────────
 # The web build is platform-independent, so it always runs natively on the
 # build machine (no emulation when cross-building arm64/amd64).
-FROM --platform=$BUILDPLATFORM node:22-alpine3.24@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402 AS build
+FROM --platform=$BUILDPLATFORM node:22-alpine3.24@sha256:5b05da3f938f1c604b24c633646d48805a6667f378cb4908438616f3cc48a0bf AS build
 # An empty folder for the runtime stage's /data, which runs no commands.
 RUN mkdir /data
 WORKDIR /app
@@ -17,7 +17,7 @@ COPY . .
 RUN npm run build
 
 # The Node binary for the target platform.
-FROM node:22-alpine3.24@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402 AS node
+FROM node:22-alpine3.24@sha256:5b05da3f938f1c604b24c633646d48805a6667f378cb4908438616f3cc48a0bf AS node
 
 # ── Runtime ─────────────────────────────────────────────────────────────────
 # The server has no dependencies and Node 22.18+ runs TypeScript natively, so
