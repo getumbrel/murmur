@@ -1,7 +1,7 @@
 import { animate, motion, useMotionValue, useTransform, type MotionValue } from 'motion/react'
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { useMedia } from '@/lib/use-media'
-import { backInstantly, previousScroll } from '@/lib/transitions'
+import { backInstantly, previousScroll, useArrival } from '@/lib/transitions'
 
 // Drag a conversation back from the left edge, the way iOS does: the page
 // follows your finger with the list waiting beneath it, then either springs
@@ -29,16 +29,17 @@ export function SwipeBack({ children, under, off }: { children: ReactNode; under
   const progress = useTransform(x, (v) => Math.min(1, v / width()))
   const underX = useTransform(progress, (p) => `${(p - 1) * 25}%`)
   const dim = useTransform(progress, (p) => 0.4 * (1 - p))
+  // Carried off screen, until the page beneath arrives.
+  const leaving = useRef(false)
 
   useEffect(() => {
     if (!enabled) return
     let g: { id: number; x0: number; y0: number; last: number; t: number; v: number; on: boolean } | undefined
-    let leaving = false
     const start = (e: TouchEvent) => {
       const t = e.touches[0]
       // A page still springing home can be caught by its edge, wherever it is.
       const at = x.get()
-      if (e.touches.length !== 1 || t.clientX > EDGE + at || g || leaving) return
+      if (e.touches.length !== 1 || t.clientX > EDGE + at || g || leaving.current) return
       x.stop()
       g = { id: t.identifier, x0: t.clientX - at, y0: t.clientY, last: t.clientX, t: e.timeStamp, v: 0, on: at > 0 }
       setPhase(at > 0 ? 'drag' : 'ready')
@@ -71,7 +72,7 @@ export function SwipeBack({ children, under, off }: { children: ReactNode; under
       if (!on) return setPhase('off')
       const w = width()
       if (x.get() > w * 0.4 || (v > 400 && x.get() > 12)) {
-        leaving = true
+        leaving.current = true
         animate(x, w, { ...settle, velocity: Math.max(0, v) }).then(backInstantly)
       } else {
         animate(x, 0, { ...settle, velocity: v }).then(() => g || setPhase('off'))
@@ -92,6 +93,18 @@ export function SwipeBack({ children, under, off }: { children: ReactNode; under
       removeEventListener('touchcancel', end)
     }
   }, [enabled, x])
+
+  // The page beneath has arrived. Unless that's Home, it lands in this same
+  // wrapper (the pushed pages share it: Pushed in src/app.tsx), still carried
+  // off screen, behind a copy that can't be used. It takes back the swiped
+  // page's place, and the copy goes.
+  const arrival = useArrival()
+  useLayoutEffect(() => {
+    if (!leaving.current) return
+    leaving.current = false
+    x.jump(0)
+    setPhase('off')
+  }, [arrival, x])
 
   const dragging = phase === 'drag'
   return (
