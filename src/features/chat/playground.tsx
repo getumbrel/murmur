@@ -18,6 +18,8 @@ import { AppsIcon, CardIcon, IconChip, PasswordsIcon } from '@/ui/icons'
 import { toolLabel } from './tool-labels'
 import { StillRunning } from '@/features/chat-screen/still-running'
 import type { Running } from './running'
+import { AskingChip, StopAskingSheet } from '@/features/chat-screen/asking'
+import type { Unasked } from './asking'
 
 const ATLAS: Speaker = { id: 'atlas', name: 'Atlas', hue: 278 }
 
@@ -51,6 +53,8 @@ const MORE: PlusItem[] = [
     onSelect: () => toast('The Passwords sheet opens on its cards here.'),
   },
 ]
+/** Read before the page tidies its address. */
+const asking0 = new URLSearchParams(location.search).get('asking')
 const JUNIPER: Speaker = { id: 'juniper', name: 'Juniper', hue: 160 }
 const WREN: Speaker = { id: 'wren', name: 'Wren', hue: 28 }
 
@@ -724,6 +728,9 @@ function Chat({ scene }: { scene: Scene }) {
   }
 
   const agentHue = group ? undefined : ATLAS.hue
+  // Stop asking in this chat (?asking=off | everywhere starts with it already so; ?asking=sheet, agreeing to it).
+  const [unasked, setUnasked] = useState<Unasked>(asking0 === 'off' ? 'chat' : asking0 === 'everywhere' ? 'everywhere' : false)
+  const [stopAsking, setStopAsking] = useState<{ requestId?: string } | null>(asking0 === 'sheet' ? {} : null)
 
   return (
     <div className="flex h-dvh flex-col" style={agentHue ? ({ '--hue': agentHue } as CSSProperties) : undefined}>
@@ -743,13 +750,31 @@ function Chat({ scene }: { scene: Scene }) {
             </p>
           </div>
         </div>
+        {!group && (
+          <div className="pointer-events-none absolute inset-x-0 top-full pt-2">
+            <AskingChip unasked={unasked} agent={ATLAS} onAskAgain={() => (setUnasked(false), toast.success('Atlas will ask first again'))} />
+          </div>
+        )}
       </header>
+      {!group && (
+        <StopAskingSheet
+          open={!!stopAsking}
+          agent={ATLAS}
+          onClose={() => setStopAsking(null)}
+          onConfirm={async () => {
+            await new Promise((r) => setTimeout(r, 400))
+            setUnasked('chat')
+            if (stopAsking?.requestId) approve(stopAsking.requestId, 'once')
+          }}
+        />
+      )}
       <Thread
         className="flex-1"
         items={items}
         busy={busy}
         agent={group ? undefined : ATLAS}
         onApprove={approve}
+        onStopAsking={!group && unasked === false ? (requestId) => setStopAsking({ requestId }) : undefined}
         onAnswer={answer}
         onSecret={(requestId, value) =>
           window.setTimeout(

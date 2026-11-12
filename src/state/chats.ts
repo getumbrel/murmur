@@ -22,6 +22,7 @@ import { fileRef, parseUserMessage, picturesIn, rememberUpload, type UserAttachm
 import { toolMedia } from '@/features/media/tool-media'
 import { shotOf } from '@/features/machine/shots'
 import { foundIn, pendingIn } from '@/features/umbrel/finds'
+import { unaskedOf, type Unasked } from '@/features/chat/asking'
 import { firstHermes, hermesIds, hermesOf, homeOf, mainOn, noteHome, scoped } from '@/hermes/instance'
 import { forgetFrames } from '@/state/browser-frames'
 import { held, hold, release, type Held } from '@/state/outbox'
@@ -80,6 +81,12 @@ export type Chat = {
   summarized?: boolean
   /** What the agent is working toward (/goal), while one is set. */
   goal?: Goal
+  /**
+   * Whether the agent goes ahead here without asking for your OK first: in
+   * this chat, because you said so, or everywhere, because asking is off in
+   * Hermes itself. False while it asks; unset until Hermes has said.
+   */
+  unasked?: Unasked
   /** Counts the times you've been sweet to the agent (thanks, <3), so its face can show it. */
   vibes?: number
   /** A turn begun elsewhere (a helper back, say) that this page hasn't shown yet: working, for lists. */
@@ -543,12 +550,14 @@ async function catchUpTurn(id: string, live = true, before = new Set(getChat(id)
 
 // ── Opening and creating chats ──────────────────────────────────────────────
 
+type LiveInfo = Parameters<typeof unaskedOf>[0]
+
 type ResumeResult = {
   session_id: string
   running?: boolean
   status?: string
   inflight?: { assistant?: string; streaming?: boolean }
-  info?: { model?: string; provider?: string; reasoning_effort?: string; title?: string }
+  info?: { model?: string; provider?: string; reasoning_effort?: string; title?: string } & LiveInfo
   todo_state?: { todos?: unknown; revision?: number } | null
   /** An app the agent asked to connect, still waiting on the person (state/hosted-apps-chat.ts). */
   pending_connection?: ConnectionRequestPayload | null
@@ -817,6 +826,7 @@ async function resume(id: string, first: boolean) {
       model: res.info?.model ?? c.model,
       provider: res.info?.provider ?? c.provider,
       reasoning: res.info?.reasoning_effort ?? c.reasoning,
+      unasked: unaskedOf(res.info) ?? c.unasked,
     }
   })
   // Back on with a reply under way that this page wasn't in: it began while the page was off, and
@@ -934,7 +944,7 @@ async function readGoal(id: string) {
   }
 }
 
-type CreateResult = { session_id: string; stored_session_id: string; info?: { model?: string; provider?: string } }
+type CreateResult = { session_id: string; stored_session_id: string; info?: { model?: string; provider?: string } & LiveInfo }
 
 /** Start a fresh chat with an agent. Hermes only saves it once the first message is sent. */
 export async function createChat(
@@ -971,6 +981,7 @@ export async function createChat(
         model: res.info?.model,
         provider: res.info?.provider,
         reasoning: opts.reasoning,
+        unasked: unaskedOf(res.info),
       },
     },
   }))
@@ -1911,6 +1922,26 @@ export async function setChatModel(id: string, model: string, provider: string) 
   if (reasoning) await onChat(id, 'config.set', { key: 'reasoning', value: reasoning }).catch(() => {})
 }
 
+/**
+ * Let the agent go ahead in this chat without asking for your OK, or have it
+ * ask again. Hermes keeps it with the chat, so it holds on every device and
+ * after a restart. Throws (with the chat as it was) if Hermes didn't take it,
+ * or asking stayed off anyway: off for all of Hermes, the chat's switch isn't what decides.
+ */
+export async function setChatUnasked(id: string, on: boolean) {
+  const was = getChat(id)?.unasked
+  patch(id, () => ({ unasked: on ? 'chat' : false }))
+  try {
+    const res = await onChat<{ value?: string }>(id, 'config.set', { key: 'yolo', value: on ? 'on' : 'off', scope: 'session' })
+    if ((res.value === '1') !== on) throw new Error('Hermes kept it as it was')
+    // What Hermes said since is what holds (its `session.info` follows the switch).
+    if (!on && getChat(id)?.unasked) throw new Error('Asking is off for every chat')
+  } catch (e) {
+    patch(id, (c) => (c.unasked === (on ? 'chat' : false) ? { unasked: was } : undefined))
+    throw e
+  }
+}
+
 export async function setChatReasoning(id: string, value: string, remember = true) {
   await onChat(id, 'config.set', { key: 'reasoning', value })
   patch(id, () => ({ reasoning: value }))
@@ -2593,6 +2624,7 @@ function onEvent(ev: GatewayEvent) {
         provider: (payload.provider as string) ?? c.provider,
         reasoning: (payload.reasoning_effort as string) ?? c.reasoning,
         title: (payload.title as string) || c.title,
+        unasked: unaskedOf(payload) ?? c.unasked,
       }))
 
     case 'request.cancel': {

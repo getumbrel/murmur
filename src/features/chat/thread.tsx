@@ -358,6 +358,8 @@ const cameBack = (h: Of<'helper'>, wake: Of<'wake'>) =>
 
 type Handlers = {
   onApprove: (requestId: string, choice: ApprovalChoice) => void
+  /** Offers, on a request's "…", to stop asking in this chat: opens the sheet that agrees to it. */
+  onStopAsking?: (requestId: string) => void
   onAnswer: (requestId: string, answers: Record<string, string>) => void
   /** A masked answer (a login, a code, a key); empty for "not now". */
   onSecret?: (requestId: string, value: string) => void
@@ -509,6 +511,7 @@ export function Thread({
   const stable = useMemo<Handlers>(
     () => ({
       onApprove: (id, choice) => latest.current.onApprove(id, choice),
+      onStopAsking: (id) => latest.current.onStopAsking?.(id),
       onAnswer: (id, answers) => latest.current.onAnswer(id, answers),
       onSecret: (id, value) => latest.current.onSecret?.(id, value),
       onRetry: () => latest.current.onRetry?.(),
@@ -931,6 +934,7 @@ export function Thread({
                               isNew={isNew(row.id)}
                               folded={folded.get(row.id)}
                               onApprove={stable.onApprove}
+                              onStopAsking={handlers.onStopAsking ? stable.onStopAsking : undefined}
                               onAnswer={stable.onAnswer}
                               onSecret={handlers.onSecret ? stable.onSecret : undefined}
                               // Trying again asks your last message again: a turn Hermes started isn't one of those.
@@ -1280,6 +1284,7 @@ const Turn = memo(function Turn({
   folded,
   className,
   onApprove,
+  onStopAsking,
   onAnswer,
   onSecret,
   onRetry,
@@ -1453,7 +1458,7 @@ const Turn = memo(function Turn({
                 case 'hand':
                   return who && <HandCard key={block.id} item={block.item} agent={who} site={site} hue={hue} seed={seed} />
                 case 'approval':
-                  return <ApprovalCard key={block.id} item={block.item} hue={hue} seed={seed} onApprove={onApprove} />
+                  return <ApprovalCard key={block.id} item={block.item} hue={hue} seed={seed} onApprove={onApprove} onStopAsking={onStopAsking} />
                 case 'clarify':
                   return (
                     <ClarifyCard

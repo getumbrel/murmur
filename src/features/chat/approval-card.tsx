@@ -33,11 +33,14 @@ export const ApprovalCard = memo(function ApprovalCard({
   hue,
   seed,
   onApprove,
+  onStopAsking,
 }: {
   item: Item
   hue: number
   seed?: string
   onApprove: (requestId: string, choice: ApprovalChoice) => void
+  /** Where the chat can stop asking altogether, the card's "…" offers it. */
+  onStopAsking?: (requestId: string) => void
 }) {
   const pending = item.status === 'pending'
   // Settled while you watched (not loaded that way): the receipt marks the moment.
@@ -45,7 +48,7 @@ export const ApprovalCard = memo(function ApprovalCard({
   return (
     <Swap id={pending ? 'card' : 'receipt'}>
       {pending ? (
-        <Card item={item} hue={hue} seed={seed} onApprove={onApprove} />
+        <Card item={item} hue={hue} seed={seed} onApprove={onApprove} onStopAsking={onStopAsking} />
       ) : (
         <Receipt item={item} fresh={watched.current} />
       )}
@@ -58,11 +61,13 @@ function Card({
   hue,
   seed,
   onApprove,
+  onStopAsking,
 }: {
   item: Item
   hue: number
   seed?: string
   onApprove: (id: string, c: ApprovalChoice) => void
+  onStopAsking?: (id: string) => void
 }) {
   const [sent, setSent] = useState<ApprovalChoice>()
   const has = (c: ApprovalChoice) => item.choices.includes(c)
@@ -70,6 +75,11 @@ function Card({
     setSent(c)
     onApprove(item.requestId, c)
   }
+  // What "…" holds: this kind of thing for the rest of the chat, and (for a command, never an
+  // email or a card, which are each looked at) not being asked in this chat at all.
+  const forChat = has('session') && !item.email
+  const stopAsking = onStopAsking && !item.email && !item.payment
+  const option = 'flex h-10 w-full items-center rounded-md px-3 text-subhead whitespace-nowrap hover:bg-fill-1'
   const button = (c: ApprovalChoice, label: string, variant: 'primary' | 'secondary') =>
     has(c) && (c === 'once' || c === 'deny' || !item.email) && (
       <Button
@@ -92,7 +102,7 @@ function Card({
       <div className="flex items-center gap-3">
         <Orb hue={hue} size={28} state="waiting" seed={seed} />
         <h3 className="min-w-0 flex-1 text-subhead font-semibold tracking-[-0.01em]">{item.title}</h3>
-        {has('session') && !item.email && (
+        {(forChat || stopAsking) && (
           <Popover.Root>
             <Popover.Trigger asChild>
               <IconButton label="More options" size="sm" className="-my-1 -mr-1.5" disabled={!!sent}>
@@ -105,15 +115,20 @@ function Card({
                 sideOffset={6}
                 className="z-50 animate-fade rounded-lg bg-elevated p-1 shadow-float ring-[0.5px] ring-line-strong"
               >
-                <Popover.Close asChild>
-                  <button
-                    type="button"
-                    onClick={() => choose('session')}
-                    className="flex h-10 w-full items-center rounded-md px-3 text-subhead hover:bg-fill-1"
-                  >
-                    Allow for this chat
-                  </button>
-                </Popover.Close>
+                {forChat && (
+                  <Popover.Close asChild>
+                    <button type="button" onClick={() => choose('session')} className={option}>
+                      Allow for this chat
+                    </button>
+                  </Popover.Close>
+                )}
+                {stopAsking && (
+                  <Popover.Close asChild>
+                    <button type="button" onClick={() => onStopAsking(item.requestId)} className={option}>
+                      Stop asking in this chat…
+                    </button>
+                  </Popover.Close>
+                )}
               </Popover.Content>
             </Popover.Portal>
           </Popover.Root>

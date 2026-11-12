@@ -23,6 +23,7 @@ import { CantOpen, LastSeen, NotFound } from '@/features/chat-screen/not-found'
 import { ThreadSkeleton } from '@/features/chat-screen/thread-skeleton'
 import { useOrbState } from '@/features/chat-screen/use-orb-state'
 import { GoalChip } from '@/features/chat-screen/goal-chip'
+import { ASK_AGAIN, AskAgainIcon, AskingChip, StopAskingIcon, StopAskingSheet } from '@/features/chat-screen/asking'
 import { StillRunning } from '@/features/chat-screen/still-running'
 import { useLoved } from '@/features/chat-screen/hearts'
 import { BackBadge, backHint, useElsewhere } from '@/features/chat-screen/elsewhere'
@@ -73,6 +74,7 @@ import { useFinePointer, useIsWide } from '@/lib/use-media'
 import { useArrival, useUpFrom } from '@/lib/transitions'
 import {
   answerApproval,
+  setChatUnasked,
   answerQuestion,
   answerSecret,
   askAside,
@@ -397,6 +399,8 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
   // What the agent remembers of this chat and what it's cost, in a sheet from the menu.
   const usage = useChatUsage(chat).data
   const [info, setInfo] = useState(false)
+  // Agreeing to stop asking in this chat; from a request's own "…", that request is allowed with it.
+  const [stopAsking, setStopAsking] = useState<{ requestId?: string } | null>(null)
   // From the chat itself: Hermes's own count (`compressions`) goes up for a summary it then refuses.
   const summarized = useMemo(
     () => !!chat?.summarized || items.some((i) => i.kind === 'compaction' && i.status === 'done'),
@@ -722,6 +726,22 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
     find.done()
     if (fine) composer.current?.focus()
   }
+  // Going ahead without asking, for this chat: offered once Hermes has said where it stands
+  // (one that doesn't say can't do it), and not where asking is off for all of Hermes.
+  const unasked = chat?.unasked
+  const askAgain = () => {
+    if (!id) return
+    setChatUnasked(id, false).then(
+      () => toast.success(`${agent ? clip(agent.name) : 'Your agent'} will ask first again`),
+      () => toast.error('Couldn’t turn asking back on. Check that Hermes is running, then try again.'),
+    )
+  }
+  const asking =
+    unasked === false
+      ? [{ label: 'Stop asking…', icon: StopAskingIcon, onSelect: () => setStopAsking({}) }]
+      : unasked === 'chat'
+        ? [{ label: ASK_AGAIN, icon: AskAgainIcon, onSelect: askAgain }]
+        : []
   const menu = useChatMenu({
     text: () => {
       if (!agent || !hasMessages) return
@@ -734,6 +754,7 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
     more: id
       ? [
           { label: 'Chat info', icon: Info, onSelect: () => setInfo(true) },
+          ...asking,
           ...options.map((o, i) => ({
             label: o.label,
             icon: o.icon,
@@ -820,7 +841,12 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
           onNewChat={newChat}
           onOpenAgent={openAgent}
           vibes={chat?.vibes}
-          below={<GoalChip goal={goal} onAction={onGoal} />}
+          below={
+            <div className="flex flex-col gap-1.5">
+              <GoalChip goal={goal} onAction={onGoal} />
+              <AskingChip unasked={unasked} agent={agent} onAskAgain={askAgain} />
+            </div>
+          }
           backBadge={<BackBadge unread={elsewhere.unread} waiting={elsewhere.waiting} />}
           backHint={backHint(elsewhere.unread, elsewhere.waiting)}
           menu={wide && hasMessages && <ChatMenuButton menu={menu} />}
@@ -857,10 +883,13 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
           }
           media={media}
           // The header floats over the messages; they scroll up beneath it.
+          // Room under the header for what hangs there: a goal, "Not asking first", or both.
           className={
-            goal
-              ? 'flex-1 [&_[role=log]]:pt-[calc(6rem+env(safe-area-inset-top))]'
-              : 'flex-1 [&_[role=log]]:pt-[calc(3.5rem+env(safe-area-inset-top))]'
+            goal && unasked
+              ? 'flex-1 [&_[role=log]]:pt-[calc(8.375rem+env(safe-area-inset-top))]'
+              : goal || unasked
+                ? 'flex-1 [&_[role=log]]:pt-[calc(6rem+env(safe-area-inset-top))]'
+                : 'flex-1 [&_[role=log]]:pt-[calc(3.5rem+env(safe-area-inset-top))]'
           }
           emptyState={
             reading ? (
@@ -895,6 +924,7 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
             ) : null
           }
           onApprove={(requestId, choice) => id && answerApproval(id, requestId, choice)}
+          onStopAsking={unasked === false ? (requestId) => setStopAsking({ requestId }) : undefined}
           onAnswer={(requestId, answers) => id && answerQuestion(id, requestId, answers)}
           onSecret={(requestId, value) => id && answerSecret(id, requestId, value)}
           // A fresh reply to the message Hermes already saved, rather than a second copy of it.
@@ -973,6 +1003,17 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
         />
 
         <ChatMenu menu={menu} />
+        <StopAskingSheet
+          open={!!stopAsking}
+          agent={agent}
+          onClose={() => setStopAsking(null)}
+          onConfirm={async () => {
+            if (!id) return
+            await setChatUnasked(id, true)
+            // Asked from a request: that's the first thing it goes ahead with.
+            if (stopAsking?.requestId) answerApproval(id, stopAsking.requestId, 'once')
+          }}
+        />
         {agent && (
           <RenameChatSheet
             agent={agent}
