@@ -523,12 +523,12 @@ async function catchUp(id: string, live: boolean, before = new Set(getChat(id)?.
  * A turn begun elsewhere, brought in as it starts. Hermes saves a wake's
  * message just after it starts the turn, so look again a few times, keeping
  * what streams in meanwhile; the turn's end catches up on anything still missing.
+ * Not `live`: a turn joined part-way on a new connection, whose steps so far are read too.
  */
-async function catchUpTurn(id: string) {
-  const before = new Set(getChat(id)?.items.map((i) => i.id))
+async function catchUpTurn(id: string, live = true, before = new Set(getChat(id)?.items.map((i) => i.id))) {
   for (const wait of [0, 250, 500, 1000, 2000]) {
     if (wait) await new Promise((resolve) => setTimeout(resolve, wait))
-    if (!begunElsewhere.has(id) || (await catchUp(id, true, before))) return
+    if (!begunElsewhere.has(id) || (await catchUp(id, live, before))) return
   }
 }
 
@@ -775,12 +775,16 @@ async function resume(id: string, first: boolean) {
   } finally {
     attaching--
   }
+  // Hermes replays what a page missed only on the live connection it was on, from the last thing
+  // it heard there. On another one (Hermes let that one go while no page was on it), nothing is.
+  const anew = res.session_id !== chat.runtimeId
   bindRuntime(id, res.session_id)
   restoreChatConnect(res.session_id, res.pending_connection)
   if (!attaching) parked.clear()
   const busy = res.running || ['working', 'streaming', 'starting'].includes(res.status ?? '')
   // A message sent while we asked started a turn this answer doesn't know about.
   const fresher = (asked.get(id) ?? 0) >= since
+  const before = new Set(getChat(id)?.items.map((i) => i.id))
   patch(id, (c) => {
     // Steps from history with no result are still going only if the turn is.
     let items = busy
@@ -806,6 +810,14 @@ async function resume(id: string, first: boolean) {
       reasoning: res.info?.reasoning_effort ?? c.reasoning,
     }
   })
+  // Back on with a reply under way that this page wasn't in: it began while the page was off, and
+  // its start may never get here. Bring in what was asked, and on a new connection the steps so
+  // far too (on the same one they're replayed). Its end brings in what started it if that isn't
+  // saved yet.
+  if (busy && !first && !fresher && (anew || !wasBusy)) {
+    begunElsewhere.add(id)
+    void catchUpTurn(id, !anew, before).catch(() => {})
+  }
   // Finished while we were away: give any replay a moment, then catch up on
   // turns it couldn't bring back. The turn this page was in counts as ended
   // only once its end arrives, which bumps `turns`.
@@ -2718,6 +2730,26 @@ function cancelApprovals(payload: P) {
   })
 }
 
+/** Get a chat back on its live connection. One that can't be for now gets on when it's next used. */
+const reattach = (id: string) => void attach(id).catch(() => patch(id, () => ({ runtimeId: undefined })))
+
+/**
+ * Hermes let a chat's live connection go: no page was on it for a while (every
+ * one of them dropped off at once, say), or it sat unused. Hermes tells every
+ * page, whenever it gets to it. The chat on screen, or one mid-reply, gets back
+ * on at once, so the next reply reaches this page from its start; the rest wait
+ * until they're used.
+ */
+function reclaimed(runtimeId: string) {
+  const id = runtimeToStored.get(runtimeId)
+  runtimeToStored.delete(runtimeId)
+  const chat = id ? getChat(id) : undefined
+  // Told after this page got back on: the connection it has now is another one, and stays.
+  if (!chat || chat.runtimeId !== runtimeId) return
+  patch(chat.id, () => ({ runtimeId: undefined }))
+  if (viewing.has(chat.id) || isBusy(chat)) reattach(chat.id)
+}
+
 let wired = false
 
 export function wireChats() {
@@ -2744,12 +2776,7 @@ export function wireChats() {
   gateway.onEvent(onEvent)
   gateway.onRequest(onServerRequest)
   gateway.onEvent((ev) => {
-    if (ev.type === 'session.reclaimed') {
-      const runtimeId = String((ev as { payload?: P }).payload?.session_id ?? '')
-      const id = runtimeToStored.get(runtimeId)
-      runtimeToStored.delete(runtimeId)
-      if (id) patch(id, () => ({ runtimeId: undefined }))
-    }
+    if (ev.type === 'session.reclaimed') reclaimed(String((ev as { payload?: P }).payload?.session_id ?? ''))
     if (ev.type === 'approval.cancelled') cancelApprovals(((ev as { payload?: P }).payload ?? {}) as P)
   })
   // After a reconnect, re-attach the chat on screen and any that are busy, so
@@ -2764,7 +2791,7 @@ export function wireChats() {
     for (const chat of Object.values(useChats.getState().chats)) {
       if (!chat.runtimeId) continue
       if (viewing.has(chat.id) || isBusy(chat)) {
-        attach(chat.id).catch(() => patch(chat.id, () => ({ runtimeId: undefined })))
+        reattach(chat.id)
       } else {
         runtimeToStored.delete(chat.runtimeId)
         patch(chat.id, () => ({ runtimeId: undefined }))
