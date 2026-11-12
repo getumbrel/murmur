@@ -43,8 +43,7 @@ concurrency:
   group: desktop-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# Actions are pinned to commit SHAs (the tag is in the comment); Dependabot
-# keeps both up to date.
+# Actions are pinned to commit SHAs (the tag is in the comment).
 jobs:
   build:
     name: ${{ matrix.name }}
@@ -181,9 +180,14 @@ jobs:
           retention-days: 7
           compression-level: 0
 
+  # Nothing is published while something that ships is missing a fix.
+  security:
+    if: github.ref_type == 'tag'
+    uses: ./.github/workflows/security.yml
+
   release:
     if: github.ref_type == 'tag'
-    needs: build
+    needs: [build, security]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:

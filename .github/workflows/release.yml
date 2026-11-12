@@ -15,10 +15,14 @@ permissions:
 env:
   IMAGE: ghcr.io/getumbrel/murmur
 
-# Actions are pinned to commit SHAs (the tag is in the comment); Dependabot
-# keeps both up to date.
+# Actions are pinned to commit SHAs (the tag is in the comment).
 jobs:
+  # Nothing is published while something that ships is missing a fix.
+  security:
+    uses: ./.github/workflows/security.yml
+
   image:
+    needs: security
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

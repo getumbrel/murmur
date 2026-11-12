@@ -8,8 +8,7 @@ on:
 permissions:
   contents: read
 
-# Actions are pinned to commit SHAs (the tag is in the comment); Dependabot
-# keeps both up to date.
+# Actions are pinned to commit SHAs (the tag is in the comment).
 jobs:
   check:
     runs-on: ubuntu-latest

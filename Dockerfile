@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1
 
-# Base images are pinned by digest so a tag rebuilds the same bytes, and
-# Dependabot (.github/dependabot.yml) proposes the bumps. The runtime stage's
-# Alpine release must stay the one the Node image is built on (3.24).
+# Base images are pinned by digest so a tag rebuilds the same bytes; move them
+# by hand when the Security workflow says one is missing a fix. The runtime
+# stage's Alpine release must stay the one the Node image is built on (3.24).
 
 # ── Build ───────────────────────────────────────────────────────────────────
 # The web build is platform-independent, so it always runs natively on the
