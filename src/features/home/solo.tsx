@@ -7,7 +7,8 @@ import { cn } from '@/lib/cn'
 import { useAgents, type Agent } from '@/state/agents'
 import { useGroupSummaries } from '@/state/groups'
 import { useAgentStatus } from '@/state/status'
-import { useAway } from '@/state/reach'
+import { useAwayOn } from '@/state/reach'
+import { hermesOf } from '@/hermes/instance'
 import { ChatList } from '@/features/agent-page/chat-list'
 import { useAgentChatList } from '@/features/agent-page/chats'
 import { noteArrivals } from './roster'
@@ -56,7 +57,7 @@ function AgentCard({ agent }: { agent: Agent }) {
   const status = useAgentStatus(agent.id)
   const busy = Boolean(status.activity && status.state !== 'idle' && status.state !== 'done')
   // Out of reach, it says so here for as long as it lasts: the island only says it once (state/reach.ts).
-  const away = useAway()
+  const away = useAwayOn(hermesOf(agent.id))
   const asleep = away === 'offline' ? 'Asleep while you’re offline' : away ? 'Out of reach right now' : undefined
   const line = asleep ?? (busy ? status.activity! : agent.role || (agent.isDefault ? 'Your main agent' : 'Your agent'))
   return (

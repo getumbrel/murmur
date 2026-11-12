@@ -12,6 +12,8 @@ import { cn } from '@/lib/cn'
 import { haptic } from '@/lib/haptics'
 import { isDesktop } from '@/lib/desktop'
 import { useAgents, type Agent } from '@/state/agents'
+import { useSeveral, useServer } from '@/state/connection'
+import { hermesOf } from '@/hermes/instance'
 import { openSignInTab, showSignIn } from '@/state/apps'
 import {
   agreeToHostedApps,
@@ -20,8 +22,8 @@ import {
   disconnectHostedApp,
   NOUS_PRIVACY_URL,
   openHostedSignIn,
+  hostedConnection,
   useHostedConnection,
-  useHostedConnections,
   type HostedAccount,
   type HostedApp,
 } from '@/state/hosted-apps'
@@ -33,34 +35,53 @@ import { AppHeader, Heading, Link, Pair, RowStatus, ease, lift, OutLink } from '
 // signs the person in and calls the app for the agent, so the app's data
 // passes through Nous's servers. That's asked once per Hermes, with the path
 // drawn, before the first one connects. An app connected this way is there
-// for every agent on this Hermes: there's no switch per agent, only
+// for every agent on that Hermes: there's no switch per agent, only
 // Disconnect, which removes the account at Nous too.
 
 const live = (phase: string | undefined) => phase === 'starting' || phase === 'signing-in' || phase === 'blocked'
 
-/** Starts connecting an app through Nous, from a tap (its sign-in tab opens in the tap). */
-export function startHosted(qc: ReturnType<typeof useQueryClient>, app: HostedApp, account?: HostedAccount) {
-  if (live(useHostedConnections.getState()[app.slug]?.phase)) return
+/** Starts connecting an app through Nous on a Hermes, from a tap (its sign-in tab opens in the tap). */
+export function startHosted(qc: ReturnType<typeof useQueryClient>, hermes: string | null, app: HostedApp, account?: HostedAccount) {
+  if (live(hostedConnection(hermes, app.slug)?.phase)) return
   const tab = openSignInTab(app.name)
-  void connectHostedApp(qc, app, { tab, account }).catch(() => tab?.close())
+  void connectHostedApp(qc, hermes, app, { tab, account }).catch(() => tab?.close())
+}
+
+/**
+ * Who else an app through Nous is for: the agent's neighbours on its Hermes,
+ * and that Hermes's name where there are others to tell it from.
+ */
+function useNeighbours(agent: Agent) {
+  const hermes = hermesOf(agent.id)
+  const all = useAgents().data ?? []
+  const server = useServer(hermes)?.name
+  const several = useSeveral()
+  return {
+    hermes,
+    others: all.filter((a) => a.id !== agent.id && hermesOf(a.id) === hermes).length,
+    /** " on VPS", or nothing with one Hermes. */
+    where: several && server ? ` on ${server}` : '',
+  }
 }
 
 // ── In the list ─────────────────────────────────────────────────────────────
 
 /** An app connected through Nous: what it's for, quietly where it comes from, and the way in. */
 export function HostedRow({
+  hermes,
   app,
   account,
   label,
   onOpen,
 }: {
+  hermes: string | null
   app: HostedApp
   account: HostedAccount
   /** Several accounts of one app: say which this is. */
   label?: boolean
   onOpen: () => void
 }) {
-  const busy = live(useHostedConnection(app.slug)?.phase)
+  const busy = live(useHostedConnection(hermes, app.slug)?.phase)
   const what = label ? account.alias || account.label : app.summary || account.label
   const line: ReactNode = busy ? (
     'Signing in…'
@@ -105,7 +126,7 @@ export function HostedView({
   onBack: () => void
   onClose: () => void
 }) {
-  const connection = useHostedConnection(app.slug)
+  const connection = useHostedConnection(hermesOf(agent.id), app.slug)
   // Asked here: the question stays while the answer is kept and the path draws, until the sign-in takes over.
   const [asked, setAsked] = useState(agreed === false)
   if (agreed === false && !asked) setAsked(true)
@@ -118,7 +139,7 @@ export function HostedView({
         <Spinner />
       </div>
     )
-  return <Landing app={app} />
+  return <Landing agent={agent} app={app} />
 }
 
 /** Where the app's data goes, drawn: the app, Nous in the middle, the agent. It fills once the person agrees. */
@@ -158,6 +179,7 @@ function Consent({ agent, app, onBack }: { agent: Agent; app: HostedApp; onBack:
   const qc = useQueryClient()
   const reduce = useReducedMotion()
   const agents = useAgents().data
+  const hermes = hermesOf(agent.id)
   const [agreeing, setAgreeing] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -169,7 +191,12 @@ function Consent({ agent, app, onBack }: { agent: Agent; app: HostedApp; onBack:
     setError(null)
     const drawn = new Promise((r) => setTimeout(r, reduce ? 0 : 720))
     try {
-      await agreeToHostedApps(qc, (agents ?? [agent]).map((a) => a.id))
+      // Every agent on that Hermes gets them: the answer is for the Hermes.
+      await agreeToHostedApps(
+        qc,
+        hermes,
+        (agents ?? [agent]).map((a) => a.id).filter((id) => hermesOf(id) === hermes),
+      )
     } catch {
       tab?.close()
       setAgreeing(false)
@@ -178,7 +205,7 @@ function Consent({ agent, app, onBack }: { agent: Agent; app: HostedApp; onBack:
     haptic('tick')
     // The path draws itself before the sign-in takes over.
     await drawn
-    void connectHostedApp(qc, app, { tab }).catch(() => tab?.close())
+    void connectHostedApp(qc, hermes, app, { tab }).catch(() => tab?.close())
   }
 
   return (
@@ -223,7 +250,7 @@ function Consent({ agent, app, onBack }: { agent: Agent; app: HostedApp; onBack:
 }
 
 /** An app through Nous, agreed to but not connected (back from a cancelled sign-in). */
-function Landing({ app }: { app: HostedApp }) {
+function Landing({ agent, app }: { agent: Agent; app: HostedApp }) {
   const qc = useQueryClient()
   return (
     <div className="pb-1">
@@ -231,7 +258,7 @@ function Landing({ app }: { app: HostedApp }) {
         {app.description || `Connects through Nous Research.`}
       </AppHeader>
       <div className="mt-7">
-        <Button variant="accent" size="lg" onClick={() => startHosted(qc, app)}>
+        <Button variant="accent" size="lg" onClick={() => startHosted(qc, hermesOf(agent.id), app)}>
           Connect
         </Button>
       </div>
@@ -255,8 +282,8 @@ function Connecting({
   onClose: () => void
 }) {
   const qc = useQueryClient()
-  const connection = useHostedConnection(app.slug)!
-  const others = (useAgents().data ?? []).filter((a) => a.id !== agent.id).length
+  const { hermes, others, where } = useNeighbours(agent)
+  const connection = useHostedConnection(hermes, app.slug)!
   const phase = connection.phase
   const done = phase === 'done'
 
@@ -293,7 +320,7 @@ function Connecting({
                   variant="ghost"
                   className="text-ink-2"
                   onClick={() => {
-                    void cancelHostedConnect(qc, app.slug)
+                    void cancelHostedConnect(qc, hermes, app.slug)
                     onBack()
                   }}
                 >
@@ -312,7 +339,7 @@ function Connecting({
                   variant={phase === 'blocked' ? 'accent' : 'secondary'}
                   size="lg"
                   onClick={() =>
-                    phase === 'blocked' ? openHostedSignIn(app.slug) : connection.url && showSignIn(connection.url)
+                    phase === 'blocked' ? openHostedSignIn(hermes, app.slug) : connection.url && showSignIn(connection.url)
                   }
                 >
                   {phase === 'blocked' ? `Continue to ${app.name}` : `Open ${app.name} again`}
@@ -322,7 +349,7 @@ function Connecting({
                   variant="ghost"
                   className="text-ink-2"
                   onClick={() => {
-                    void cancelHostedConnect(qc, app.slug)
+                    void cancelHostedConnect(qc, hermes, app.slug)
                     onBack()
                   }}
                 >
@@ -334,7 +361,7 @@ function Connecting({
           {done && (
             <>
               <Heading title={`${agent.name} can now use ${app.name}`}>
-                {[app.description, others ? (others === 1 ? 'So can your other agent.' : 'So can your other agents.') : '']
+                {[app.description, others ? (others === 1 ? `So can your other agent${where}.` : `So can your other agents${where}.`) : '']
                   .filter(Boolean)
                   .join(' ')}
               </Heading>
@@ -349,7 +376,7 @@ function Connecting({
             <>
               <Heading title={`Couldn’t connect ${app.name}`}>{connection.message}</Heading>
               <div className="mt-7 grid gap-2">
-                <Button variant="accent" size="lg" onClick={() => startHosted(qc, app, account?.state === 'signin' ? account : undefined)}>
+                <Button variant="accent" size="lg" onClick={() => startHosted(qc, hermes, app, account?.state === 'signin' ? account : undefined)}>
                   Try again
                 </Button>
                 <Button size="lg" variant="ghost" className="text-ink-2" onClick={onBack}>
@@ -367,11 +394,11 @@ function Connecting({
 /** A connected app through Nous: where it comes from, signing in again, and disconnecting it everywhere. */
 function Manage({ agent, app, account, onBack }: { agent: Agent; app: HostedApp; account: HostedAccount; onBack: () => void }) {
   const qc = useQueryClient()
-  const others = (useAgents().data ?? []).length > 1
+  const { hermes, others, where } = useNeighbours(agent)
 
   const disconnect = () => {
     onBack()
-    disconnectHostedApp(qc, account, app.name).catch((e: Error) => toast.error(e.message))
+    disconnectHostedApp(qc, hermes, account, app.name).catch((e: Error) => toast.error(e.message))
   }
 
   return (
@@ -385,7 +412,7 @@ function Manage({ agent, app, account, onBack }: { agent: Agent; app: HostedApp;
             <ListRow
               title="Sign in again"
               subtitle={<span className="text-accent">{app.name} needs you to sign in</span>}
-              onClick={() => startHosted(qc, app, account)}
+              onClick={() => startHosted(qc, hermes, app, account)}
               chevron
             />
           </ListGroup>
@@ -394,7 +421,7 @@ function Manage({ agent, app, account, onBack }: { agent: Agent; app: HostedApp;
           <ListRow
             icon={<AppIcon name="nous" size={30} />}
             title="Through Nous Research"
-            subtitle={others ? 'All your agents can use it' : `${agent.name} can use it`}
+            subtitle={others ? `All your agents${where} can use it` : `${agent.name} can use it`}
           />
           <ListRow
             title="How Nous handles your data"
@@ -405,7 +432,7 @@ function Manage({ agent, app, account, onBack }: { agent: Agent; app: HostedApp;
         <ConfirmCard
           label="Disconnect"
           title={`Disconnect ${app.name}?`}
-          body={`${others ? 'None of your agents will' : `${agent.name} won’t`} be able to use it, and the account is removed from Nous Research. You can connect it again any time.`}
+          body={`${others ? `None of your agents${where} will` : `${agent.name} won’t`} be able to use it, and the account is removed from Nous Research. You can connect it again any time.`}
           confirm="Disconnect"
           onConfirm={disconnect}
         />

@@ -32,7 +32,7 @@ import {
   managedName,
   noteSetupSeen,
 } from './config.ts'
-import { addNamed, cookieFor, describe, instance, knownTargets, reload, state, type Body } from './connection.ts'
+import { addNamed, cookieFor, serversCookie, describe, instance, knownTargets, reload, state, type Body } from './connection.ts'
 import {
   builtinInstallId,
   builtinReport,
@@ -145,6 +145,7 @@ export async function handleSetup(req: http.IncomingMessage, res: http.ServerRes
     return true
   }
   if (!target) return true
+  appendCookie(res, serversCookie(req))
   appendCookie(res, cookieFor(req, target.id))
   const connection = await describe(target, true)
   const builtin = target.id === BUILTIN_ID ? await builtinAnswer() : undefined

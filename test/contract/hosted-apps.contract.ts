@@ -69,7 +69,7 @@ describe('reading, before any app is connected', () => {
     // No identity means no call to Nous: well under a round trip to anywhere.
     expect(list.ms).toBeLessThan(3000)
     expect(accounts.ms).toBeLessThan(3000)
-    expect(await readHostedAccounts()).toEqual([])
+    expect(await readHostedAccounts(null)).toEqual([])
   })
 
   it('lists Nous’s public catalog, in the shape Murmur reads', async ({ skip }) => {
@@ -80,7 +80,7 @@ describe('reading, before any app is connected', () => {
       // Offline: the answer Murmur shows as "can't reach Nous right now".
       expect((error as { code?: number }).code).toBe(5034)
       expect(reasonOf(error)).toBe('CATALOG_UNAVAILABLE')
-      expect(await readHostedCatalog()).toEqual({ available: true, apps: [], unreachable: true })
+      expect(await readHostedCatalog(null)).toEqual({ available: true, apps: [], unreachable: true })
       return skip('Nous Research can’t be reached from here')
     }
     expect(raw.connectors.length).toBeGreaterThan(0)
@@ -94,7 +94,7 @@ describe('reading, before any app is connected', () => {
       })
     }
 
-    const catalog = await readHostedCatalog()
+    const catalog = await readHostedCatalog(null)
     expect(catalog.available).toBe(true)
     expect(catalog.apps.length).toBe(raw.connectors.length)
 
@@ -214,7 +214,7 @@ describe('agents and apps through Nous', () => {
 
   it('keeps a new agent from reaching them until the person agrees', async () => {
     forgetHostedConsent()
-    expect(await hostedConsent()).toBe(false)
+    expect(await hostedConsent(null)).toBe(false)
     const agent = await createAgent({
       name: `Nous ${Date.now().toString(36)}`,
       hue: 200,
@@ -251,9 +251,9 @@ describe('agents and apps through Nous', () => {
     await hideDesktopToolsets(agent)
     expect(await disabled(agent)).toEqual(expect.arrayContaining(['catalog', 'project', HOSTED_TOOLSET]))
 
-    await recordHostedConsent()
+    await recordHostedConsent(null)
     forgetHostedConsent()
-    expect(await hostedConsent()).toBe(true)
+    expect(await hostedConsent(null)).toBe(true)
     await allowHostedApps([agent])
     expect(await disabled(agent)).toEqual(expect.arrayContaining(['catalog', 'project']))
     expect(await disabled(agent)).not.toContain(HOSTED_TOOLSET)

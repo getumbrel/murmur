@@ -9,7 +9,6 @@
 // of that changes, every 20 seconds while here, and as the tab goes. Every tab
 // says, notifications on or not: someone in Murmur needs no buzz elsewhere.
 
-import { tabHermes } from '@/hermes/instance'
 import { useNotifications } from './notifications'
 
 const IDLE_MS = 2 * 60_000
@@ -21,6 +20,8 @@ let touched = Date.now()
 /** When a reply was last coming in on screen, in front. */
 let watched = 0
 let viewing: string | undefined
+/** The Hermes what's on screen is from: two can give a chat the same id. */
+let viewingOn: string | undefined
 let replying = false
 let calling = false
 let said = ''
@@ -37,7 +38,7 @@ const body = () =>
   JSON.stringify({
     tab,
     device: useNotifications.getState().device,
-    hermes: tabHermes() ?? undefined,
+    hermes: viewing ? viewingOn : undefined,
     active: active(),
     here: here(),
     viewing,
@@ -84,10 +85,11 @@ export function touch() {
   if (state() !== was) tell()
 }
 
-/** What's on screen: a chat's or group's notification tag (shared/notes.ts), or nothing. */
-export function setViewing(tag: string | undefined) {
-  if (tag === viewing) return
+/** What's on screen: a chat's or group's notification tag (shared/notes.ts) and the Hermes it's from, or nothing. */
+export function setViewing(tag: string | undefined, hermes?: string | null) {
+  if (tag === viewing && (hermes ?? undefined) === viewingOn) return
   viewing = tag
+  viewingOn = hermes ?? undefined
   if (started) tell()
 }
 

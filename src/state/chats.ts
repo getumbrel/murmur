@@ -8,7 +8,7 @@
 
 import { create } from 'zustand'
 import { gateway, rpc, useConnection, whenOpen, type GatewayEvent, type ServerRequest } from '@/hermes/gateway'
-import { api, HermesError } from '@/hermes/rest'
+import { api, HermesError, on } from '@/hermes/rest'
 import { isMissingMethod } from '@/hermes/compat'
 import { attachmentsDir, fitPhoto, isPhoto, upload } from '@/features/media/upload'
 import { restoreChatConnect } from '@/state/hosted-apps-chat'
@@ -22,7 +22,7 @@ import { fileRef, parseUserMessage, picturesIn, rememberUpload, type UserAttachm
 import { toolMedia } from '@/features/media/tool-media'
 import { shotOf } from '@/features/machine/shots'
 import { foundIn, pendingIn } from '@/features/umbrel/finds'
-import { scoped } from '@/hermes/instance'
+import { firstHermes, hermesIds, hermesOf, homeOf, mainOn, noteHome, scoped } from '@/hermes/instance'
 import { forgetFrames } from '@/state/browser-frames'
 import { held, hold, release, type Held } from '@/state/outbox'
 import {
@@ -45,7 +45,7 @@ import { sameRunning, stillRunning, type Kept, type Running } from '@/features/c
 import { along, madeRoutine, soundsScheduled, toldIn, type Carried } from '@shared/routines.ts'
 import { reportHere } from '@/state/routines'
 import { forgetKeptChat, keepChat, keptChat } from '@/state/kept'
-import { away, useReach } from '@/state/reach'
+import { awayOn, useReach } from '@/state/reach'
 
 export type Chat = {
   id: string
@@ -130,6 +130,7 @@ function patch(id: string, fn: (c: Chat) => Partial<Chat> | void) {
 }
 
 function ensure(id: string, profile: string) {
+  noteHome(id, hermesOf(profile))
   if (!useChats.getState().chats[id]) {
     useChats.setState((s) => ({
       chats: { ...s.chats, [id]: { id, profile, items: [], status: 'idle', ready: false } },
@@ -137,8 +138,16 @@ function ensure(id: string, profile: string) {
   }
 }
 
+/** The Hermes a chat is on: its agent's. */
+const hermesOfChat = (id: string) => {
+  const chat = getChat(id)
+  return chat ? hermesOf(chat.profile) : (homeOf(id) ?? firstHermes())
+}
+
 function bindRuntime(id: string, runtimeId: string) {
   runtimeToStored.set(runtimeId, id)
+  // Calls that name only the live chat go to its Hermes (hermes/route.ts).
+  noteHome(runtimeId, hermesOfChat(id))
   patch(id, () => ({ runtimeId }))
   const waiting = parked.get(runtimeId)
   parked.delete(runtimeId)
@@ -563,7 +572,7 @@ export function openChat(id: string, profile: string, speaker?: Speaker): Promis
   const existing = opening.get(id)
   if (existing) return existing
   if (!chat.named) void readTitle(id, profile)
-  if (!chat.ready) void findKept(id)
+  if (!chat.ready) void findKept(id, profile)
   const task = (async () => {
     try {
       if (!chat.ready && !(await readHistory(id, profile, speaker))) return
@@ -630,14 +639,14 @@ async function readHistory(id: string, profile: string, speaker?: Speaker) {
 /** Chats being opened that this device kept a copy of, to show if Hermes can't be read. */
 const lastSeen = new Map<string, { items: ChatItem[]; title?: string; at: number }>()
 
-/** Looks for this device's copy of a chat being opened, and shows it at once when nothing can be reached. */
-async function findKept(id: string) {
-  const kept = await keptChat(id)
+/** Looks for this device's copy of a chat being opened, and shows it at once when its agent can't be reached. */
+async function findKept(id: string, profile: string) {
+  const kept = await keptChat(id, profile)
   const chat = getChat(id)
   if (!chat || chat.ready || !viewing.has(id)) return
   if (!kept) return patch(id, () => ({ unkept: true }))
   lastSeen.set(id, kept)
-  if (away()) showKept(id)
+  if (awayOn(hermesOf(profile))) showKept(id)
 }
 
 /** The chat as it was last seen here, while it can't be read. Nothing to do once anything of it is on screen. */
@@ -866,11 +875,12 @@ async function takeSavedTurn(id: string, since: number) {
 // but isn't reported back), so this browser remembers both and puts them back.
 
 type Pick = { model?: string; provider?: string; reasoning?: string }
-const PICK = scoped('murmur:chat-pick:')
+// Kept with the Hermes the chat is on.
+const pickKey = (id: string) => scoped('murmur:chat-pick:', hermesOfChat(id)) + id
 
 function readPick(id: string): Pick | null {
   try {
-    return JSON.parse(localStorage.getItem(PICK + id) ?? 'null') as Pick | null
+    return JSON.parse(localStorage.getItem(pickKey(id)) ?? 'null') as Pick | null
   } catch {
     return null
   }
@@ -879,8 +889,8 @@ function readPick(id: string): Pick | null {
 function savePick(id: string, next: Pick | null) {
   try {
     const merged = next && { ...readPick(id), ...next }
-    if (merged && Object.values(merged).some(Boolean)) localStorage.setItem(PICK + id, JSON.stringify(merged))
-    else localStorage.removeItem(PICK + id)
+    if (merged && Object.values(merged).some(Boolean)) localStorage.setItem(pickKey(id), JSON.stringify(merged))
+    else localStorage.removeItem(pickKey(id))
   } catch {
     /* private mode: the choice lasts as long as the chat stays live */
   }
@@ -944,6 +954,7 @@ export async function createChat(
     ...(opts.title ? { title: opts.title } : {}),
   })
   const id = res.stored_session_id
+  noteHome(id, hermesOf(profile))
   useChats.setState((s) => ({
     chats: {
       ...s.chats,
@@ -978,7 +989,7 @@ async function live(id: string) {
 
 /** Run an RPC on a chat, re-attaching once if Hermes forgot the runtime id. */
 async function onChat<T>(id: string, method: string, params: Record<string, unknown> = {}) {
-  const call = async () => rpc<T>(method, { session_id: await live(id), ...params })
+  const call = async () => rpc<T>(method, { session_id: await live(id), ...params }, undefined, hermesOfChat(id))
   try {
     return await call()
   } catch (e) {
@@ -1057,7 +1068,7 @@ export async function send(id: string, text: string, files: File[] = [], opts: S
   asked.set(id, Date.now())
   const after = Math.max(-1, ...chat.items.map((i) => rowOf(i) ?? -1))
   // Waiting for the connection, it isn't thinking yet: that starts once Hermes is there to take it.
-  const now = busy || useConnection.getState().state !== 'open' ? undefined : 'thinking'
+  const now = busy || useConnection.getState(hermesOf(chat.profile)).state !== 'open' ? undefined : 'thinking'
   patch(id, (c) => ({ items: [...c.items, item], status: now ?? c.status }))
   unsent.set(itemId, { text, files })
   hold(id, { id: itemId, text: shown, ...(files.length ? { files: files.map((f) => f.name) } : {}), after })
@@ -1093,7 +1104,7 @@ async function deliver(id: string, itemId: string, steer = false, voice?: SendOp
   const { text, files } = message
   try {
     // Held while the connection's down; it's thinking from when it goes.
-    await whenOpen()
+    await whenOpen(hermesOf(chat.profile))
     asked.set(id, Date.now())
     patch(id, (c) => (isBusy(c) ? undefined : { status: 'thinking' }))
     const refs: string[] = []
@@ -1124,12 +1135,12 @@ async function deliver(id: string, itemId: string, steer = false, voice?: SendOp
         // Onto Hermes's disk, then attached from there. (PDFs too: pdf.attach
         // needs poppler, which Hermes may not have.)
         dir ??= await attachmentsDir(chat.profile)
-        const path = await upload(file, dir, (progress) => patchAttachment(id, itemId, i, { progress })).finally(() =>
+        const path = await upload(file, dir, (progress) => patchAttachment(id, itemId, i, { progress }), hermesOf(chat.profile)).finally(() =>
           patchAttachment(id, itemId, i, { progress: undefined }),
         )
         const res = await onChat<{ path?: string; ref_path?: string; uploaded?: boolean }>(id, 'file.attach', { path })
         // Outside the chat's folder, Hermes copies it to where it already is, under a second name: ours will do.
-        if (res.uploaded && res.path) void api.delete('/api/files', { path: res.path }).catch(() => {})
+        if (res.uploaded && res.path) void api.delete('/api/files', { path: res.path }, on(hermesOf(chat.profile))).catch(() => {})
         const ref = res.uploaded ? path : res.ref_path
         if (ref) {
           refs.push(fileRef(ref))
@@ -1535,9 +1546,9 @@ type Exported = { title?: string | null; model_config?: unknown; messages?: Expo
 /** What of a chat's own row its copy keeps: how it talks to its model, and where it works. The rest starts afresh. */
 const CARRIED = ['model', 'system_prompt', 'user_id', 'cwd', 'git_branch', 'git_repo_root', 'billing_provider', 'billing_base_url', 'billing_mode']
 
-const on = (flag: unknown) => flag === true || flag === 1 || flag === '1'
+const set = (flag: unknown) => flag === true || flag === 1 || flag === '1'
 /** Still part of the conversation (rows from before these flags existed all are). */
-const inPlay = (row: ExportedRow) => row.active == null || on(row.active)
+const inPlay = (row: ExportedRow) => row.active == null || set(row.active)
 
 /** An id shaped like the ones Hermes gives its chats: the date, the time, six hex digits. */
 function newChatId() {
@@ -1547,15 +1558,15 @@ function newChatId() {
 }
 
 /**
- * Whether this Hermes can carry a chat on in a new one: it has to be able to
+ * Whether a Hermes can carry a chat on in a new one: it has to be able to
  * take a chat in. Hermes has had that since 0.22.0, and nothing says so short
  * of trying; what it added in 0.22.3 for changing chats safely (a chat's
  * revision, read here for a chat that doesn't exist) can be asked for without
  * changing anything, and a Hermes that answers has both.
  */
-export async function canContinue() {
+export async function canContinue(hermes: string | null) {
   try {
-    const snapshot = await api.get<{ exists?: boolean } | null>('/api/sessions/murmur-can-continue/mutation-snapshot')
+    const snapshot = await api.get<{ exists?: boolean } | null>('/api/sessions/murmur-can-continue/mutation-snapshot', on(hermes))
     return typeof snapshot?.exists === 'boolean'
   } catch {
     return false
@@ -1581,7 +1592,7 @@ export function carried(rows: ExportedRow[], rowId: number): ExportedRow[] | nul
     if (row.role !== 'tool') break
     through = row.id
   }
-  return rows.filter((r) => r.id <= through && (inPlay(r) || on(r.compacted)))
+  return rows.filter((r) => r.id <= through && (inPlay(r) || set(r.compacted)))
 }
 
 /**
@@ -1664,12 +1675,12 @@ export async function continueFrom(id: string, itemId: string) {
 // itself, and a name given this way reads as yours, so the copy's first
 // message lets go of it first: Hermes then names the chat for what's said.
 
-const STAND_IN = scoped('murmur:stand-in:')
+const standInKey = (id: string) => scoped('murmur:stand-in:', hermesOfChat(id)) + id
 const NUMBERED = /^(.*?) #(\d+)$/
 
 function standInOf(id: string) {
   try {
-    return localStorage.getItem(STAND_IN + id) ?? undefined
+    return localStorage.getItem(standInKey(id)) ?? undefined
   } catch {
     return undefined
   }
@@ -1677,8 +1688,8 @@ function standInOf(id: string) {
 
 function keepStandIn(id: string, title?: string) {
   try {
-    if (title) localStorage.setItem(STAND_IN + id, title)
-    else localStorage.removeItem(STAND_IN + id)
+    if (title) localStorage.setItem(standInKey(id), title)
+    else localStorage.removeItem(standInKey(id))
   } catch {
     /* storage unavailable: the name just stays */
   }
@@ -1766,7 +1777,7 @@ export async function readRunning(id: string) {
   if (!runtimeId) return
   let running: Running | undefined
   try {
-    const res = await rpc<{ processes?: Kept[] }>('process.list', { session_id: runtimeId })
+    const res = await rpc<{ processes?: Kept[] }>('process.list', { session_id: runtimeId }, undefined, hermesOfChat(id))
     running = stillRunning(res.processes, Date.now())
   } catch (e) {
     // A blip leaves what was last known. An older Hermes can't say, and one that let the chat go has nothing to say.
@@ -1865,7 +1876,7 @@ async function retry(id: string) {
   const lastUser = chat?.items.findLast((i) => i.kind === 'user')
   if (!chat || !lastUser || lastUser.kind !== 'user') return
   asked.set(id, Date.now())
-  const status = useConnection.getState().state === 'open' ? 'thinking' : 'idle'
+  const status = useConnection.getState(hermesOf(chat.profile)).state === 'open' ? 'thinking' : 'idle'
   patch(id, (c) => ({ items: c.items.filter((i) => i.kind !== 'error'), status }))
   if (unsent.has(lastUser.id)) {
     patch(id, (c) => ({ items: c.items.map((i) => (i.id === lastUser.id ? { ...i, pending: true } : i)) }))
@@ -1915,7 +1926,7 @@ export async function resetChatReasoning(id: string) {
 }
 
 export async function renameChat(id: string, title: string) {
-  await updateChat(id, getChat(id)?.profile ?? 'default', { title })
+  await updateChat(id, getChat(id)?.profile ?? mainOn(homeOf(id)), { title })
 }
 
 /** What Murmur and Hermes Desktop both keep on a stored chat. */
@@ -1991,8 +2002,9 @@ async function patchSession(id: string, profile: string, change: ChatChange & { 
 }
 
 /** Delete a stored chat, whether or not it is open here. */
-export async function deleteChat(id: string, profile = getChat(id)?.profile ?? 'default') {
-  const close = (runtimeId: string) => rpc('session.close', { session_id: runtimeId }).catch(() => {})
+export async function deleteChat(id: string, profile = getChat(id)?.profile ?? mainOn(homeOf(id))) {
+  const hermes = hermesOf(profile)
+  const close = (runtimeId: string) => rpc('session.close', { session_id: runtimeId }, undefined, hermes).catch(() => {})
   const chat = getChat(id)
   if (chat?.runtimeId) {
     await close(chat.runtimeId)
@@ -2003,13 +2015,13 @@ export async function deleteChat(id: string, profile = getChat(id)?.profile ?? '
   } catch (e) {
     // Live somewhere else (another tab, a reply still running): close it there first.
     if ((e as { code?: number }).code !== 4023) throw e
-    const live = await rpc<{ sessions: { id: string; session_key?: string }[] }>('session.active_list', {})
+    const live = await rpc<{ sessions: { id: string; session_key?: string }[] }>('session.active_list', {}, undefined, hermes)
     const match = live.sessions.find((s) => s.session_key === id)
     if (match) await close(match.id)
     await rpc('session.delete', { session_id: id, profile })
   }
   forget(id)
-  forgetKeptChat(id)
+  forgetKeptChat(id, profile)
   // The pictures of its agent's browser go with it.
   void forgetFrames(id)
   useChats.setState((s) => {
@@ -2785,11 +2797,13 @@ export function wireChats() {
   // Back in the foreground, online again, or Hermes back: history that couldn't be read is read now.
   document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && readUnread())
   window.addEventListener('online', readUnread)
-  gateway.onState((state) => {
+  gateway.onState((state, hermes) => {
     if (state !== 'open') return
     readUnread()
     for (const chat of Object.values(useChats.getState().chats)) {
       if (!chat.runtimeId) continue
+      // Only that Hermes's chats: the others' sockets never dropped.
+      if (hermesIds().length > 1 && hermesOf(chat.profile) !== hermes) continue
       if (viewing.has(chat.id) || isBusy(chat)) {
         reattach(chat.id)
       } else {

@@ -27,8 +27,7 @@ class FakeContext {
 const ctx = new FakeContext()
 vi.mock('./sounds', () => ({ audioContext: () => ctx }))
 vi.mock('./voice', () => ({ speakError: (m: string) => m }))
-vi.mock('@/hermes/rest', () => ({ api: {} }))
-vi.mock('@/hermes/instance', () => ({ HERMES_PARAM: 'hermes', tabHermes: () => undefined }))
+vi.mock('@/hermes/rest', async (real) => ({ ...(await real()), api: {} }))
 
 class FakeSocket {
   static last: FakeSocket

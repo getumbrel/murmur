@@ -8,23 +8,25 @@
 //
 // Only offered where Hermes runs on an Umbrel, which its main agent's Umbrel
 // context says (umbrel-context.ts). Agents made later get it from the main
-// agent's copy of the key.
+// agent's copy of the key. With several Hermes, it's the one on an Umbrel
+// whose agents this is about: each agent takes after its own Hermes's main.
 //
 // Other Umbrels (one at the office, reached over Tailscale) connect the same
 // way, at the address you give, each as a server of its own ("umbrel_office"),
 // so its tools, cards and links say which Umbrel they're from.
 
-import { useEffect } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useEffect, useMemo } from 'react'
+import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, HermesError } from '@/hermes/rest'
 import { rpc } from '@/hermes/gateway'
-import { scoped } from '@/hermes/instance'
+import { byHermes, firstHermes, hermesOf, isMain, mainFor, mainOn, scoped } from '@/hermes/instance'
 import { safariLink, umbrelApp } from '@/lib/device'
 import { rememberedSet, upkeep } from '@/lib/upkeep'
-import { useHermesConnection } from '@/state/connection'
+import { useHermesIds, useServer } from '@/state/connection'
 import { umbrelContextOf } from './umbrel-context'
 
-const MAIN = 'default'
+/** The main agent of the Hermes these agents live on (the first Hermes's, with none to go by). */
+const mainOf = (ids: readonly string[]) => (ids.length ? mainFor(ids[0]) : mainOn(firstHermes()))
 export const UMBREL_SERVER = 'umbrel'
 /** Where app containers reach umbrelOS (umbrel.local doesn't resolve inside one). */
 export const UMBREL_MCP_URL = 'http://10.21.0.1/mcp'
@@ -105,8 +107,11 @@ export function openUmbrelPage(url: string) {
   link.click()
 }
 
-/** The Umbrel this browser's Hermes runs on. */
-export const useUmbrel = () => umbrelOf(useHermesConnection().connection?.url)
+/** The Umbrel a Hermes runs on: an agent's (`hermesOf(agentId)`), or the one that's on an Umbrel. */
+export function useUmbrel(hermes?: string | null) {
+  const onUmbrel = useUmbrelHermes()
+  return umbrelOf(useServer(hermes === undefined ? onUmbrel : hermes)?.url)
+}
 
 const q = (profile: string) => `profile=${encodeURIComponent(profile)}`
 
@@ -158,30 +163,54 @@ export function otherUmbrelName(url: string, named?: string) {
   return `umbrel_${rest || 'other'}`
 }
 
-/** The other Umbrels, from the main agent's servers. */
-export function useOtherUmbrels(enabled = true) {
+/** The other Umbrels, from the main agent's servers: of the Hermes on an Umbrel, or of one agent's (`hermesOf(agentId)`). */
+export function useOtherUmbrels(enabled = true, hermes?: string | null) {
+  const onUmbrel = useUmbrelHermes()
+  const of = hermes === undefined ? onUmbrel : hermes
   return useQuery({
-    queryKey: ['other-umbrels'],
-    enabled,
+    queryKey: ['other-umbrels', of ?? ''],
+    enabled: enabled && of !== undefined,
     queryFn: async (): Promise<OtherUmbrel[]> =>
-      (await serversOf(MAIN)).flatMap((s) =>
+      (await serversOf(mainOn(of))).flatMap((s) =>
         isOtherUmbrel(s.name) && s.url ? [{ name: s.name, label: otherLabel(s.name), url: s.url, origin: new URL(s.url).origin }] : [],
       ),
     staleTime: 60_000,
   })
 }
 
-/** Whether this Hermes runs on an Umbrel: its main agent has the Umbrel context. */
-export function useHermesOnUmbrel() {
-  return useQuery({
-    queryKey: ['hermes-on-umbrel'],
-    queryFn: async () => {
-      const main = await api.get<Parameters<typeof umbrelContextOf>[0]>(`/api/config?${q(MAIN)}&include_defaults=false`)
-      const context = umbrelContextOf(main)
-      return context.plugin || context.skills.length > 0
-    },
-    staleTime: 10 * 60_000,
+/** Every Hermes that runs on an Umbrel: its main agent has the Umbrel context. ('' is a Hermes the server hasn't named yet.) Undefined until the first has answered. */
+function useUmbrelHermeses(): string[] | undefined {
+  const ids = useHermesIds()
+  const asked = useQueries({
+    queries: (ids.length ? ids : [null]).map((hermes) => ({
+      queryKey: ['hermes-on-umbrel', hermes ?? ''],
+      queryFn: async () => {
+        const main = await api.get<Parameters<typeof umbrelContextOf>[0]>(`/api/config?${q(mainOn(hermes))}&include_defaults=false`)
+        const context = umbrelContextOf(main)
+        return context.plugin || context.skills.length > 0
+      },
+      staleTime: 10 * 60_000,
+    })),
   })
+  const key = asked.map((a) => (a.data === undefined ? '?' : a.data ? '1' : '0')).join('')
+  return useMemo(
+    // One that can't be asked right now doesn't hold up the rest; the first is waited for, as it always was.
+    () => (key[0] === '?' && !asked[0]?.isError ? undefined : (ids.length ? ids : ['']).filter((_, i) => key[i] === '1')),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [key, ids, asked[0]?.isError],
+  )
+}
+
+/** The Hermes that runs on an Umbrel (the first that does): null when none does, undefined until that's known. */
+export function useUmbrelHermes(): string | null | undefined {
+  const on = useUmbrelHermeses()
+  return on === undefined ? undefined : on.length ? on[0] || firstHermes() : null
+}
+
+/** Whether a Hermes runs on an Umbrel: an agent's (`hermesOf(agentId)`), or any of them. */
+export function useHermesOnUmbrel(hermes?: string | null) {
+  const on = useUmbrelHermeses()
+  return { data: on === undefined ? undefined : hermes === undefined ? on.length > 0 : on.includes(hermes ?? '') }
 }
 
 export const umbrelMcpKey = (ids: readonly string[]) => ['umbrel-mcp', ...ids] as const
@@ -240,22 +269,22 @@ async function remove(profile: string, name = UMBREL_SERVER) {
   await api.delete(`/api/env?${q(profile)}`, { key: envKeyOf(name), profile }).catch(() => {})
 }
 
-/** Running chats pick up the change now rather than on their next start. */
-const reload = () => rpc('reload.mcp', { confirm: true }).catch(() => {})
+/** Running chats pick up the change now rather than on their next start. On the Hermes these agents live on. */
+const reload = (ids: readonly string[]) => rpc('reload.mcp', { confirm: true }, undefined, hermesOf(mainOf(ids))).catch(() => {})
 
 export class UmbrelKeyError extends Error {}
 /** Hermes couldn't reach the Umbrel at all: the address, not the key. */
 export class UmbrelUnreachableError extends Error {}
 
 /** Tries a key (at an address) under a name of its own, so a bad one never replaces a good one. */
-async function check(key: string, name: string, url: string) {
+async function check(main: string, key: string, name: string, url: string) {
   const trial = `${name}-check`
-  await add(MAIN, key, trial, url)
+  await add(main, key, trial, url)
   let probe: { ok: boolean; error?: string }
   try {
-    probe = await api.post<{ ok: boolean; error?: string }>(`/api/mcp/servers/${trial}/test?${q(MAIN)}`, {})
+    probe = await api.post<{ ok: boolean; error?: string }>(`/api/mcp/servers/${trial}/test?${q(main)}`, {})
   } finally {
-    await remove(MAIN, trial).catch(() => {})
+    await remove(main, trial).catch(() => {})
   }
   if (probe.ok) return
   const why = probe.error ?? ''
@@ -265,16 +294,17 @@ async function check(key: string, name: string, url: string) {
 
 /** Connects every agent to another Umbrel, once Hermes has reached it with that key. */
 export async function connectOtherUmbrel(url: string, key: string, ids: readonly string[], name = otherUmbrelName(url)) {
-  await check(key, name, url)
-  for (const id of [MAIN, ...ids.filter((id) => id !== MAIN)]) await add(id, key, name, url)
-  await reload()
+  const main = mainOf(ids)
+  await check(main, key, name, url)
+  for (const id of [main, ...ids.filter((id) => id !== main)]) await add(id, key, name, url)
+  await reload(ids)
   return name
 }
 
 /** Takes another Umbrel away from every agent. */
 export async function disconnectOtherUmbrel(name: string, ids: readonly string[]) {
-  for (const id of new Set([MAIN, ...ids])) await remove(id, name)
-  await reload()
+  for (const id of new Set([mainOf(ids), ...ids])) await remove(id, name)
+  await reload(ids)
 }
 
 /**
@@ -283,30 +313,31 @@ export async function disconnectOtherUmbrel(name: string, ids: readonly string[]
  * down, before any agent's connection changes.
  */
 export async function connectUmbrel(key: string, ids: readonly string[], onAgent?: (id: string) => void) {
-  await check(key, UMBREL_SERVER, UMBREL_MCP_URL).catch((e) => {
+  const main = mainOf(ids)
+  await check(main, key, UMBREL_SERVER, UMBREL_MCP_URL).catch((e) => {
     throw e instanceof UmbrelUnreachableError ? new UmbrelKeyError(e.message) : e
   })
-  const order = [MAIN, ...ids.filter((id) => id !== MAIN)]
+  const order = [main, ...ids.filter((id) => id !== main)]
   for (const id of order) {
     await add(id, key)
     synced.add(id)
     onAgent?.(id)
   }
-  await reload()
+  await reload(ids)
 }
 
 /** Takes the Umbrel away from every agent. */
 export async function disconnectUmbrel(ids: readonly string[]) {
   for (const id of ids) await remove(id)
   synced.clear()
-  await reload()
+  await reload(ids)
 }
 
 /** The main agent's key (for this Umbrel, or another), for agents made since. */
-async function mainKey(name = UMBREL_SERVER): Promise<string | null> {
+async function mainKey(main: string, name = UMBREL_SERVER): Promise<string | null> {
   try {
     const env = name === UMBREL_SERVER ? KEY_ENV : envKeyOf(name)
-    const { value } = await api.post<{ value?: string }>(`/api/env/reveal?${q(MAIN)}`, { key: env, profile: MAIN })
+    const { value } = await api.post<{ value?: string }>(`/api/env/reveal?${q(main)}`, { key: env, profile: main })
     return value ? findUmbrelKey(value) : null
   } catch {
     return null
@@ -329,15 +360,21 @@ async function unmarkAll(ids: string[]) {
       // Unreadable: tried again on the next load.
     }
   }
-  if (changed) await reload()
+  if (changed) await reload(ids)
 }
 
-async function catchUp(ids: string[]) {
+/** Each Hermes's agents catch up with its own main agent. */
+async function catchUp(all: string[]) {
+  for (const ids of byHermes(all).values()) await catchUpOn(ids).catch(() => {})
+}
+
+async function catchUpOn(ids: string[]) {
+  const main = mainOf(ids)
   await unmarkAll(ids)
-  const missing = ids.filter((id) => id !== MAIN && !synced.has(id))
+  const missing = ids.filter((id) => !isMain(id) && !synced.has(id))
   if (!missing.length) return
   // This Umbrel and any others the main agent has.
-  const shared = (await serversOf(MAIN)).filter((s) => (s.name === UMBREL_SERVER || isOtherUmbrel(s.name)) && s.enabled !== false && s.url)
+  const shared = (await serversOf(main)).filter((s) => (s.name === UMBREL_SERVER || isOtherUmbrel(s.name)) && s.enabled !== false && s.url)
   // Nothing to share; look again once it's connected.
   if (!shared.length) return
   const keys = new Map<string, string | null>()
@@ -345,7 +382,7 @@ async function catchUp(ids: string[]) {
     const has = new Set((await serversOf(id).catch(() => null))?.map((s) => s.name) ?? shared.map((s) => s.name))
     for (const server of shared) {
       if (has.has(server.name)) continue
-      if (!keys.has(server.name)) keys.set(server.name, await mainKey(server.name))
+      if (!keys.has(server.name)) keys.set(server.name, await mainKey(main, server.name))
       const key = keys.get(server.name)
       if (key) await add(id, key, server.name, server.url!).catch(() => {})
     }
@@ -365,11 +402,12 @@ export async function ensureUmbrelMcp(profile: string) {
  */
 export function useUmbrelMcpSync(agentIds: readonly string[] | undefined) {
   const qc = useQueryClient()
-  const onUmbrel = useHermesOnUmbrel().data
+  // Only agents on a Hermes that's on an Umbrel have anything to catch up with.
+  const onUmbrel = useUmbrelHermeses()
   const key = agentIds?.join('\n') ?? ''
   useEffect(() => {
-    const ids = key ? key.split('\n') : []
-    if (!onUmbrel || !ids.some((id) => (id !== MAIN && !synced.has(id)) || !unmarked.has(id))) return
+    const ids = (key ? key.split('\n') : []).filter((id) => onUmbrel?.includes(hermesOf(id) ?? ''))
+    if (!ids.some((id) => (!isMain(id) && !synced.has(id)) || !unmarked.has(id))) return
     void upkeep(() => catchUp(ids))
       .then(() => qc.invalidateQueries({ queryKey: ['umbrel-mcp'] }))
       .catch(() => {})

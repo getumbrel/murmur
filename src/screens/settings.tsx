@@ -20,12 +20,15 @@ import { Spinner } from '@/ui/spinner'
 import { usePicturesSync } from '@/state/pictures'
 import { ModelsSection } from '@/features/settings/models-section'
 import { UmbrelSection } from '@/features/settings/umbrel-section'
-import { useHermesOnUmbrel, useUmbrelMcp } from '@/state/umbrel-mcp'
+import { useHermesOnUmbrel, useUmbrelHermes, useUmbrelMcp } from '@/state/umbrel-mcp'
+import { firstHermes, hermesOf } from '@/hermes/instance'
+import { mainAgent } from '@/state/agents'
 import { AskHost } from '@/features/settings/ask'
 import { isBuiltinHermes, isUmbrelHermes, useOnUmbrel } from '@/features/connection/hermes-connection-form'
 import { HermesSection } from '@/features/settings/hermes-section'
 import { StatusDot } from '@/features/connection/fields'
-import { useHermesConnection, useMurmurSession } from '@/state/connection'
+import { useHermesConnection, useHermesIds, useMurmurSession, useServer, useServers, useSeveral } from '@/state/connection'
+import { useSettingsHermes } from '@/features/connection/scope'
 import { useTheme, type ThemePref } from '@/features/settings/theme'
 import { useTextSize, type TextSize } from '@/features/settings/text-size'
 import { NotificationsSetting } from '@/features/notifications/notify'
@@ -88,15 +91,23 @@ export function SettingsScreen({ section }: { section?: string }) {
 function Root() {
   const [, navigate] = useLocation()
   const { data: agents, isPending } = useAgents()
-  const models = useModels().data
-  const main = agents?.find((a) => a.isDefault)
+  const servers = useHermesIds()
+  // The first server's main agent and its model: the one the app opens on.
+  const models = useModels(servers[0] ?? null).data
+  // Models opens on the server it last showed, so its row says that one's model, and whose it is.
+  const shown = useSettingsHermes()
+  const shownModel = useModels(shown).data?.model
+  const shownServer = useServer(shown)?.name
+  const several = useSeveral()
+  const main = mainAgent(agents) ?? agents?.find((a) => a.isDefault)
   const voice = useVoice(main?.id).data
   const [voiceOpen, setVoiceOpen] = useState(false)
   const connection = useHermesConnection().connection
   const session = useMurmurSession()
   // Only where Hermes runs on an Umbrel: that's where umbrelOS's MCP server is.
   const onUmbrel = useHermesOnUmbrel().data === true
-  const umbrel = useUmbrelMcp(agents?.map((a) => a.id), onUmbrel)
+  const umbrelHermes = useUmbrelHermes()
+  const umbrel = useUmbrelMcp(agents?.filter((a) => hermesOf(a.id) === umbrelHermes).map((a) => a.id), onUmbrel)
 
   return (
     <>
@@ -132,7 +143,7 @@ function Root() {
             </Tile>
           }
           title="Models"
-          detail={models?.model ? modelName(models.model) : undefined}
+          detail={shownModel ? [modelName(shownModel), several && shownServer].filter(Boolean).join(' · ') : undefined}
           chevron
           onClick={() => navigate('/settings/models')}
         />
@@ -166,9 +177,11 @@ function Root() {
               <ServerIcon size={19} />
             </Tile>
           }
-          title="Server"
+          title={servers.length > 1 ? 'Servers' : 'Server'}
           detail={
-            connection ? (
+            servers.length > 1 ? (
+              String(servers.length)
+            ) : connection ? (
               <span className="block max-w-[11rem] truncate sm:max-w-[16rem]">{connection.name ?? hostOf(connection.url)}</span>
             ) : undefined
           }
@@ -249,21 +262,27 @@ function AgentsSection() {
   const { data, isPending } = useAgents()
   const actions = useAgentActions()
   const importer = useImportAgent()
+  const servers = useServers()
   if (isPending) return <Loading />
   return (
     <>
-      <ListGroup>
-        {(data ?? []).map((a) => (
-          <ListRow
-            key={a.id}
-            icon={<Orb hue={a.hue} size={28} seed={a.id} />}
-            title={a.name}
-            subtitle={subtitleFor(a)}
-            chevron
-            onClick={() => actions.edit(a)}
-          />
-        ))}
-      </ListGroup>
+      {/* With several servers, each one's agents under its name. */}
+      {(servers.length > 1 ? servers : [undefined]).map((server) => (
+        <ListGroup key={server?.id ?? 'all'} title={server?.name}>
+          {(data ?? [])
+            .filter((a) => !server || hermesOf(a.id) === server.id)
+            .map((a) => (
+              <ListRow
+                key={a.id}
+                icon={<Orb hue={a.hue} size={28} seed={a.id} />}
+                title={a.name}
+                subtitle={subtitleFor(a)}
+                chevron
+                onClick={() => actions.edit(a)}
+              />
+            ))}
+        </ListGroup>
+      ))}
       <ListGroup>
         <ListRow
           icon={
@@ -286,6 +305,9 @@ const subtitleFor = (a: Agent) =>
   [a.isDefault ? 'Main agent' : a.role, a.model && modelName(a.model)].filter(Boolean).join(' · ')
 
 function AboutSection() {
+  const [, navigate] = useLocation()
+  const several = useSeveral()
+  const servers = useHermesIds()
   const version = useHermesVersion()
   const umbrel = useOnUmbrel()
   const current = useHermesConnection().connection
@@ -310,25 +332,40 @@ function AboutSection() {
       </div>
       <ListGroup
         footer={
-          builtin
+          builtin && !several
             ? 'Murmur keeps things simple, and its built-in Hermes does the rest.'
-            : `Murmur keeps things simple. For everything else Hermes can do, open ${umbrel && hermesAgent ? 'the Hermes Agent app on your Umbrel' : 'Hermes Agent itself'}.`
+            : several
+              ? 'Murmur keeps things simple. For everything else Hermes can do, open Hermes Agent itself.'
+              : `Murmur keeps things simple. For everything else Hermes can do, open ${umbrel && hermesAgent ? 'the Hermes Agent app on your Umbrel' : 'Hermes Agent itself'}.`
         }
       >
-        <ListRow title="Hermes" detail={version ?? '—'} />
-        <ListRow
-          title="Connection"
-          trailing={
-            <span className="flex flex-none items-center gap-2 text-subhead text-ink-2">
-              <StatusDot tone={status.tone} />
-              {status.label}
-            </span>
-          }
-        />
+        {several ? (
+          // Each server's version and how it's doing are on its own row, a tap away.
+          <ListRow title="Servers" detail={String(servers.length)} chevron onClick={() => navigate('/settings/hermes')} />
+        ) : (
+          <>
+            <ListRow title="Hermes" detail={version ?? '—'} />
+            <ListRow
+              title="Connection"
+              trailing={
+                <span className="flex flex-none items-center gap-2 text-subhead text-ink-2">
+                  <StatusDot tone={status.tone} />
+                  {status.label}
+                </span>
+              }
+            />
+          </>
+        )}
         {/* The one row that's a sentence: it wraps instead of truncating. */}
         <div className="px-4 py-3">
           <p className="text-body">Where your chats live</p>
-          <p className="mt-0.5 text-footnote text-pretty text-ink-2">{builtin ? where : `${where} Murmur keeps nothing.`}</p>
+          <p className="mt-0.5 text-footnote text-pretty text-ink-2">
+            {several
+              ? 'Each server keeps its own agents’ chats, inside Hermes. Murmur keeps nothing.'
+              : builtin
+                ? where
+                : `${where} Murmur keeps nothing.`}
+          </p>
         </div>
       </ListGroup>
       <ListGroup
@@ -433,7 +470,7 @@ function useWhereChatsLive() {
 
 function useHermesVersion() {
   return useQuery({
-    queryKey: ['hermes-status'],
+    queryKey: ['hermes-status', firstHermes()],
     queryFn: () => api.get<{ version?: string }>('/api/status'),
     staleTime: 5 * 60_000,
   }).data?.version

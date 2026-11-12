@@ -9,7 +9,7 @@ import { ListGroup, ListRow } from '@/ui/list'
 import { Toggle } from '@/ui/toggle'
 import { desktop, focusWindow } from '@/lib/desktop'
 import { umbrelApp } from '@/lib/device'
-import { tabHermes, HERMES_PARAM } from '@/hermes/instance'
+import { firstHermes, hermesOf, homeOf, hrefOn } from '@/hermes/instance'
 import { useAgents } from '@/state/agents'
 import { useTalk } from '@/features/talk/talk'
 import { onChatMoment, useChatActivity } from '@/state/status'
@@ -64,12 +64,14 @@ function chatOnScreen(location: string) {
   return chat && chat !== 'new' ? decodeURIComponent(chat) : undefined
 }
 
-/** The tag of what's on screen (shared/notes.ts), so a note about it needn't be sent. */
-function onScreen(location: string) {
+/** The tag of what's on screen (shared/notes.ts) and the Hermes it's from, so a note about it needn't be sent. */
+function onScreen(location: string): [tag?: string, hermes?: string | null] {
   const chat = chatOnScreen(location)
-  if (chat) return chatTag(chat)
+  if (chat) return [chatTag(chat), hermesOf(decodeURIComponent(/^\/chat\/([^/]+)/.exec(location)![1]))]
   const group = /^\/group\/([^/]+)/.exec(location)?.[1]
-  return group ? groupTag(decodeURIComponent(group)) : undefined
+  if (!group) return []
+  const id = decodeURIComponent(group)
+  return [groupTag(id), homeOf(id) ?? firstHermes()]
 }
 
 /** The offer, once a reply has landed: whose buddy to show beside it. */
@@ -104,7 +106,7 @@ export function useNotifier() {
     startPresence()
   }, [])
 
-  useEffect(() => setViewing(onScreen(location)), [location])
+  useEffect(() => setViewing(...onScreen(location)), [location])
 
   // A reply coming in on screen: someone watching it touches nothing.
   const replying = useChatActivity(chatOnScreen(location)) === 'working'
@@ -113,17 +115,15 @@ export function useNotifier() {
   // On a call the person's here, though nothing's touched (a call is always in its own chat, so that's on screen too).
   useEffect(() => useTalk.subscribe((talk) => setCalling(talk.open)), [])
 
-  // A notification was clicked (public/sw.js, or the desktop app): open what it's about, on its Hermes.
+  // A notification was clicked (public/sw.js, or the desktop app): open what it's about. Its link is as
+  // its own Hermes would write it, so it's read as that Hermes's (an agent there has its own id here).
   useEffect(() => {
     const open = (note: unknown) => {
       const { href, hermes } = (note ?? {}) as { href?: unknown; hermes?: unknown }
       if (typeof href !== 'string' || !href.startsWith('/')) return
-      if (typeof hermes === 'string' && hermes && hermes !== tabHermes()) {
-        return window.location.assign(`${href}?${HERMES_PARAM}=${encodeURIComponent(hermes)}`)
-      }
       touch()
       focusWindow()
-      latest.current.navigate(href)
+      latest.current.navigate(typeof hermes === 'string' && hermes ? hrefOn(href, hermes) : href)
     }
     const fromWorker = (event: MessageEvent) => event.data?.type === 'murmur:open' && open(event.data)
     const worker = 'serviceWorker' in navigator ? navigator.serviceWorker : undefined

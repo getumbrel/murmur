@@ -148,7 +148,7 @@ Scan a code and an agent is on WhatsApp or Telegram, so you can text it from the
 - **Honest usage.** See how much of your plan is left and when it resets, how full a chat is, and what each agent did this week.
 - **Choose the model and how hard it thinks** for each agent or each chat.
 - **Move agents.** Export an agent to a file and bring it in on another Hermes.
-- **More than one Hermes?** Keep one at home and another at work, and switch in one tap.
+- **More than one Hermes?** Keep one at home and another at work: every agent sits in one list, and there's nothing to switch.
 - **Give it a goal** with `/goal`, and the agent keeps working until it's done. Ask a quick side question with `/btw` without interrupting it.
 - **Search every chat**, or find a word inside one, with a command palette and keyboard shortcuts on desktop.
 - **Take a chat with you.** Copy it, share it, or download it as a Markdown file.

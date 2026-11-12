@@ -6,12 +6,12 @@ import { SecretField } from '@/ui/field'
 import { BrowserIcon } from '@/ui/icons'
 import { Sheet } from '@/ui/sheet'
 import { rememberedSet } from '@/lib/upkeep'
-import { scoped } from '@/hermes/instance'
+import { firstHermes, hermesOf, mainFor, scoped } from '@/hermes/instance'
 import { useCopy } from '@/features/chat/use-copy'
 import { Swap } from '@/features/chat/collapse'
 import type { Speaker } from '@/features/chat/types'
-import { useHermesConnection } from '@/state/connection'
-import { installScreen, useHostScreen, useInstall, useScreens } from '@/state/screen'
+import { useServer } from '@/state/connection'
+import { installScreen, useHostScreen, useInstall, useScreens, type Install } from '@/state/screen'
 
 // Setting up the screen agents' browsers open on, on a Linux Hermes that
 // doesn't have it: offered in the chat the first time an agent browses there,
@@ -20,19 +20,28 @@ import { installScreen, useHostScreen, useInstall, useScreens } from '@/state/sc
 
 /** "Not now", for a week: nowhere else offers it, so it's offered again after that. */
 const declined = rememberedSet(scoped('murmur:screen-setup:not-now'), 7 * 24 * 60 * 60_000)
-const HOST = 'host'
+/** Each Hermes host is offered its own: 'host' for the first, as it always was. */
+const hostOf = (profile: string) => {
+  const hermes = hermesOf(profile)
+  return hermes && hermes !== firstHermes() ? `host@${hermes}` : 'host'
+}
 
 /** Whether to offer the screen where an agent's browser would show: a Linux Hermes without it, not declined lately. */
-export function useScreenOffer() {
-  const host = useHostScreen()
-  const [later, setLater] = useState(() => declined.has(HOST))
+export function useScreenOffer(profile: string) {
+  const host = useHostScreen(hermesOf(profile))
+  const [later, setLater] = useState(() => declined.has(hostOf(profile)))
   return {
     offer: !!host?.supported && !host.installed && !later,
     notNow: () => {
-      declined.add(HOST)
+      declined.add(hostOf(profile))
       setLater(true)
     },
   }
+}
+
+/** The setup that's asking for something, and the main agent of the Hermes it's on (there's one at a time). */
+function useAsking<P extends Install['phase']>(phase: P) {
+  return useInstall((s) => Object.keys(s).find((main) => s[main].phase === phase))
 }
 
 /** Hermes's "how to do it yourself", open after it couldn't. */
@@ -52,12 +61,14 @@ export function ScreenSetup({
   onStart: () => void
   onNotNow: () => void
 }) {
-  const install = useInstall((s) => s.default) ?? { phase: 'idle' }
+  // The screen is its Hermes host's, set up through that Hermes's main agent.
+  const main = mainFor(agent.id)
+  const install = useInstall((s) => s[main]) ?? { phase: 'idle' }
   const [done, setDone] = useState(false)
   const setUp = async () => {
     onStart()
-    await installScreen()
-    if (useScreens.getState().screens.default?.installed) setDone(true)
+    await installScreen(main)
+    if (useScreens.getState().screens[main]?.installed) setDone(true)
     else useHow.setState({ open: true })
   }
   const busy = install.phase === 'running' || install.phase === 'password'
@@ -133,7 +144,8 @@ export function ScreenSheets() {
 
 /** Hermes asking for the server's password to install the screen: it goes to Hermes, and nowhere else. */
 function PasswordSheet() {
-  const install = useInstall((s) => s.default)
+  const main = useAsking('password')
+  const install = useInstall((s) => (main ? s[main] : undefined))
   const [password, setPassword] = useState('')
   const asking = install?.phase === 'password' ? install : undefined
   const answer = (value: string) => {
@@ -174,9 +186,10 @@ function PasswordSheet() {
  */
 function HowSheet() {
   const open = useHow((s) => s.open)
-  const install = useInstall((s) => s.default)
+  const main = useAsking('failed')
+  const install = useInstall((s) => (main ? s[main] : undefined))
   const failed = install?.phase === 'failed' ? install : undefined
-  const hermes = useHermesConnection().connection
+  const hermes = useServer(main ? hermesOf(main) : firstHermes())
   const image = failed?.unprivileged && hermes?.fromImage
   const command = image
     ? hermes.hermesVersion && `nousresearch/hermes-agent:v${hermes.hermesVersion}-desktop`

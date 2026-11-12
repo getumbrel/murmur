@@ -5,7 +5,6 @@ import type { Agent } from './agents'
 vi.mock('@/hermes/rest', () => ({ api: {} }))
 vi.mock('@/hermes/compat', () => ({ listProfiles: vi.fn(), listProfileNames: vi.fn() }))
 vi.mock('@/hermes/gateway', () => ({ rpc: vi.fn(), gateway: {} }))
-vi.mock('@/hermes/instance', () => ({ scoped: (key: string) => key }))
 vi.mock('./timezone', () => ({ ensureAgentTimezone: vi.fn(async () => '') }))
 vi.mock('./toolsets', () => ({ hideDesktopToolsets: vi.fn(async () => {}) }))
 vi.mock('./umbrel-context', () => ({ ensureUmbrelContext: vi.fn(async () => {}) }))

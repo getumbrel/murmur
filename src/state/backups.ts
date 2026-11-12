@@ -4,7 +4,9 @@
 // on its own disk, so Murmur asks for one there, then the browser streams it
 // down through Murmur's relay, never holding it in memory.
 
-import { api, hermesHeaders, HermesError } from '@/hermes/rest'
+import { api, hermesHeaders, hermesUrl, HermesError } from '@/hermes/rest'
+import { at } from '@/hermes/at'
+import { agentIdOn, hermesOf, profileOf } from '@/hermes/instance'
 import { listProfileNames } from '@/hermes/compat'
 import { slugFor, updateAgent, type Agent } from './agents'
 import { ensureAgentTimezone } from './timezone'
@@ -40,7 +42,7 @@ export async function exportAgent(agent: Agent) {
   const res = await api.post<{ archive: string }>(`/api/profiles/${encodeURIComponent(agent.id)}/export`, {
     extra_files: { [LOOK_FILE]: JSON.stringify(look) },
   })
-  save(`/hermes/api/fs/download?${new URLSearchParams({ path: res.archive })}`)
+  save(hermesUrl(`/api/fs/download?${new URLSearchParams({ path: res.archive })}`, hermesOf(agent.id)))
 }
 
 /**
@@ -66,19 +68,22 @@ export function freeName(name: string, taken: readonly string[]) {
   return `${name} ${n}`
 }
 
-/** Brings an exported agent in as a new one, and returns its id. */
-export async function importAgent(file: File, takenNames: readonly string[]) {
+/** Brings an exported agent in as a new one on a Hermes, and returns its id. */
+export async function importAgent(file: File, takenNames: readonly string[], hermes: string | null) {
   if (!/\.(tar\.gz|tgz)$/i.test(file.name))
     throw new Error('That isn’t an exported agent. Look for a file ending in .tar.gz.')
-  const id = importId(file.name, await listProfileNames())
+  const h = at(hermes)
+  // What Hermes will call it: free among the names that Hermes has.
+  const name = importId(file.name, (await listProfileNames(hermes)).map(profileOf))
+  const id = agentIdOn(hermes, name)
 
   // Up to Hermes's own disk first, beside where it keeps files.
-  const home = (await api.get<{ path: string }>('/api/files')).path
+  const home = (await h.get<{ path: string }>('/api/files')).path
   const form = new FormData()
   form.append('file', file)
-  form.append('path', `${home}/murmur-imports/${id}.tar.gz`)
+  form.append('path', `${home}/murmur-imports/${name}.tar.gz`)
   form.append('overwrite', 'true')
-  const up = await fetch('/hermes/api/files/upload-stream', { method: 'POST', body: form, headers: hermesHeaders() })
+  const up = await fetch('/hermes/api/files/upload-stream', { method: 'POST', body: form, headers: hermesHeaders({}, hermes) })
   if (!up.ok)
     throw new Error(
       up.status === 413 ? 'That file is too big for Hermes to take.' : 'Couldn’t send the file to Hermes.',
@@ -87,7 +92,7 @@ export async function importAgent(file: File, takenNames: readonly string[]) {
 
   let path: string
   try {
-    path = (await api.post<{ path: string }>('/api/profiles/import', { archive: staged, name: id })).path
+    path = (await h.post<{ path: string }>('/api/profiles/import', { archive: staged, name })).path
   } catch (e) {
     throw new Error(
       e instanceof HermesError && e.status === 400
@@ -95,11 +100,11 @@ export async function importAgent(file: File, takenNames: readonly string[]) {
         : 'Hermes couldn’t bring that agent in.',
     )
   } finally {
-    void api.delete('/api/files', { path: staged }).catch(() => {})
+    void h.delete('/api/files', { path: staged }).catch(() => {})
   }
 
   // Exported from Murmur: put its name, colour and role back.
-  const look = await api
+  const look = await h
     .get<{ text?: string }>(`/api/fs/read-text?${new URLSearchParams({ path: `${path}/${LOOK_FILE}` })}`)
     .then((r) => JSON.parse(r.text ?? '{}') as Look)
     .catch(() => null)

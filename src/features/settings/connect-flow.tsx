@@ -12,12 +12,14 @@ import {
   type Confirm,
 } from '@/state/models'
 import { useDeviceModels, useDeviceSetup, useFindModel } from '@/state/local-runtime'
-import { useHermesConnection, type HermesConnection } from '@/state/connection'
-import { isBuiltinHermes, useOnUmbrel } from '@/features/connection/hermes-connection-form'
+import { useConnectionOn, type HermesConnection } from '@/state/connection'
+import { isBuiltinHermes, useHermesOnThisUmbrel } from '@/features/connection/hermes-connection-form'
+import { useScopeHermes } from '@/features/connection/scope'
 import { ask } from './ask'
 
 // "Connect a model", wired to Hermes. Used full screen in onboarding and
-// inside a sheet in Settings.
+// inside a sheet in Settings, where it connects the Hermes Settings is
+// showing (features/connection/scope.tsx).
 
 const confirmExpensive: Confirm = (message) => ask({ title: 'Use this model?', body: message, action: 'Use it' })
 
@@ -27,9 +29,9 @@ const errorText = (e: unknown) => (e instanceof Error && e.message) || 'Somethin
 const READY_BEAT_MS = 1400
 
 /** Where Hermes runs, for "Run a model on …". */
-function placeOf(c: HermesConnection | undefined, umbrel: boolean) {
+function placeOf(c: Partial<HermesConnection> | undefined, umbrel: boolean) {
   if (umbrel) return 'this Umbrel'
-  if (!c) return 'this computer'
+  if (!c?.url) return 'this computer'
   let host = ''
   try {
     host = new URL(c.url).hostname
@@ -49,20 +51,22 @@ type Props = {
 
 export function ConnectFlow({ onConnected, onSkip, embedded, options }: Props) {
   const refresh = useRefreshModels()
-  const umbrel = useOnUmbrel()
-  const connection = useHermesConnection().connection
-  const chatgpt = useChatGPTSignIn(async () => {
-    await adoptChatGPT(confirmExpensive)
+  const hermes = useScopeHermes()
+  const connection = useConnectionOn(hermes)
+  // (Of this Hermes, not of Murmur: a Hermes elsewhere isn't "this Umbrel", wherever Murmur runs.)
+  const umbrel = useHermesOnThisUmbrel(connection)
+  const chatgpt = useChatGPTSignIn(hermes, async () => {
+    await adoptChatGPT(hermes, confirmExpensive)
     await refresh()
   })
-  const discovered = useLocalServers()
+  const discovered = useLocalServers(hermes)
   const [connecting, setConnecting] = useState<string | null>(null)
   const [serverError, setServerError] = useState<string | null>(null)
   const [validating, setValidating] = useState(false)
   const [keyError, setKeyError] = useState<string | null>(null)
-  const deviceModels = useDeviceModels()
-  const found = useFindModel()
-  const device = useDeviceSetup(async () => {
+  const deviceModels = useDeviceModels(hermes)
+  const found = useFindModel(hermes)
+  const device = useDeviceSetup(hermes, async () => {
     await Promise.all([refresh(), new Promise((done) => setTimeout(done, READY_BEAT_MS))])
     onConnected()
   }, found.model)
@@ -111,7 +115,7 @@ export function ConnectFlow({ onConnected, onSkip, embedded, options }: Props) {
         setConnecting(choiceKey(server, model))
         setServerError(null)
         try {
-          await connectServer(server, model)
+          await connectServer(hermes, server, model)
           await refresh()
           onConnected()
         } catch (e) {
@@ -120,12 +124,12 @@ export function ConnectFlow({ onConnected, onSkip, embedded, options }: Props) {
           setConnecting(null)
         }
       }}
-      onFindServer={findServer}
+      onFindServer={(address, apiKey) => findServer(hermes, address, apiKey)}
       onSubmitKey={async (service, key) => {
         setValidating(true)
         setKeyError(null)
         try {
-          await connectApiKey(service, key, confirmExpensive)
+          await connectApiKey(hermes, service, key, confirmExpensive)
           await refresh()
           onConnected()
         } catch (e) {

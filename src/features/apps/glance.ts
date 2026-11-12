@@ -1,6 +1,7 @@
 import { useAgentApps, useConnections } from '@/state/apps'
 import { MAIL_PROVIDERS, useMailStatus } from '@/state/mail'
-import { useConnectedHostedApps, useHostedConnections } from '@/state/hosted-apps'
+import { hostedConnectionsOn, useConnectedHostedApps, useHostedConnections } from '@/state/hosted-apps'
+import { hermesOf } from '@/hermes/instance'
 import { appName } from './app-icon'
 import { mailIcon } from './email-form'
 import type { Wall } from './wall'
@@ -15,14 +16,15 @@ export type AppOn = { icon: string; name: string }
 export function useAppsGlance(agentId: string, enabled = true) {
   const apps = useAgentApps(agentId, enabled).data
   const mail = useMailStatus(agentId, enabled).data
-  const viaNous = useConnectedHostedApps(enabled).data
+  const hermes = hermesOf(agentId)
+  const viaNous = useConnectedHostedApps(hermes, enabled).data
   const directBusy = useConnections((all) =>
     Object.entries(all).some(
       ([key, c]) => key.startsWith(`${agentId}\n`) && c.phase !== 'done' && c.phase !== 'failed',
     ),
   )
   const nousBusy = useHostedConnections((all) =>
-    Object.values(all).some((c) => c.phase !== 'done' && c.phase !== 'failed'),
+    hostedConnectionsOn(all, hermes).some(([, c]) => c.phase !== 'done' && c.phase !== 'failed'),
   )
   const account = mail?.account
   const on: AppOn[] = [

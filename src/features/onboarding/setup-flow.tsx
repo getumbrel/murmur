@@ -2,13 +2,13 @@ import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useRef, useState } from 'react'
 import { useLocation } from 'wouter'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { adoptHermes, HERMES_GONE, HERMES_HEADER, tabHermes } from '@/hermes/instance'
+import { HERMES_GONE, HERMES_HEADER } from '@/hermes/instance'
 import {
   connectionApi,
   connectionKey,
   connectionsApi,
   connectionsKey,
-  liftCurtain,
+  takeListed,
   type ConnectionRequest,
   type HermesConnection,
 } from '@/state/connection'
@@ -68,9 +68,6 @@ export function SetupFlow({ again = false, onHandedOver }: { again?: boolean; on
   // Back from Connect to Hermes is the browser's back when Where led there; otherwise it goes to Where.
   const pushed = useRef(false)
 
-  // Nothing else will draw, so a switch curtain lifts onto this.
-  useEffect(liftCurtain, [])
-
   // Until it hands over, this tab is on the server's stand-in for "no Hermes yet", which goes
   // away the moment a choice is made. Expected here: not a reason to switch (and reload) mid-step.
   useEffect(() => {
@@ -97,7 +94,7 @@ export function SetupFlow({ again = false, onHandedOver }: { again?: boolean; on
    * otherwise the app starts afresh on it (nothing's been kept here yet).
    */
   const handOver = (connection: HermesConnection) => {
-    if (connection.id && connection.id !== tabHermes() && !adoptHermes(connection.id)) {
+    if (!takeListed()) {
       window.location.replace('/welcome')
       return
     }
@@ -244,7 +241,7 @@ export function SetupFlow({ again = false, onHandedOver }: { again?: boolean; on
           if (result.connection.status === 'connected') return handOver(result.connection)
           // Still on its first start: wait here. When this tab can't carry on in place, it
           // starts afresh on the built-in at once (the gate shows Getting ready there).
-          if (result.connection.id === tabHermes() || adoptHermes(result.connection.id)) return setReadying(true)
+          if (takeListed()) return setReadying(true)
           window.location.replace('/welcome')
         }}
       />

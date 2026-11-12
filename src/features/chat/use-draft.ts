@@ -1,15 +1,23 @@
 import { useCallback, useEffect, useLayoutEffect, useState, type RefObject } from 'react'
-import { scoped } from '@/hermes/instance'
+import { keyForAgent, keyForChat } from '@/hermes/kept'
 
 // What every message box shares: unsent text that survives a reload, and a
 // field that grows with what's typed.
 
-const PREFIX = scoped('murmur:draft:')
+const PREFIX = 'murmur:draft:'
+const NEW = ':new'
+const GROUP = 'group:'
+
+// Kept with the Hermes the chat, group or agent is on, under the names it always had.
+function stored(key: string, prefix = PREFIX) {
+  if (key.endsWith(NEW)) return keyForAgent(prefix, key.slice(0, -NEW.length), NEW)
+  return keyForChat(prefix, key.startsWith(GROUP) ? key.slice(GROUP.length) : key, key)
+}
 
 function readDraft(key?: string) {
   if (!key) return ''
   try {
-    return localStorage.getItem(PREFIX + key) ?? ''
+    return localStorage.getItem(stored(key)) ?? ''
   } catch {
     return ''
   }
@@ -17,17 +25,17 @@ function readDraft(key?: string) {
 
 function writeDraft(key: string, text: string) {
   try {
-    if (text) localStorage.setItem(PREFIX + key, text)
-    else localStorage.removeItem(PREFIX + key)
+    if (text) localStorage.setItem(stored(key), text)
+    else localStorage.removeItem(stored(key))
   } catch {
     /* storage unavailable: drafts just don't persist */
   }
 }
 
 /** Where an agent's next blank chat keeps what's typed into it. */
-export const newChatDraft = (agentId: string) => `${agentId}:new`
+export const newChatDraft = (agentId: string) => `${agentId}${NEW}`
 /** Where a group keeps what's typed into it. */
-export const groupDraft = (groupId: string) => `group:${groupId}`
+export const groupDraft = (groupId: string) => `${GROUP}${groupId}`
 
 // The boxes on screen now, by key, so text put in from elsewhere shows at once.
 const showing = new Map<string, Set<(text: string) => void>>()
@@ -71,12 +79,12 @@ export function useDraft(key?: string) {
 }
 
 // The passage a message answers (features/chat/quote.tsx) waits with the words typed under it.
-const QUOTE = scoped('murmur:draft-quote:')
+const QUOTE = 'murmur:draft-quote:'
 
 function readQuote(key?: string) {
   if (!key) return ''
   try {
-    return localStorage.getItem(QUOTE + key) ?? ''
+    return localStorage.getItem(stored(key, QUOTE)) ?? ''
   } catch {
     return ''
   }
@@ -95,8 +103,8 @@ export function useDraftQuote(key?: string) {
       setQuote(next)
       if (!key) return
       try {
-        if (next) localStorage.setItem(QUOTE + key, next)
-        else localStorage.removeItem(QUOTE + key)
+        if (next) localStorage.setItem(stored(key, QUOTE), next)
+        else localStorage.removeItem(stored(key, QUOTE))
       } catch {
         /* storage unavailable: it just doesn't outlast a reload */
       }

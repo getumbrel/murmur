@@ -1,22 +1,20 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Toaster } from 'sonner'
 import { Page } from '@/features/settings/page'
 import { HermesSection } from '@/features/settings/hermes-section'
 import { AskHost } from '@/features/settings/ask'
-import { useSwitchCurtain, type ConnectionRequest, type HermesConnection, type KnownHermes } from '@/state/connection'
+import type { ConnectionRequest, HermesConnection, KnownHermes } from '@/state/connection'
 import type { FoundHermes, Setup } from '@/state/setup'
 import { NoHermesSheet } from './no-hermes'
 import { UpdateHermes } from './update-hermes'
 import { HermesConnectionForm, HermesConnectionFormView, ManagedHermes } from './hermes-connection-form'
 import { LoginScreen } from './login'
-import { HermesSwitcher } from './switcher'
-import { SwitchCurtain } from './curtain'
 
 // Dev playground for the connection pieces, at /connection.html?view=…
 //   form · form-needs-login · form-bad-login · form-unreachable · form-connected
 //   form-sso · form-sso-ended (single sign-on; Continue opens a real sign-in on the dev server)
 //   settings · managed · managed-down · managed-env · login · login-error · live
-//   switcher (the pill and Settings → Server, on the real server) · curtain
+//   servers (Settings → Server, on the real server)
 //   Settings → Server with a built-in, on a fake server (Add works):
 //     server-builtin · server-both · server-upgrade · server-starting · server-nearby
 //   managed-builtin · managed-builtin-starting · managed-builtin-down · update-builtin · no-hermes
@@ -163,8 +161,7 @@ export function ConnectionPlayground() {
     return <UpdateHermes connection={{ ...builtin, outdated: true, hermesVersion: '0.21.2', minVersion: '0.21.4' }} onCheck={() => wait(800)} />
   }
   if (view === 'no-hermes') return <NoHermesSheet open onOpenChange={() => {}} />
-  if (view === 'switcher') return <SwitcherPreview />
-  if (view === 'curtain') return <CurtainPreview />
+  if (view === 'servers') return <ServersPreview />
   if (view === 'login' || view === 'login-error') {
     return (
       <LoginScreen
@@ -209,34 +206,14 @@ export function ConnectionPlayground() {
   return <HermesConnectionFormView key={view} initial={presets[view]} onTest={fake} onSave={fake} onConnected={() => {}} />
 }
 
-/** The pill as a header would carry it, over Settings → Server, both live. */
-function SwitcherPreview() {
-  return (
-    <>
-      <div className="mx-auto max-w-[40rem] px-5 pt-6">
-        <div className="flex items-center justify-between gap-3">
-          <h1 className="text-large font-semibold tracking-[-0.02em]">Chats</h1>
-          <HermesSwitcher />
-        </div>
-      </div>
-      <Page title="Server">
-        <HermesSection />
-      </Page>
-      <AskHost />
-      <SwitchCurtain />
-    </>
-  )
-}
-
-function CurtainPreview() {
-  useEffect(() => useSwitchCurtain.setState({ curtain: { name: 'VPS Hermes', at: Date.now(), arriving: false } }), [])
+/** Settings → Server, on the real server. */
+function ServersPreview() {
   return (
     <>
       <Page title="Server">
         <HermesSection />
       </Page>
       <AskHost />
-      <SwitchCurtain />
     </>
   )
 }

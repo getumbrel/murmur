@@ -97,7 +97,7 @@ function frameDoc(html: string, theme: Theme, token: string) {
 const newToken = () => Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2)
 
 export function PreviewFrame({ file, className }: { file: string; className?: string }) {
-  const { revision, onWidgetSend } = useMediaContext()
+  const { revision, onWidgetSend, profile } = useMediaContext()
   const host = useRef<HTMLDivElement>(null)
   const frame = useRef<HTMLIFrameElement>(null)
   const [html, setHtml] = useState<string | null>(null)
@@ -110,7 +110,7 @@ export function PreviewFrame({ file, className }: { file: string; className?: st
   // rewritten it. Only a real change reloads the frame.
   useEffect(() => {
     let live = true
-    readText(file).then(
+    readText(file, profile).then(
       (f) => {
         if (!live) return
         if (f.binary || !f.text.trim()) return setError('This widget is empty.')
@@ -126,7 +126,7 @@ export function PreviewFrame({ file, className }: { file: string; className?: st
     return () => {
       live = false
     }
-  }, [file, revision])
+  }, [file, revision, profile])
 
   // The theme is read once per document; later changes are posted in.
   useEffect(() => {

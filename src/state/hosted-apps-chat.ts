@@ -27,8 +27,8 @@ import type {
   ConnectionUpdatePayload,
   ConnectorsConnectResult,
 } from '@/hermes/vendor/gateway-contract.generated'
+import { homeOf } from '@/hermes/instance'
 import { showSignIn } from './apps'
-import { hostedAccountsKey } from './hosted-apps'
 
 export type ChatConnectTarget = {
   /** Nous's slug for an app through Nous; the app's name in Hermes's catalog for one of its own. */
@@ -156,10 +156,11 @@ export function wireChatConnects(qc: QueryClient) {
         (t, i) => t.kind === 'connector' && t.state === 'connected' && card.targets[i]?.state !== 'connected',
       )
     )
-      void qc.invalidateQueries({ queryKey: hostedAccountsKey })
+      void qc.invalidateQueries({ queryKey: ['hosted-accounts'] })
   })
 }
 
+// (The chat is named inside `owner`, where a call's Hermes isn't looked for: each says the chat's own.)
 const owner = (sessionId: string) => ({ type: 'session' as const, session_id: sessionId })
 
 /**
@@ -180,10 +181,12 @@ async function signInFor(sessionId: string, name: string): Promise<string | null
   if (!card || card.settled || !target) return null
   if (target.state !== 'failed' && target.state !== 'expired') return target.url
   // Hermes makes a new link on the card's own operation.
-  const again = await rpc<ConnectorsConnectResult>('connectors.connect', {
-    owner: owner(sessionId),
-    connectors: [name],
-  }).catch(() => null)
+  const again = await rpc<ConnectorsConnectResult>(
+    'connectors.connect',
+    { owner: owner(sessionId), connectors: [name] },
+    undefined,
+    homeOf(sessionId),
+  ).catch(() => null)
   const now = useChatConnects.getState()[sessionId]
   if (!again || !now) return null
   const next = applyChatFrame(now, again)
@@ -199,22 +202,24 @@ export async function skipChatConnect(sessionId: string, names?: readonly string
     names ? names.includes(t.name) : t.state !== 'connected' && t.state !== 'skipped',
   )
   if (!skipped.length) return finishChatConnect(sessionId)
-  await rpc('connection.respond', {
-    owner: owner(sessionId),
-    op_id: card.opId,
-    result: { targets: skipped.map((t) => ({ name: t.name, status: 'skipped' })) },
-  }).catch(() => {})
+  await rpc(
+    'connection.respond',
+    { owner: owner(sessionId), op_id: card.opId, result: { targets: skipped.map((t) => ({ name: t.name, status: 'skipped' })) } },
+    undefined,
+    homeOf(sessionId),
+  ).catch(() => {})
 }
 
 /** The person is done with a card (a directory card's Done): the agent carries on with what's connected. */
 export async function finishChatConnect(sessionId: string) {
   const card = useChatConnects.getState()[sessionId]
   if (!card || card.settled) return
-  await rpc('connection.respond', {
-    owner: owner(sessionId),
-    op_id: card.opId,
-    result: { settled_by: 'continue' },
-  }).catch(() => {})
+  await rpc(
+    'connection.respond',
+    { owner: owner(sessionId), op_id: card.opId, result: { settled_by: 'continue' } },
+    undefined,
+    homeOf(sessionId),
+  ).catch(() => {})
 }
 
 /** Forgets a chat's card, once it's settled and seen (or the chat is gone). */

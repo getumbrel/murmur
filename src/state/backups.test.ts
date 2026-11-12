@@ -1,9 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/hermes/rest', () => ({ api: {}, hermesHeaders: () => ({}), HermesError: class extends Error {} }))
+vi.mock('@/hermes/rest', () => ({
+  api: {},
+  hermesHeaders: () => ({}),
+  hermesUrl: (path: string) => `/hermes${path}`,
+  HermesError: class extends Error {},
+}))
 vi.mock('@/hermes/compat', () => ({ listProfileNames: vi.fn(), listProfiles: vi.fn() }))
 vi.mock('@/hermes/gateway', () => ({ rpc: vi.fn(), gateway: {} }))
-vi.mock('@/hermes/instance', () => ({ scoped: (key: string) => key }))
 vi.mock('./timezone', () => ({ ensureAgentTimezone: vi.fn(() => Promise.resolve()) }))
 vi.mock('./toolsets', () => ({ hideDesktopToolsets: vi.fn(() => Promise.resolve()) }))
 vi.mock('./umbrel-context', () => ({ ensureUmbrelContext: vi.fn(() => Promise.resolve()) }))
@@ -108,7 +112,7 @@ describe('importing an agent', () => {
   })
 
   it('turns away a file that isn’t an export', async () => {
-    await expect(importAgent(file('notes.zip'), [])).rejects.toThrow(/\.tar\.gz/)
+    await expect(importAgent(file('notes.zip'), [], null)).rejects.toThrow(/\.tar\.gz/)
     expect(calls).toEqual([])
   })
 
@@ -119,7 +123,7 @@ describe('importing an agent', () => {
     routes['GET /api/fs/read-text'] = () => ({
       text: JSON.stringify({ name: 'Scout', hue: 210, role: 'Finds things' }),
     })
-    const id = await importAgent(file('scout-20261015-092731.tar.gz'), ['Hermes', 'Scout'])
+    const id = await importAgent(file('scout-20261015-092731.tar.gz'), ['Hermes', 'Scout'], null)
     expect(id).toBe('scout')
     expect(imported).toEqual({ archive: '/opt/data/murmur-imports/scout.tar.gz', name: 'scout' })
     expect(calls).toContain('DELETE /api/files')
@@ -139,12 +143,12 @@ describe('importing an agent', () => {
     routes['GET /api/fs/read-text'] = () => {
       throw new Error('not found')
     }
-    expect(await importAgent(file('scout.tgz'), [])).toBe('scout')
+    expect(await importAgent(file('scout.tgz'), [], null)).toBe('scout')
     expect(updateAgent).not.toHaveBeenCalled()
   })
 
   it('says when the file is too big for Hermes', async () => {
     upload(413)
-    await expect(importAgent(file('scout.tar.gz'), [])).rejects.toThrow('That file is too big for Hermes to take.')
+    await expect(importAgent(file('scout.tar.gz'), [], null)).rejects.toThrow('That file is too big for Hermes to take.')
   })
 })

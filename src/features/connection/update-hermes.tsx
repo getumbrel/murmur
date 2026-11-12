@@ -1,20 +1,19 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { RefreshCw } from 'lucide-react'
 import { Button } from '@/ui/button'
 import { Buddy } from '@/ui/buddy'
 import { ByUmbrel } from '@/ui/brand'
-import { liftCurtain, type HermesConnection } from '@/state/connection'
+import type { HermesConnection } from '@/state/connection'
 import { WindowControlsGap } from '@/ui/titlebar'
-import { HermesSwitcher, hostOf } from './switcher'
+import { hostOf } from './describe'
 import { isBuiltinHermes, isUmbrelHermes, useOnUmbrel } from './hermes-connection-form'
 
 /**
- * In front of the app when this browser's Hermes is too old for Murmur:
- * plainly why, how to fix it, and a way to another Hermes if there is one.
+ * In front of the app when its only Hermes is too old for Murmur: plainly
+ * why, and how to fix it. (With several, the others carry on, and this one's
+ * agents wait where they are: Settings → Server says the same there.)
  */
 export function UpdateHermes({ connection: c, onCheck }: { connection: HermesConnection; onCheck: () => Promise<unknown> }) {
-  // Nothing else will draw, so a switch curtain lifts onto this.
-  useEffect(liftCurtain, [])
   const [checking, setChecking] = useState(false)
   const name = c.name || hostOf(c.url)
   // Murmur's own Hermes is updated by updating Murmur.
@@ -26,7 +25,6 @@ export function UpdateHermes({ connection: c, onCheck }: { connection: HermesCon
     <main className="flex min-h-dvh flex-col bg-bg px-6 safe-top safe-bottom">
       <div className="flex h-14 items-center desktop:h-(--titlebar-h)">
         <WindowControlsGap side="start" />
-        <HermesSwitcher />
       </div>
       <div className="mx-auto flex w-full max-w-sm flex-1 flex-col items-center justify-center pb-[8vh] text-center">
         <Buddy hue={278} size={88} state="offline" seed="update" label="" />

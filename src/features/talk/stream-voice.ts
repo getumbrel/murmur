@@ -15,7 +15,8 @@
 //   ← {type: "end"} | {type: "fallback"} (no audio: fetch it whole)
 
 import { api } from '@/hermes/rest'
-import { HERMES_PARAM, tabHermes } from '@/hermes/instance'
+import { hermesOf, profileOf } from '@/hermes/instance'
+import { hermesSocket } from '@/hermes/rest'
 import { speakError, type Spoken } from './voice'
 import { Resampler } from './resample'
 import { audioContext } from './sounds'
@@ -47,11 +48,9 @@ type Item = {
   started: boolean
 }
 
-const socketUrl = (profile: string) => {
-  const id = tabHermes()
-  const query = new URLSearchParams({ profile, ...(id && { [HERMES_PARAM]: id }) })
-  return `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/hermes/api/audio/speak-stream?${query}`
-}
+/** `profile` is the agent's id: the socket goes to its Hermes, under the name it has there. */
+const socketUrl = (profile: string) =>
+  hermesSocket(`/api/audio/speak-stream?${new URLSearchParams({ profile: profileOf(profile) })}`, hermesOf(profile))
 
 export class StreamVoice {
   private ctx?: AudioContext

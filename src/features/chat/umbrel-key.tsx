@@ -1,3 +1,4 @@
+import { hermesOf, sameHermes } from '@/hermes/instance'
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import { useQueryClient } from '@tanstack/react-query'
@@ -48,7 +49,9 @@ export function useUmbrelKey({
   onConnected: (next: string) => void
 }) {
   const qc = useQueryClient()
-  const onUmbrel = useHermesOnUmbrel().data === true
+  // The agent's own Hermes: the key goes to the agents that live there with it.
+  const onUmbrel = useHermesOnUmbrel(agent && hermesOf(agent.id)).data === true
+  const peers = agents.filter((a) => !agent || sameHermes(a.id, agent.id))
   const [phase, setPhase] = useState<Phase | null>(null)
   const [joined, setJoined] = useState(0)
   const [dismissed, setDismissed] = useState<string | null>(null)
@@ -63,7 +66,7 @@ export function useUmbrelKey({
       try {
         await connectUmbrel(
           key,
-          agents.map((a) => a.id),
+          peers.map((a) => a.id),
           () => setJoined((n) => n + 1),
         )
         setPhase('done')
@@ -97,7 +100,7 @@ export function useUmbrelKey({
           <UmbrelKeyCard
             key="umbrel-key"
             agent={agent}
-            count={agents.length}
+            count={peers.length}
             joined={joined}
             phase={phase}
             onConnect={() => key && void connect(key)}
@@ -129,7 +132,7 @@ function UmbrelKeyCard({
   onConnect: () => void
   onDismiss: () => void
 }) {
-  const umbrel = useUmbrel()
+  const umbrel = useUmbrel(hermesOf(agent.id))
   const progress = phase === 'done' ? 1 : phase === 'connecting' ? Math.max(0.08, joined / Math.max(count, 1)) : 0
   const title =
     phase === 'connecting'

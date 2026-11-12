@@ -209,7 +209,7 @@ describe('backups', () => {
     expect(download.ok).toBe(true)
     const file = new File([await download.arrayBuffer()], `${agent}-agent-2026-10-19.tar.gz`)
 
-    const id = await importAgent(file, [])
+    const id = await importAgent(file, [], null)
     try {
       const { profiles } = await socket.request('profiles.list', {})
       expect(profiles.find((x: { name: string }) => x.name === id)?.ui_meta).toMatchObject({ murmur: { hue: 120 } })

@@ -5,6 +5,9 @@ import { Buddy, type BuddyState } from '@/ui/buddy'
 import { Skeleton } from '@/ui/skeleton'
 import { cn } from '@/lib/cn'
 import type { Agent } from '@/state/agents'
+import { useServer, useSeveral } from '@/state/connection'
+import { hermesOf } from '@/hermes/instance'
+import { useUnreachable } from '@/features/connection/unreachable'
 import type { AgentStatus } from '@/state/status'
 import { prettyModel } from '@/features/model/names'
 import { useModelOptions } from '@/features/model/use-models'
@@ -28,8 +31,13 @@ export function AgentHero({
   titleRef: Ref<HTMLHeadingElement>
   onModel: () => void
 }) {
-  const busy = Boolean(status.activity && status.state !== 'idle' && status.state !== 'done')
-  const state: BuddyState = status.state === 'idle' && perk ? 'listening' : status.state
+  // Its server can't be reached: it dozes off, and says which one.
+  const unreachable = useUnreachable(hermesOf(agent.id))
+  const busy = !unreachable && Boolean(status.activity && status.state !== 'idle' && status.state !== 'done')
+  const state: BuddyState = unreachable ? 'offline' : status.state === 'idle' && perk ? 'listening' : status.state
+  // With several servers, its own page says which it lives on.
+  const several = useSeveral()
+  const server = useServer(hermesOf(agent.id))?.name
   return (
     <section className="flex flex-col items-center px-5 text-center">
       <div className="relative grid place-items-center">
@@ -51,7 +59,7 @@ export function AgentHero({
       <div className="relative mt-1 min-h-[1.375rem] w-full max-w-80">
         <AnimatePresence mode="popLayout" initial={false}>
           <motion.p
-            key={busy ? 'busy' : 'role'}
+            key={unreachable ? 'unreachable' : busy ? 'busy' : 'role'}
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -6 }}
@@ -59,10 +67,19 @@ export function AgentHero({
             className={cn(
               'text-subhead text-balance',
               busy ? (status.state === 'waiting' ? 'font-medium text-accent' : 'text-shimmer') : 'text-ink-2',
-              !busy && !agent.role && 'text-ink-3',
+              !busy && (unreachable || !agent.role) && 'text-ink-3',
             )}
           >
-            {busy ? status.activity : agent.role || (agent.isDefault ? 'Your main agent' : 'Your agent')}
+            {unreachable ? (
+              unreachable
+            ) : busy ? (
+              status.activity
+            ) : (
+              <>
+                {agent.role || (agent.isDefault ? 'Your main agent' : 'Your agent')}
+                {several && server && <span className="text-ink-3"> · {server}</span>}
+              </>
+            )}
           </motion.p>
         </AnimatePresence>
       </div>

@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/hermes/rest', () => ({ api: {}, HermesError: class extends Error {} }))
-vi.mock('@/hermes/instance', () => ({ HERMES_PARAM: 'hermes', tabHermes: () => undefined }))
 vi.mock('./voice', () => ({ SILENCE: '' }))
 vi.mock('./mic', () => ({}))
 

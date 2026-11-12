@@ -3,6 +3,7 @@ import type { Agent } from '@/state/agents'
 import { useCatalog } from '@/state/apps'
 import { useMailStatus } from '@/state/mail'
 import { useHostedCatalog } from '@/state/hosted-apps'
+import { hermesOf } from '@/hermes/instance'
 import { AppsIcon, IconChip } from '@/ui/icons'
 import { PlusAside, PlusLine, type PlusItem } from '@/features/chat/plus-menu'
 import { appName } from './app-icon'
@@ -19,9 +20,10 @@ export function useAppsPlusItem(agent: Agent | undefined, onOpen: () => void): P
   const id = agent?.id ?? ''
   const glance = useAppsGlance(id, on)
   // What the wall would offer first, for an agent with nothing yet.
-  const catalog = useCatalog(on)
+  const hermes = hermesOf(id)
+  const catalog = useCatalog(hermes, on)
   const mail = useMailStatus(id, on)
-  const hosted = useHostedCatalog(on).data
+  const hosted = useHostedCatalog(hermes, on).data
   const offer = useMemo(() => {
     if (!catalog.data || mail.isPending) return undefined
     const status = mail.isError ? null : mail.data

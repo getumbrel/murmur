@@ -25,7 +25,7 @@ import {
 import { deleteGroup, renameGroup } from '@/state/groups'
 import { HUES } from '@/lib/hues'
 import { useSectionWrites, useSections, sectionOf, type Section } from '@/state/sections'
-import { createGroup, useCanMakeGroups, useGroupRows, type GroupRow } from './groups'
+import { createGroup, useGroupCandidates, useGroupRows, type GroupRow } from './groups'
 import { SectionSheet, type SectionDraft } from './section-sheet'
 
 // Everything you can do to an agent from the roster, as one hook: call the
@@ -51,7 +51,9 @@ export function useAgentActions() {
   const [busy, setBusy] = useState(false)
   // Just made: the preview orb gets its moment before the sheet lets go.
   const [born, setBorn] = useState(false)
-  const canGroup = useCanMakeGroups()
+  // Who a new group could have: agents on a server that hosts groups and has two of them.
+  const groupable = useGroupCandidates()
+  const canGroup = groupable.length >= 2
   const groups = useGroupRows()
   const sections = useSections()
   const writes = useSectionWrites()
@@ -69,17 +71,20 @@ export function useAgentActions() {
 
   // Creating is a small ceremony: the preview orb smiles, the sheet slips
   // away, the newcomer springs into the roster with a halo, then its chat opens.
-  const create = async (draft: AgentDraft) => {
+  const create = async (draft: AgentDraft, hermes: string | null) => {
     setBusy(true)
     let id: string | undefined
     try {
-      id = await createAgent({
-        name: draft.name,
-        hue: draft.hue,
-        role: draft.role,
-        soul: composeSoul(draft.name, draft.role, draft.personality, draft.custom),
-        template: draft.template,
-      })
+      id = await createAgent(
+        {
+          name: draft.name,
+          hue: draft.hue,
+          role: draft.role,
+          soul: composeSoul(draft.name, draft.role, draft.personality, draft.custom),
+          template: draft.template,
+        },
+        hermes,
+      )
       const calm = matchMedia('(prefers-reduced-motion: reduce)').matches
       navigator.vibrate?.(10)
       setBusy(false)
@@ -313,7 +318,7 @@ export function useAgentActions() {
       <NewGroupSheet
         open={grouping}
         onOpenChange={setGrouping}
-        agents={agents}
+        agents={groupable}
         onCreate={makeGroup}
         submitting={busy}
       />

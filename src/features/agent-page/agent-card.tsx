@@ -8,6 +8,8 @@ import type { Agent } from '@/state/agents'
 import { useAgentStatus, useChatUnread } from '@/state/status'
 import { TEMPLATES } from '@/features/templates/templates'
 import { shortTime } from '@/features/home/time'
+import { useUnreachable } from '@/features/connection/unreachable'
+import { hermesOf } from '@/hermes/instance'
 
 // One agent in the All agents gallery: its live Buddy in its own light, its
 // name and what it's for, and when you last talked (or what it's doing now).
@@ -19,13 +21,16 @@ const card =
 
 export function AgentCard({ agent }: { agent: Agent }) {
   const status = useAgentStatus(agent.id)
-  const busy = Boolean(status.activity && status.state !== 'idle' && status.state !== 'done')
-  const unread = useChatUnread(agent.lastChat?.id, agent.lastChat?.at) && !busy
-  const line = busy ? status.activity! : agent.lastChat ? shortTime(agent.lastChat.at) : 'No chats yet'
+  const working = Boolean(status.activity && status.state !== 'idle' && status.state !== 'done')
+  // Its server can't be reached: it dozes off where it stands, and says which one.
+  const unreachable = useUnreachable(hermesOf(agent.id))
+  const busy = !unreachable && working
+  const unread = useChatUnread(agent.lastChat?.id, agent.lastChat?.at) && !working && !unreachable
+  const line = unreachable ?? (busy ? status.activity! : agent.lastChat ? shortTime(agent.lastChat.at) : 'No chats yet')
   return (
     <Link
       href={`/agent/${agent.id}`}
-      aria-label={`${agent.name}${agent.role ? `, ${agent.role}` : ''}${unread ? ', new messages' : ''}`}
+      aria-label={`${agent.name}${agent.role ? `, ${agent.role}` : ''}${unreachable ? `. ${unreachable}` : unread ? ', new messages' : ''}`}
       className={cn(card, 'hue-scope bg-fill-1 hover:bg-fill-2 active:bg-fill-2')}
       style={{ '--hue': agent.hue } as CSSProperties}
     >
@@ -35,9 +40,15 @@ export function AgentCard({ agent }: { agent: Agent }) {
         className="pointer-events-none absolute -top-10 left-1/2 size-44 -translate-x-1/2 rounded-full bg-[radial-gradient(closest-side,var(--accent-soft),transparent)] transition-opacity duration-300 [@media(hover:hover)]:opacity-80 [@media(hover:hover)]:group-hover/card:opacity-100"
       />
       <span className="relative transition-transform duration-300 ease-[var(--ease-out)] [@media(hover:hover)]:group-hover/card:-translate-y-0.5">
-        <Buddy hue={agent.hue} size={72} state={status.state} seed={agent.id} />
+        <Buddy hue={agent.hue} size={72} state={unreachable ? 'offline' : status.state} seed={agent.id} />
       </span>
-      <span className="relative mt-3 w-full truncate text-body font-semibold tracking-[-0.015em]" title={agent.name}>
+      <span
+        className={cn(
+          'relative mt-3 w-full truncate text-body font-semibold tracking-[-0.015em] transition-colors duration-300',
+          unreachable && 'text-ink-2',
+        )}
+        title={agent.name}
+      >
         {agent.name}
       </span>
       <span
@@ -52,7 +63,7 @@ export function AgentCard({ agent }: { agent: Agent }) {
         {unread && <span aria-hidden className="size-1.5 flex-none rounded-full bg-accent" />}
         <AnimatePresence mode="popLayout" initial={false}>
           <motion.span
-            key={busy ? `busy:${line}` : 'idle'}
+            key={unreachable ? 'unreachable' : busy ? `busy:${line}` : 'idle'}
             initial={{ opacity: 0, y: 5 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -5 }}
@@ -76,13 +87,14 @@ export function AgentCard({ agent }: { agent: Agent }) {
   )
 }
 
-/** Make one from a template: three of them huddle where a Buddy would stand. */
-export function NewAgentCard({ onClick }: { onClick: () => void }) {
+/** Make one from a template: three of them huddle where a Buddy would stand. `on` is the server's name, where each has its own card. */
+export function NewAgentCard({ onClick, on }: { onClick: () => void; on?: string }) {
   const faces = [TEMPLATES[0], TEMPLATES[1], TEMPLATES[3]]
   return (
     <button
       type="button"
       onClick={onClick}
+      aria-label={on ? `New agent on ${on}` : undefined}
       className={cn(
         card,
         'bg-transparent ring-1 ring-line-strong ring-inset hover:bg-fill-1 active:bg-fill-2 [&_.buddy]:block',

@@ -1,8 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 // The helpers are plain logic; what they sit beside needs a browser.
-vi.mock('@/hermes/instance', () => ({ adoptHermes: () => true, tabHermes: () => null }))
-vi.mock('@/state/connection', () => ({ connectionKey: [], connectionsKey: [], switchHermes: () => {} }))
+vi.mock('@/state/connection', () => ({ connectionKey: [], connectionsKey: [], takeListed: () => true, startOver: () => {} }))
 
 const { agentNames, countLine, holdsSomething, pickLead, recommended, waitingOn } = await import('./setup')
 type FoundHermes = import('./setup').FoundHermes

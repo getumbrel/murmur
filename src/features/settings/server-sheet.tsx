@@ -4,6 +4,7 @@ import { Sheet } from '@/ui/sheet'
 import { Spinner } from '@/ui/spinner'
 import { ServerForm } from '@/features/onboarding/server-panel'
 import { findServer, updateServer, useRefreshModels, type Service } from '@/state/models'
+import { useScopeHermes } from '@/features/connection/scope'
 
 // A model server in Settings → Models: where it is and its key, to change,
 // and the way to disconnect it, kept well apart from Save.
@@ -23,6 +24,7 @@ export function ServerSheet({
   /** Asks first; resolves once it's gone (or the person changed their mind). */
   onDisconnect: (service: Service) => Promise<boolean>
 }) {
+  const hermes = useScopeHermes()
   const refresh = useRefreshModels()
   const [leaving, setLeaving] = useState(false)
   const server = service?.server
@@ -50,9 +52,9 @@ export function ServerSheet({
           <ServerForm
             key={server.id}
             saved={{ address: server.baseUrl, hasKey: server.hasKey }}
-            onCheck={findServer}
+            onCheck={(address, apiKey) => findServer(hermes, address, apiKey)}
             onSubmit={async (fields) => {
-              await updateServer(service, fields, main)
+              await updateServer(hermes, service, fields, main)
               await refresh()
             }}
             submitLabel="Save"

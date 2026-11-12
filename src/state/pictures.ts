@@ -24,7 +24,7 @@ import { useEffect } from 'react'
 import { api } from '@/hermes/rest'
 import { rpc } from '@/hermes/gateway'
 import { rememberedSet, upkeep } from '@/lib/upkeep'
-import { scoped } from '@/hermes/instance'
+import { byHermes, hermesOf, isMain, mainFor, mainOn, scoped } from '@/hermes/instance'
 import { listProfileNames } from '@/hermes/compat'
 import { IMAGE_TOOL, PLAN_TOOL, nextDefer, readDefaultDefer, type ToolSearchConfig } from './tool-search'
 
@@ -32,7 +32,6 @@ type ProviderRow = { name: string; post_setup?: string | null; is_active: boolea
 type ImageConfig = { providers: ProviderRow[] }
 type ToolsetRow = { name: string; enabled: boolean }
 
-const MAIN = 'default'
 const q = (profile: string) => `?profile=${encodeURIComponent(profile)}`
 
 /** The ChatGPT row in Hermes' picture-service list ("OpenAI (Codex auth)" in v0.21). */
@@ -51,7 +50,10 @@ async function read(profile: string) {
 
 /** Take the image tool out of the agent's tool search so it's always to hand. */
 async function surface(profile: string) {
-  const [config, defaults] = await Promise.all([api.get<ToolSearchConfig>(`/api/config${q(profile)}`), readDefaultDefer()])
+  const [config, defaults] = await Promise.all([
+    api.get<ToolSearchConfig>(`/api/config${q(profile)}`),
+    readDefaultDefer(hermesOf(profile)),
+  ])
   // (The plan too, which Murmur keeps to hand for every agent: otherwise the two would undo each other.)
   const next = nextDefer(config.tools?.tool_search?.defer, defaults, [PLAN_TOOL, IMAGE_TOOL])
   if (next) await api.put(`/api/config${q(profile)}`, { config: { tools: { tool_search: { defer: next } } } })
@@ -70,85 +72,90 @@ async function apply(profile: string, on: boolean) {
   }
 }
 
-const profileNames = listProfileNames
-
 // Agents already brought in line, remembered across reloads (for a day), so
 // most page loads cost Hermes nothing. Cleared when the switch flips.
 const synced = rememberedSet(scoped('murmur:pictures-synced'))
 
-export const picturesKey = ['pictures'] as const
+export const picturesKey = (hermes: string | null) => ['pictures', hermes] as const
 
-/** Can agents make pictures? (The main agent's setting.) */
-export function usePictures(enabled = true) {
+/** Can a Hermes's agents make pictures? (Its main agent's setting.) */
+export function usePictures(hermes: string | null, enabled = true) {
   return useQuery({
-    queryKey: picturesKey,
+    queryKey: picturesKey(hermes),
     enabled,
-    queryFn: async () => (await read(MAIN)).on,
+    queryFn: async () => (await read(mainOn(hermes))).on,
     staleTime: 60_000,
   })
 }
 
-/** Turns pictures on or off for every agent. Optimistic; rolls back on failure. */
-export function useSetPictures() {
+/** Turns pictures on or off for every agent on a Hermes. Optimistic; rolls back on failure. */
+export function useSetPictures(hermes: string | null) {
   const qc = useQueryClient()
+  const key = picturesKey(hermes)
   return useMutation({
     mutationFn: async (on: boolean) => {
+      const main = mainOn(hermes)
       // The main agent first: if Hermes says no, nothing else has changed.
-      await apply(MAIN, on)
+      await apply(main, on)
       if (on) {
-        const { available } = await rpc<{ available: boolean }>('image.generate', { probe: true }, 15_000)
+        const { available } = await rpc<{ available: boolean }>('image.generate', { probe: true }, 15_000, hermes)
         if (!available) {
-          await apply(MAIN, false).catch(() => {})
+          await apply(main, false).catch(() => {})
           throw new Error('ChatGPT can’t make pictures right now. Check that you’re still signed in, then try again.')
         }
       }
-      synced.clear()
-      synced.add(MAIN)
+      const others = (await listProfileNames(hermes).catch(() => [] as string[])).filter((p) => p !== main)
+      for (const p of others) synced.delete(p)
+      synced.add(main)
       // The rest follow in the background, one at a time (best effort: an
       // agent being deleted mid-way shouldn't fail the switch).
       void upkeep(async () => {
-        for (const p of await profileNames()) {
-          if (p !== MAIN)
-            await apply(p, on).then(
-              () => synced.add(p),
-              () => {},
-            )
+        for (const p of others) {
+          await apply(p, on).then(
+            () => synced.add(p),
+            () => {},
+          )
         }
       })
       return on
     },
     onMutate: async (on) => {
-      await qc.cancelQueries({ queryKey: picturesKey })
-      const before = qc.getQueryData<boolean>(picturesKey)
-      qc.setQueryData(picturesKey, on)
+      await qc.cancelQueries({ queryKey: key })
+      const before = qc.getQueryData<boolean>(key)
+      qc.setQueryData(key, on)
       return { before }
     },
-    onError: (_e, _on, ctx) => qc.setQueryData(picturesKey, ctx?.before),
-    onSettled: () => qc.invalidateQueries({ queryKey: picturesKey }),
+    onError: (_e, _on, ctx) => qc.setQueryData(key, ctx?.before),
+    onSettled: () => qc.invalidateQueries({ queryKey: key }),
   })
 }
 
-/** Gives one agent the same picture setting as the main agent. Call after creating an agent. */
+/** Gives one agent the same picture setting as its Hermes's main agent. Call after creating an agent. */
 export async function ensurePicturesFor(agentId: string) {
-  if (agentId === MAIN) return
-  const on = (await read(MAIN)).on
+  if (isMain(agentId)) return
+  const on = (await read(mainFor(agentId))).on
   if (on) await apply(agentId, true)
   synced.add(agentId)
 }
 
-/** Brings agents not yet in step into line with the main agent, one at a time. */
+/** Brings agents not yet in step into line with their Hermes's main agent, one at a time. */
 async function catchUp(ids: string[]) {
-  const missing = ids.filter((id) => !synced.has(id))
-  if (!missing.length) return
-  const on = (await read(MAIN)).on
-  for (const id of missing) {
-    // (The main agent is the setting; with pictures on it only needs the
-    // image tool surfaced. Failures are left for the next load.)
-    const done = id !== MAIN ? apply(id, on) : on ? surface(MAIN) : Promise.resolve()
-    await done.then(
-      () => synced.add(id),
-      () => {},
-    )
+  for (const [hermes, here] of byHermes(ids)) {
+    const missing = here.filter((id) => !synced.has(id))
+    if (!missing.length) continue
+    const main = mainOn(hermes)
+    // Unreadable: left for the next load.
+    const setting = await read(main).catch(() => undefined)
+    if (!setting) continue
+    for (const id of missing) {
+      // (The main agent is the setting; with pictures on it only needs the
+      // image tool surfaced. Failures are left for the next load.)
+      const done = id !== main ? apply(id, setting.on) : setting.on ? surface(main) : Promise.resolve()
+      await done.then(
+        () => synced.add(id),
+        () => {},
+      )
+    }
   }
 }
 

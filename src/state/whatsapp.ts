@@ -19,8 +19,9 @@
 import { useEffect } from 'react'
 import { create } from 'zustand'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, HermesError, within } from '@/hermes/rest'
+import { api, HermesError, on, within } from '@/hermes/rest'
 import { rpc } from '@/hermes/gateway'
+import { hermesOf } from '@/hermes/instance'
 import { listProfiles } from '@/hermes/compat'
 
 export type WhatsAppMode = 'self-chat' | 'bot'
@@ -89,7 +90,7 @@ async function storedAccount(agentId: string): Promise<WhatsAppAccount | undefin
       name: string
       is_default: boolean
       ui_meta?: Record<string, unknown> | null
-    }>()
+    }>({}, hermesOf(agentId))
     const meta = profiles.find((p) => p.name === agentId)?.ui_meta?.[META_KEY] as WhatsAppAccount | undefined
     if (meta && (meta.name || meta.phone)) return { name: meta.name || undefined, phone: meta.phone || undefined }
   } catch {
@@ -236,6 +237,7 @@ const set = (agentId: string, link: Link | null) =>
   })
 
 const POLL_MS = 1_500
+// (A setup's address names no agent: each call about one says its agent's Hermes.)
 const onboarding = (id: string) => `/api/messaging/whatsapp/onboarding/${encodeURIComponent(id)}`
 const timers = new Map<string, ReturnType<typeof setTimeout>>()
 /** Each start, numbered per agent, so a slow answer to an older one is let go. */
@@ -270,7 +272,7 @@ const current = (agentId: string, id?: string) => {
 /** Show a QR code for linking `agentId` to WhatsApp, and see it through. */
 export async function startLink(agentId: string, mode: WhatsAppMode, { again = false } = {}): Promise<void> {
   const prev = current(agentId)
-  if (!again && prev?.id && linkActive(prev.phase)) void release(prev.id)
+  if (!again && prev?.id && linkActive(prev.phase)) void release(agentId, prev.id)
   if (!again) {
     set(agentId, { phase: 'starting', mode })
     waits.delete(agentId)
@@ -303,7 +305,7 @@ export async function startLink(agentId: string, mode: WhatsAppMode, { again = f
   }
   const link = mine()
   // Cancelled (or started over) while Hermes was answering: let its bridge go.
-  if (!link) return void (body.pairing_id && release(body.pairing_id))
+  if (!link) return void (body.pairing_id && release(agentId, body.pairing_id))
   advance(agentId, linkFrom(body, link))
 }
 
@@ -321,7 +323,7 @@ async function tick(agentId: string) {
   if (!link?.id || !linkActive(link.phase)) return
   let body: Onboarding
   try {
-    body = await api.get<Onboarding>(onboarding(link.id), within(15_000))
+    body = await api.get<Onboarding>(onboarding(link.id), within(15_000, hermesOf(agentId)))
   } catch (e) {
     if (!current(agentId, link.id)) return
     const status = e instanceof HermesError ? e.status : 0
@@ -367,8 +369,8 @@ async function restartMessaging(agentId: string) {
   }
 }
 
-async function release(id: string) {
-  await api.delete(onboarding(id), undefined, within(10_000)).catch(() => {})
+async function release(agentId: string, id: string) {
+  await api.delete(onboarding(id), undefined, within(10_000, hermesOf(agentId))).catch(() => {})
 }
 
 /** Stop showing a code (Hermes stops its bridge), or put a finished one away. */
@@ -380,15 +382,15 @@ export function cancelLink(agentId: string) {
   waits.delete(agentId)
   attempts.set(agentId, (attempts.get(agentId) ?? 0) + 1)
   set(agentId, null)
-  if (link?.id && linkActive(link.phase)) void release(link.id)
+  if (link?.id && linkActive(link.phase)) void release(agentId, link.id)
 }
 
 if (typeof window !== 'undefined') {
   // A tab closing mid-link lets Hermes's bridge go now rather than in ten minutes.
   window.addEventListener('pagehide', () => {
-    for (const link of Object.values(useLinks.getState().byAgent))
+    for (const [agentId, link] of Object.entries(useLinks.getState().byAgent))
       if (link.id && linkActive(link.phase))
-        void api.delete(onboarding(link.id), undefined, { keepalive: true }).catch(() => {})
+        void api.delete(onboarding(link.id), undefined, on(hermesOf(agentId), { keepalive: true })).catch(() => {})
   })
 }
 

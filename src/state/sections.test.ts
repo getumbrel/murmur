@@ -8,15 +8,14 @@ import type { Section } from './sections'
 vi.mock('@/hermes/rest', () => ({ api: {} }))
 vi.mock('@/hermes/compat', () => ({ listProfiles: vi.fn(), listProfileNames: vi.fn() }))
 vi.mock('@/hermes/gateway', () => ({ rpc: vi.fn(), gateway: {} }))
-vi.mock('@/hermes/instance', () => ({ scoped: (key: string) => key }))
 vi.mock('./timezone', () => ({ ensureAgentTimezone: vi.fn() }))
 vi.mock('./toolsets', () => ({ hideDesktopToolsets: vi.fn() }))
 vi.mock('./umbrel-context', () => ({ ensureUmbrelContext: vi.fn() }))
 vi.mock('./umbrel-mcp', () => ({ ensureUmbrelMcp: vi.fn() }))
 vi.mock('./agents', async () => {
   // The roster's own reading of a profile, so an agent read again lands as the roster has it.
-  const { agentsKey, toAgent, readAgent, writeMeta } = await vi.importActual<typeof import('./agents')>('./agents')
-  return { agentsKey, toAgent, readAgent, writeMeta, useAgents: vi.fn() }
+  const { agentsKey, toAgent, readAgent, writeMeta, mainAgent } = await vi.importActual<typeof import('./agents')>('./agents')
+  return { agentsKey, toAgent, readAgent, writeMeta, mainAgent, useAgents: vi.fn() }
 })
 
 const { createSection, deleteSection, editSection, file, moveSection, sectionOf, sectionsOf, useSectionWrites } =
@@ -581,7 +580,7 @@ describe('writing to Hermes', () => {
     listProfiles.mockResolvedValue([{ name: 'default', is_default: true }, scout])
     rpc.mockResolvedValueOnce(conflict('hermes-bots')).mockResolvedValueOnce(saved({ 'hermes-bots': 6 }))
     await file(qc, { agents: ['scout'] }, work)
-    expect(listProfiles).toHaveBeenCalledExactlyOnceWith({ include_sessions: false })
+    expect(listProfiles).toHaveBeenCalledExactlyOnceWith({ include_sessions: false }, null)
     expect(rpc.mock.calls).toEqual([
       botsWrite('scout', { title: 'Scout', color: '#4f8', ...at(work) }, 4),
       botsWrite('scout', { title: 'Scout', color: '#4f8', pinned: true, ...at(work) }, 5),

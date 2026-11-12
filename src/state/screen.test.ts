@@ -7,11 +7,6 @@ vi.mock('@/hermes/gateway', () => ({
   gateway: { onEvent: (fn: (ev: unknown) => void) => heard.push(fn), onState: () => {} },
 }))
 vi.mock('@/hermes/rest', () => ({ api: { get: vi.fn(), put: vi.fn() } }))
-vi.mock('@/hermes/instance', () => ({
-  HERMES_PARAM: 'hermes',
-  scoped: (key: string) => key,
-  tabHermes: () => undefined,
-}))
 
 const { SCREEN_PLUGIN_SOURCE, addScreenPlugin } = await import('./screen')
 

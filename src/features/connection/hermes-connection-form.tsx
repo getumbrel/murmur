@@ -12,7 +12,8 @@ import { ask } from '@/features/settings/ask'
 import { useQuery } from '@tanstack/react-query'
 import { useHermesConnection, type ConnectionRequest, type HermesConnection } from '@/state/connection'
 import { looksFinished, useSsoSignIn } from '@/state/sign-in'
-import { BUILTIN_ID, fetchSetup, setupKey } from '@/state/setup'
+import { fetchSetup, setupKey } from '@/state/setup'
+import { isBuiltinHermes, isUmbrelHermes } from './describe'
 import { BackPill, STEP_COLUMN, StepHeader } from '@/features/onboarding/step'
 import { BrandHeader } from './brand-header'
 import { Field, Note, PasswordField, StatusDot } from './fields'
@@ -29,7 +30,6 @@ import { SsoSteps } from './sso-steps'
 // card instead. In onboarding (`step`) it wears the steps' chrome, and what
 // Murmur's server found on its own is offered first.
 
-const UMBREL_HOST = 'hermes-agent_web_1'
 const HUE = 278
 
 type Phase = 'idle' | 'connecting' | 'connected'
@@ -568,15 +568,7 @@ export function CurrentStatus({
   )
 }
 
-/** Whether this is the Hermes Agent app on this Umbrel (at its fixed address), saved or set by umbrelOS. */
-export function isUmbrelHermes(c: Pick<HermesConnection, 'url'> | undefined) {
-  return !!c && hostOf(c.url).startsWith(UMBREL_HOST)
-}
-
-/** Whether this is the Hermes that comes with Murmur. */
-export function isBuiltinHermes(c: Pick<HermesConnection, 'id' | 'source'> | undefined) {
-  return !!c && (c.id === BUILTIN_ID || c.source === 'builtin')
-}
+export { isBuiltinHermes, isUmbrelHermes }
 
 /**
  * Whether this Murmur runs on umbrelOS, for copy that names it ("Use a model
@@ -584,7 +576,11 @@ export function isBuiltinHermes(c: Pick<HermesConnection, 'id' | 'source'> | und
  * built-in in use, Murmur's server says so.
  */
 export function useOnUmbrel() {
-  const c = useHermesConnection().connection
+  return useHermesOnThisUmbrel(useHermesConnection().connection)
+}
+
+/** Whether a Hermes runs on the Umbrel this Murmur runs on: the Hermes Agent app there, or the built-in. */
+export function useHermesOnThisUmbrel(c: Partial<HermesConnection> | undefined) {
   const viaServer = !!c && !isUmbrelHermes(c) && isBuiltinHermes(c)
   const setup = useQuery({ queryKey: setupKey, queryFn: fetchSetup, enabled: viaServer, staleTime: 5 * 60_000, retry: false })
   return isUmbrelHermes(c) || (viaServer && !!setup.data?.umbrel)

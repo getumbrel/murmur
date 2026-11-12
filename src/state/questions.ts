@@ -13,9 +13,9 @@
 // hour to 90 seconds and couldn't tell Murmur's from its own.
 
 import { useEffect } from 'react'
-import { api } from '@/hermes/rest'
+import { api, on } from '@/hermes/rest'
 import { rememberedSet, upkeep } from '@/lib/upkeep'
-import { scoped } from '@/hermes/instance'
+import { hermesOf, scoped } from '@/hermes/instance'
 
 /** Seconds an agent waits for your answer. */
 export const QUESTION_WAIT = 3600
@@ -37,14 +37,18 @@ export function questionWait(own: WaitConfig | undefined, defaults: WaitConfig |
   return mine === undefined || mine === hermes ? QUESTION_WAIT : undefined
 }
 
-// Hermes's defaults, read once (again after a failed read).
-let defaultWait: Promise<WaitConfig | undefined> | null = null
-function readDefaults() {
-  defaultWait ??= api.get<WaitConfig>('/api/config/defaults').catch(() => {
-    defaultWait = null
-    return undefined
-  })
-  return defaultWait
+// Each Hermes's defaults, read once (again after a failed read).
+const defaultWait = new Map<string | null, Promise<WaitConfig | undefined>>()
+function readDefaults(hermes: string | null) {
+  let read = defaultWait.get(hermes)
+  if (!read) {
+    read = api.get<WaitConfig>('/api/config/defaults', on(hermes)).catch(() => {
+      defaultWait.delete(hermes)
+      return undefined
+    })
+    defaultWait.set(hermes, read)
+  }
+  return read
 }
 
 // Agents known to be in step, remembered across reloads (for a day).
@@ -55,7 +59,7 @@ export async function keepQuestionWait(profile: string) {
   const q = `profile=${encodeURIComponent(profile)}`
   const [own, defaults] = await Promise.all([
     api.get<WaitConfig>(`/api/config?${q}&include_defaults=false`),
-    readDefaults(),
+    readDefaults(hermesOf(profile)),
   ])
   const wait = questionWait(own, defaults)
   // PUT deep-merges into the agent's config file, so only this key changes.

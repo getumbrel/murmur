@@ -2,16 +2,26 @@
 // Both live on the Murmur server (server/connection.ts, server/access.ts);
 // credentials never come to the browser.
 //
-// Murmur can know several Hermes; this browser uses one at a time. Switching
-// reloads the app under a curtain, so nothing (the socket, cached queries,
-// chats and groups in memory, unread marks) carries from one to the other.
+// Murmur can know several Hermes, and the app uses them all at once: every
+// one's agents are in the one list, each talking to its own (hermes/instance.ts).
+// Adding or removing one changes the list where it stands. Only a change of
+// the first, whose agents go by their plain names, starts the app over.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useCallback, useEffect, useState } from 'react'
-import { create } from 'zustand'
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { hermesHeaders, SESSION_CHECK } from '@/hermes/rest'
-import { stopGateway } from '@/hermes/gateway'
-import { adoptHermes, browserHermes, forgetForEveryHermes, forgetHermesStorage, HERMES_GONE, scoped, tabHermes } from '@/hermes/instance'
+import { setBenched, stopGateway } from '@/hermes/gateway'
+import {
+  browserServers,
+  firstHermes,
+  forgetForEveryHermes,
+  forgetHermesStorage,
+  HERMES_GONE,
+  hermesIds,
+  onHermesIds,
+  scoped,
+  setHermesIds,
+} from '@/hermes/instance'
 import { forgetKept, forgetKeptFor } from '@/state/kept'
 import { openedKept } from '@/lib/keep-app'
 
@@ -67,7 +77,7 @@ async function send(method: string, path: string, body?: unknown, signal?: Abort
     res = await fetch(path, {
       method,
       signal,
-      // Names this tab's Hermes, which the single-Hermes endpoints act on.
+      // Names the first Hermes, which the single-Hermes endpoints act on.
       headers: hermesHeaders(body ? { 'content-type': 'application/json' } : {}),
       body: body ? JSON.stringify(body) : undefined,
     })
@@ -94,13 +104,12 @@ async function callList<T = HermesList>(method: string, path: string, body?: unk
   throw new Error((data?.error as string | undefined) ?? `Murmur returned ${res.status}`)
 }
 
-// The Hermes this browser was last connected to, as Murmur's server described
-// it, so the app can open on it without waiting for a server that may not
-// answer (away from home, say). Kept when it worked; let go when the server
-// says it's no longer the one to open on (it needs signing in to again, it's
-// too old, or there's none chosen). A Hermes that's only down, or slow to
-// answer, is still the one: the app opens on it and says it can't reach it.
-// Signing out forgets it, like the roster.
+// The first Hermes's connection, as Murmur's server last described it, so the
+// app can open without waiting for a server that may not answer (away from
+// home, say). Kept when it worked; let go when the server says it's no longer
+// one to open on (it needs signing in to again, it's too old, or there's none
+// chosen). A Hermes that's only down, or slow to answer, still is: the app
+// opens and says it can't reach it. Signing out forgets it, like the roster.
 const KEPT_KEY = 'murmur:connection'
 
 function keptConnection(): HermesConnection | undefined {
@@ -150,9 +159,9 @@ export const connectionsApi = {
 }
 
 /**
- * The current Hermes connection, plus `test`, `save` and `reset`.
- * After a successful save the server drops live sockets (the app redials the
- * new Hermes) and every cached query is refetched.
+ * The first Hermes's connection (the only one, for most), plus `test`, `save`
+ * and `reset`. After a successful save the server drops live sockets (the app
+ * redials the new Hermes) and every cached query is refetched.
  */
 export function useHermesConnection() {
   const qc = useQueryClient()
@@ -160,7 +169,7 @@ export function useHermesConnection() {
 
   const switched = (next: HermesConnection) => {
     // A first run sets up the Hermes it was already showing: carry on with it.
-    if (next.id && next.id !== tabHermes() && !adoptHermes(next.id)) return void switchHermes(next as KnownHermes)
+    if (!takeListed()) return startOver()
     qc.setQueryData(connectionKey, next)
     void qc.invalidateQueries({ queryKey: connectionsKey })
     if (next.status === 'connected') void qc.invalidateQueries({ predicate: (q) => q.queryKey[0] !== 'murmur' })
@@ -175,33 +184,92 @@ export function useHermesConnection() {
 
 // ── Several Hermes ──────────────────────────────────────────────────────────
 
-/** Every Hermes this Murmur knows, with each one's status, and which this browser uses. */
+/** Every Hermes this Murmur knows, first one first, with each one's status. */
 export function useHermesList(enabled = true) {
   return useQuery({ queryKey: connectionsKey, queryFn: connectionsApi.list, staleTime: 15_000, enabled })
 }
 
-/** The list, plus adding, renaming, changing and removing. Switching is `switchHermes`. */
+/** The ids of every Hermes the app is using, first one first: known before the list is. */
+export const useHermesIds = () => useSyncExternalStore(onHermesIds, hermesIds)
+
+/** Whether there's more than one Hermes: only then does anything say which. */
+export const useSeveral = () => useHermesIds().length > 1
+
+// What each Hermes is called, kept so a name can be said before the list is in.
+const NAMES_KEY = 'murmur:servers'
+type Named = Pick<KnownHermes, 'id' | 'name' | 'url'>
+
+function keptNames(): Named[] {
+  try {
+    const kept = JSON.parse(localStorage.getItem(NAMES_KEY) ?? '[]') as Named[]
+    return Array.isArray(kept) ? kept : []
+  } catch {
+    return []
+  }
+}
+
+function keepNames(list: Named[]) {
+  try {
+    localStorage.setItem(NAMES_KEY, JSON.stringify(list.map(({ id, name, url }) => ({ id, name, url }))))
+  } catch {
+    // Private mode: names arrive with the list.
+  }
+}
+
+/** Every Hermes the app is using, first one first: its name and address at once, its status once the list is in. */
+export function useServers(): (Named & Partial<KnownHermes>)[] {
+  const ids = useHermesIds()
+  const listed = useHermesList().data?.connections
+  return useMemo(() => {
+    const kept = listed ? [] : keptNames()
+    return ids.flatMap((id) => listed?.find((c) => c.id === id) ?? kept.find((c) => c.id === id) ?? [])
+  }, [ids, listed])
+}
+
+/** One Hermes, by id (an agent's: `hermesOf(agent.id)`). */
+export function useServer(hermes: string | null | undefined) {
+  return useServers().find((s) => s.id === hermes)
+}
+
+/**
+ * One Hermes's connection, for copy about where it runs. The first's is its
+ * own answer, as it always was; another's comes from the list.
+ */
+export function useConnectionOn(hermes: string | null | undefined): Partial<HermesConnection> | undefined {
+  const first = useHermesConnection().connection
+  const listed = useServer(hermes)
+  return !hermes || hermes === hermesIds()[0] ? first : listed
+}
+
+/** Why a Hermes can't be used as it is, when Murmur knows: it's too old, or its sign-in stopped working. */
+export type Trouble = 'outdated' | 'sign-in'
+export const troubleOf = (c: Partial<HermesConnection> | undefined): Trouble | undefined =>
+  c?.outdated ? 'outdated' : c?.status === 'needs-login' || c?.status === 'bad-login' ? 'sign-in' : undefined
+
+/** The list, plus adding, renaming, changing and removing. */
 export function useHermesManager() {
   const qc = useQueryClient()
   const list = useHermesList()
   const settle = (next: Partial<HermesList>) => {
-    if (next.connections) qc.setQueryData(connectionsKey, { active: next.active!, connections: next.connections })
+    if (!next.connections) return
+    qc.setQueryData(connectionsKey, { active: next.active!, connections: next.connections })
+    channel?.postMessage('changed')
   }
   const add = useMutation({ mutationFn: connectionsApi.add, onSuccess: settle })
   const rename = useMutation({
     mutationFn: ({ id, name }: { id: string; name: string }) => connectionsApi.rename(id, name),
     onSuccess: (next) => {
       settle(next)
-      if (next.connection.id === tabHermes()) qc.setQueryData(connectionKey, next.connection)
+      if (next.connection.id === firstHermes()) qc.setQueryData(connectionKey, next.connection)
     },
   })
   const update = useMutation({
     mutationFn: ({ id, ...req }: ConnectionRequest & { id: string }) => connectionsApi.update(id, req),
     onSuccess: (next) => {
       settle(next)
-      // The Hermes in use got a new address or password: its socket was closed, so refetch everything.
-      if (next.connections && next.connection.id === tabHermes()) {
-        qc.setQueryData(connectionKey, next.connection)
+      // It got a new address or password: its socket was closed, so what came from it is read again.
+      if (next.connections) {
+        if (next.connection.id === firstHermes()) qc.setQueryData(connectionKey, next.connection)
         void qc.invalidateQueries({ predicate: (q) => q.queryKey[0] !== 'murmur' })
       }
     },
@@ -212,94 +280,76 @@ export function useHermesManager() {
       forgetHermesStorage(id)
       forgetKeptFor(id)
       settle(next)
-      // Removed the one in use: the server has moved this browser on.
-      if (id === tabHermes()) {
-        const to = next.connections.find((c) => c.id === next.active)
-        if (to) void switchHermes(to, { activated: true })
-      }
     },
   })
   return { list, add, rename, update, remove }
 }
 
-// ── Switching ───────────────────────────────────────────────────────────────
-// Everything the app holds belongs to one Hermes, much of it outside React
-// (the socket, chats and groups in memory, caches of pictures and files), so
-// a switch reloads the app rather than trying to empty each. A curtain covers
-// the seam: it blurs in over the old Hermes, holds through the reload (in
-// sessionStorage) and lifts once the new one is drawn.
-
-const CURTAIN_KEY = 'murmur:switching'
-const CURTAIN_TTL_MS = 15_000
-const MIN_HOLD_MS = 520
-
-type Curtain = { name: string | null; at: number; arriving: boolean } | null
-
-function restoredCurtain(): Curtain {
-  try {
-    const saved = JSON.parse(sessionStorage.getItem(CURTAIN_KEY) ?? 'null') as { name: string | null; at: number } | null
-    sessionStorage.removeItem(CURTAIN_KEY)
-    if (saved && Date.now() - saved.at < CURTAIN_TTL_MS) return { ...saved, arriving: true }
-  } catch {
-    // Private mode: no curtain to carry over.
-  }
-  return null
-}
-
-/** The curtain: up while switching, and on the far side of the reload until the app is drawn. */
-export const useSwitchCurtain = create<{ curtain: Curtain }>(() => ({ curtain: restoredCurtain() }))
-
-/** The app is drawn: lift the curtain (a no-op when there's none). */
-export const liftCurtain = () => useSwitchCurtain.setState({ curtain: null })
+// ── Keeping up with the list ────────────────────────────────────────────────
+// The app holds every Hermes's things side by side, so one more or one fewer
+// changes the list where it stands: its socket is dialed or hung up, and what
+// came from it arrives or goes. Only the first changing starts the app over,
+// since its agents are the ones that go by their plain names.
 
 const channel = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel('murmur:hermes')
 let leaving = false
 
-function leave(name: string | null) {
+/** The app's ids no longer mean what they did: load it again, at home. */
+export function startOver() {
   if (leaving) return
   leaving = true
-  useSwitchCurtain.setState({ curtain: { name, at: Date.now(), arriving: false } })
   stopGateway()
-  try {
-    sessionStorage.setItem(CURTAIN_KEY, JSON.stringify({ name, at: Date.now() }))
-  } catch {
-    // Private mode: the new Hermes just loads without the curtain.
-  }
-  // Long enough to read; the old screen's routes mean nothing to the new Hermes, so start at home.
-  setTimeout(() => location.replace('/'), MIN_HOLD_MS)
+  location.replace('/')
 }
 
 /**
- * Move this browser to another Hermes: the curtain comes down, the server
- * notes the choice, other tabs follow, and the app starts over on it.
+ * Take the list as the server says it is now, in the cookie its last answer
+ * set: at once, so the next request already names a Hermes that exists.
+ * False when the app has to start over (the caller says where).
  */
-export async function switchHermes(to: Pick<KnownHermes, 'id' | 'name'>, { activated = false } = {}) {
-  if (leaving) return
-  useSwitchCurtain.setState({ curtain: { name: to.name, at: Date.now(), arriving: false } })
-  if (!activated) {
-    try {
-      await connectionsApi.activate(to.id)
-    } catch (error) {
-      liftCurtain()
-      throw error
+export const takeListed = () => {
+  const listed = browserServers()
+  return !listed.length || setHermesIds(listed)
+}
+
+/** Take the list as the server has it now. Called with every answer that carries it. */
+export function applyServers(list: HermesList | undefined) {
+  if (!list?.connections.length || leaving) return
+  const ids = list.connections.map((c) => c.id)
+  if (!setHermesIds(ids)) return startOver()
+  keepNames(list.connections)
+  // With one Hermes its troubles are the app's (the gate says so); with several, the others carry on without it.
+  setBenched(ids.length > 1 ? list.connections.filter(troubleOf).map((c) => c.id) : [])
+}
+
+/**
+ * Keep up with the list wherever it changes: here (the list's own answers),
+ * in another tab (at once), in another window or on another device (looked at
+ * when this one comes back into view, and when a Hermes it names turns out to
+ * be gone). Every list made of each Hermes's things is then made again.
+ */
+export function useServersSync() {
+  const qc = useQueryClient()
+  const list = useHermesList().data
+  useEffect(() => applyServers(list), [list])
+  useEffect(() => {
+    const look = () => void qc.invalidateQueries({ queryKey: connectionsKey })
+    const seen = () => {
+      if (document.visibilityState !== 'visible') return
+      const listed = browserServers()
+      if (listed.length && listed.join() !== hermesIds().join()) look()
     }
-  }
-  channel?.postMessage({ id: to.id, name: to.name })
-  leave(to.name)
-}
-
-/**
- * Follow a switch made elsewhere: another tab (at once), another window coming
- * back into view (the cookie changed), or a Hermes removed from under this tab.
- */
-export function followSwitches() {
-  const check = (name: string | null = null) => {
-    const now = browserHermes()
-    if (now && tabHermes() && now !== tabHermes()) leave(name)
-  }
-  channel?.addEventListener('message', (e: MessageEvent<{ id: string; name: string }>) => check(e.data?.name ?? null))
-  document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && check())
-  window.addEventListener(HERMES_GONE, () => leave(null))
+    const changed = onHermesIds(() => void qc.invalidateQueries({ predicate: (q) => q.queryKey[0] !== 'murmur' }))
+    channel?.addEventListener('message', look)
+    document.addEventListener('visibilitychange', seen)
+    window.addEventListener(HERMES_GONE, look)
+    return () => {
+      changed()
+      channel?.removeEventListener('message', look)
+      document.removeEventListener('visibilitychange', seen)
+      window.removeEventListener(HERMES_GONE, look)
+    }
+  }, [qc])
 }
 
 /** Whether to put the connection form in front of the app: never set up, or its password stopped working. */

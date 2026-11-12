@@ -9,6 +9,8 @@ import { useAgents, type Agent } from '@/state/agents'
 import { LOCAL_SLUG, modelName, useRefreshModels, type Service } from '@/state/models'
 import { LOCAL_PROVIDER, localRuntimeKey, removeDownloaded, useDownloaded } from '@/state/local-runtime'
 import { formatSize } from '@/state/local-tiers'
+import { hermesOf } from '@/hermes/instance'
+import { useScopeHermes } from '@/features/connection/scope'
 import { ask } from './ask'
 import { Tile } from './page'
 import { Swap } from './swap'
@@ -21,6 +23,9 @@ import { ChipIcon } from '@/ui/icons'
 const usersOf = (agents: Agent[], ids: string[]) =>
   agents.filter((a) => LOCAL_PROVIDER.test(a.provider ?? '') && ids.includes(a.model ?? ''))
 
+/** A Hermes's own agents: only they can be using the models it runs. */
+const useAgentsOn = (hermes: string | null) => (useAgents().data ?? []).filter((a) => hermesOf(a.id) === hermes)
+
 /** "Hermes", "Hermes and Atlas", "3 agents". */
 function who(users: Agent[]) {
   if (users.length === 1) return users[0].name
@@ -31,8 +36,9 @@ function who(users: Agent[]) {
 export function LocalService({ service, services }: { service: Service; services: Service[] }) {
   const qc = useQueryClient()
   const refresh = useRefreshModels()
-  const agents = useAgents().data ?? []
-  const downloaded = useDownloaded()
+  const hermes = useScopeHermes()
+  const agents = useAgentsOn(hermes)
+  const downloaded = useDownloaded(hermes)
   const [removing, setRemoving] = useState<string[] | null>(null)
 
   const ids = service.models
@@ -62,13 +68,13 @@ export function LocalService({ service, services }: { service: Service; services
     if (!yes) return
     setRemoving(list)
     try {
-      const freed = await removeDownloaded(list)
-      await Promise.all([refresh(), qc.invalidateQueries({ queryKey: localRuntimeKey })])
+      const freed = await removeDownloaded(hermes, list)
+      await Promise.all([refresh(), qc.invalidateQueries({ queryKey: localRuntimeKey(hermes) })])
       toast.success(`Removed ${all ? 'all models' : name}${freed ? ` · ${formatSize(freed)} freed` : ''}`)
     } catch (e) {
       // Whatever went before still happened (an agent moved, a model deleted): show where things are.
       void refresh()
-      void qc.invalidateQueries({ queryKey: localRuntimeKey })
+      void qc.invalidateQueries({ queryKey: localRuntimeKey(hermes) })
       // Can't reach Hermes, or Murmur's own words (models.ts); Hermes's own are for Hermes.
       const said = e instanceof HermesError ? e.status === 0 && e.message : e instanceof Error && e.message
       toast.error(said || `Couldn’t remove ${name}. Try again.`)

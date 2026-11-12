@@ -1,13 +1,14 @@
-// Murmur's Hermes instances, which one each browser uses, and the API that manages them.
+// Murmur's Hermes instances, and the API that manages them. The app uses every
+// one at once: each request says which Hermes it's for.
 //
-//   GET    /murmur/connections               → State: every Hermes with its status, and this browser's
+//   GET    /murmur/connections               → State: every Hermes with its status, first one first
 //   POST   /murmur/connections               {name?, url, username?, password?, activate?} → tests, saves
 //                                             {url, signIn}: signed in with single sign-on instead (sso.ts)
 //                                             {found: id, username?, password?, activate?}: one Murmur found (setup.ts)
 //                                             {builtin: true, activate?}: the Hermes that comes with Murmur
 //   PATCH  /murmur/connections/:id           {name} renames; {url, username?, password?} tests, then saves
 //   DELETE /murmur/connections/:id           → forgets one (never the managed one or the built-in)
-//   POST   /murmur/connections/:id/activate  → this browser uses it from now on
+//   POST   /murmur/connections/:id/activate  → (apps from before every Hermes was used at once) this browser's choice
 //
 // The older single-Hermes API still works, on the Hermes the request is for:
 //
@@ -17,10 +18,13 @@
 //   DELETE /murmur/connection        → forgets it
 //
 // Which Hermes a request is for: the `x-murmur-hermes` header (REST) or the
-// `?hermes=` parameter (the socket), which pin a tab to the Hermes it started
-// with; else the browser's `murmur_hermes` cookie; else the first. A pinned id
+// `?hermes=` parameter (a socket, a picture, a download); else the browser's
+// `murmur_hermes` cookie, which names the first; else the first. A named id
 // that no longer exists is refused (409 hermes_gone) rather than quietly sent
-// to another Hermes, so a tab never mixes two.
+// to another Hermes, so one Hermes's things never reach another.
+//
+// The app learns which Hermes there are from the `murmur_servers` cookie, sent
+// with the page: their ids, first one first.
 
 import type http from 'node:http'
 import { forgetHermes } from './browser-frames.ts'
@@ -45,6 +49,7 @@ import { candidateById } from './discovery.ts'
 import { takeGrant, type Grant } from './sso.ts'
 
 export const HERMES_COOKIE = 'murmur_hermes'
+export const SERVERS_COOKIE = 'murmur_servers'
 export const HERMES_HEADER = 'x-murmur-hermes'
 export const HERMES_PARAM = 'hermes'
 const COOKIE_MAX_AGE_S = 400 * 24 * 60 * 60
@@ -131,17 +136,25 @@ export const firstTarget = () => targets()[0]
 export const cookieFor = (req: http.IncomingMessage, id: string) =>
   `${HERMES_COOKIE}=${id}; Path=/; Max-Age=${COOKIE_MAX_AGE_S}; SameSite=Lax${secure(req) ? '; Secure' : ''}`
 
+/** Every Hermes's id, first one first: what the app reads before it asks anything. */
+const serverIds = () => targets().map((t) => t.id).join('.')
+export const serversCookie = (req: http.IncomingMessage) =>
+  `${SERVERS_COOKIE}=${serverIds()}; Path=/; Max-Age=${COOKIE_MAX_AGE_S}; SameSite=Lax${secure(req) ? '; Secure' : ''}`
+
 /**
- * Keep the cookie naming a Hermes that exists. Sent with the page itself, so
- * the app knows which Hermes it's for (and whose things in local storage are
- * its own) before it asks anything. Not HttpOnly for that reason: it's an id,
- * not a credential. A page's address can name the Hermes to open on
- * (`?hermes=<id>`, a notification's link), which becomes the browser's choice.
+ * Keep the browser's cookies saying which Hermes there are. Sent with the
+ * page itself, so the app knows them (and whose things in local storage are
+ * whose) before it asks anything. Not HttpOnly for that reason: they're ids,
+ * not credentials. `murmur_servers` lists every one; `murmur_hermes` names
+ * the first, which is where a request that names none goes (it was once the
+ * browser's choice of one, and a page loading means the app that reads
+ * `murmur_servers` is the one running).
  */
 export function syncHermesCookie(req: http.IncomingMessage, res: http.ServerResponse, page?: URL) {
-  const named = find(page?.searchParams.get(HERMES_PARAM))
-  if (named && named.source !== 'default' && named.id !== readCookie(req, HERMES_COOKIE)) appendCookie(res, cookieFor(req, named.id))
-  else if (!find(readCookie(req, HERMES_COOKIE))) appendCookie(res, cookieFor(req, targets()[0].id))
+  if (readCookie(req, SERVERS_COOKIE) !== serverIds()) appendCookie(res, serversCookie(req))
+  const chosen = readCookie(req, HERMES_COOKIE)
+  const first = targets()[0].id
+  if (page ? chosen !== first : !find(chosen)) appendCookie(res, cookieFor(req, first))
 }
 
 // ── Describing ────────────────────────────────────────────────────────────
@@ -312,7 +325,8 @@ function remove(req: http.IncomingMessage, res: http.ServerResponse, target: Tar
   // What its agents' browsers were showing goes with it.
   forgetHermes(target.id)
   reload()
-  // This browser was using it: move it to the first, now, so the reload lands there.
+  appendCookie(res, serversCookie(req))
+  // This browser's requests that name no Hermes went to it: they go to the first now.
   if (browserTarget(req).id !== readCookie(req, HERMES_COOKIE)) appendCookie(res, cookieFor(req, targets()[0].id))
 }
 
@@ -329,6 +343,7 @@ export async function handleConnection(req: http.IncomingMessage, res: http.Serv
     const body = (await readJson(req).catch(() => ({}))) as Body
     const target = await addNamed(res, body)
     if (!target) return true
+    appendCookie(res, serversCookie(req))
     let active: string | undefined
     if (body.activate === true) {
       appendCookie(res, cookieFor(req, target.id))
@@ -412,6 +427,7 @@ export async function handleConnection(req: http.IncomingMessage, res: http.Serv
   // A first run (nothing saved yet) adds one; otherwise this changes the one in use.
   const saved = target.source === 'default' ? await add(res, body) : await update(res, target, body)
   if (!saved) return true
+  appendCookie(res, serversCookie(req))
   if (saved.id !== readCookie(req, HERMES_COOKIE)) appendCookie(res, cookieFor(req, saved.id))
   sendJson(res, 200, await describe(saved, true))
   return true

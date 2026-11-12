@@ -5,7 +5,8 @@
 // that says when a turn ends and sends it back (core/hear.py). Without the plugin it takes the same
 // turns as Mic from the level, and each finished turn is the recording since the last one.
 
-import { HERMES_PARAM, tabHermes } from '@/hermes/instance'
+import { hermesOf, profileOf } from '@/hermes/instance'
+import { hermesSocket } from '@/hermes/rest'
 import { BARGE_MS, END_SILENCE_MS, MAX_TURN_MS, MIN_SPEECH_MS, type MicEvents, type MicMode } from './mic'
 
 const FRAME_MS = 100
@@ -23,11 +24,9 @@ const AUDIO = { echoCancellation: true, noiseSuppression: true, autoGainControl:
 
 export const recorderSupported = () => typeof MediaRecorder !== 'undefined' && typeof RTCPeerConnection !== 'undefined'
 
-const hearUrl = (profile: string) => {
-  const id = tabHermes()
-  const query = new URLSearchParams({ profile, ...(id && { [HERMES_PARAM]: id }) })
-  return `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/hermes/api/plugins/murmur-voice/hear?${query}`
-}
+/** `profile` is the agent's id: the socket goes to its Hermes, under the name it has there. */
+const hearUrl = (profile: string) =>
+  hermesSocket(`/api/plugins/murmur-voice/hear?${new URLSearchParams({ profile: profileOf(profile) })}`, hermesOf(profile))
 
 export class RecorderMic {
   mode: MicMode = 'off'

@@ -20,7 +20,6 @@ import { greeting } from '@/features/home/time'
 import { SearchField } from '@/features/search/search-field'
 import { SearchResults, resultHref, useResultKeys } from '@/features/search/search-results'
 import { searchActions, useChatSearch, useSearchStore } from '@/state/search'
-import { HermesSwitcher } from '@/features/connection/switcher'
 import { focusSearch, registerSearch } from '@/features/commands/shortcuts'
 import { InstallTip, useInstallTip } from '@/features/home/install-tip'
 import { WindowControlsGap } from '@/ui/titlebar'
@@ -134,14 +133,10 @@ function PhoneHome() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ type: 'spring', duration: 0.38, bounce: 0 }}
           >
-            <div className="flex items-center justify-between gap-3 pt-1">
-              {/* The lockup is the large title. */}
-              <h1 ref={title} className="flex flex-none">
-                <MurmurWordmark size={31} />
-              </h1>
-              {/* With more than one Hermes, which one this is, ending on the 20px line. */}
-              <HermesSwitcher className="-my-1 min-w-0" />
-            </div>
+            {/* The lockup is the large title. */}
+            <h1 ref={title} className="flex pt-1">
+              <MurmurWordmark size={31} />
+            </h1>
             <p className="mt-1.5 text-subhead text-ink-2">{greeting()}</p>
           </motion.div>
         </motion.div>
@@ -338,11 +333,6 @@ export function Sidebar() {
             <Settings size={18} strokeWidth={1.85} />
           </IconButton>
           <NewMenu size="sm" variant="plain" onNewAgent={actions.newAgent} onNewGroup={actions.newGroup} />
-        </div>
-        {/* With more than one Hermes: which one this is. Its dot sits on the lockup's 24px line,
-            its fill bleeding out to 12px; with one Hermes it draws nothing and takes no room. */}
-        <div className="-mt-1 flex-none px-3 pb-2.5 empty:hidden">
-          <HermesSwitcher className="max-w-full" />
         </div>
         <div className="flex-none px-2 pb-2">
           <SearchField

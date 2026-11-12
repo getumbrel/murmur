@@ -33,11 +33,11 @@
 //   isBuiltinId(id)            The built-in's connection id is always 'builtin'.
 
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { adoptHermes, tabHermes } from '@/hermes/instance'
 import {
   connectionKey,
   connectionsKey,
-  switchHermes,
+  startOver,
+  takeListed,
   type HermesConnection,
   type HermesList,
   type KnownHermes,
@@ -241,16 +241,16 @@ export async function addFoundHermes(
 
 /**
  * After a successful choice: carry on with the chosen Hermes. In place when
- * this tab files things where the chosen one does (a first run becoming the
- * first saved Hermes); otherwise through the switch curtain and a reload.
- * Returns false when it reloads.
+ * it joins the ones the app has, or files things where the app has been
+ * looking (a first run becoming the first saved Hermes); otherwise the app
+ * starts over. Returns false when it does.
  */
 export function useCarryOn() {
   const qc = useQueryClient()
   return (result: Extract<ChoiceResult, { ok: true }>) => {
     const { connection } = result
-    if (connection.id !== tabHermes() && !adoptHermes(connection.id)) {
-      void switchHermes(connection, { activated: true })
+    if (!takeListed()) {
+      startOver()
       return false
     }
     qc.setQueryData(connectionKey, connection)

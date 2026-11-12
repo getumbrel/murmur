@@ -4,7 +4,8 @@ import { Check, Copy, Power } from 'lucide-react'
 import { Button } from '@/ui/button'
 import { cn } from '@/lib/cn'
 import { useCopy } from '@/features/chat/use-copy'
-import { useHermesConnection } from '@/state/connection'
+import { useConnectionOn } from '@/state/connection'
+import { hermesOf } from '@/hermes/instance'
 import { useHermesGateway } from '@/state/hermes-gateway'
 
 // Shown where Hermes's gateway being off quietly breaks something (routines
@@ -27,7 +28,7 @@ export function GatewayOff({ agentId, title, className }: Props) {
   const reduce = useReducedMotion()
   const gateway = useHermesGateway(agentId, { live: true })
   // Hermes in Docker: the command goes in its container, not on the computer around it.
-  const image = useHermesConnection().connection?.fromImage
+  const image = useConnectionOn(hermesOf(agentId))?.fromImage
   const [starting, setStarting] = useState(false)
   const [failed, setFailed] = useState(false)
 

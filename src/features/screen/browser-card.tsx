@@ -41,7 +41,7 @@ export function BrowserCard({
   const screen = useScreen(profile)
   const showable = useShowable(profile)
   const unseen = useScreens((s) => !!s.unseen[profile])
-  const { offer, notNow } = useScreenOffer()
+  const { offer, notNow } = useScreenOffer(profile)
   // Once the setup's begun here, it stays to the end.
   const [settingUp, setSettingUp] = useState(false)
   const left = useKeptFrame(chat, frame)

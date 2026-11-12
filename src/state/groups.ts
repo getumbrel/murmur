@@ -10,11 +10,11 @@
 import { create } from 'zustand'
 import { useEffect, useMemo, useRef } from 'react'
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
-import { gateway, rpc, type GatewayEvent, type ServerRequest } from '@/hermes/gateway'
-import { api } from '@/hermes/rest'
+import { gateway, openSoon, rpc, type GatewayEvent, type ServerRequest } from '@/hermes/gateway'
 import { hueFor } from '@/lib/hues'
 import { toAgent, useAgents, type Agent, type Profile } from '@/state/agents'
 import { forgetFrames } from '@/state/browser-frames'
+import { keptByHome } from '@/hermes/kept'
 import { friendlyError, resumeHolding } from '@/state/chats'
 import { forgetCopies, joinSteps, readTurns, type CopyTurn } from '@/state/group-steps'
 import { toolLabel } from '@/features/chat/tool-labels'
@@ -32,12 +32,13 @@ import {
   visibleText,
   type RoomEvent,
 } from '@shared/groups.ts'
-import { scoped } from '@/hermes/instance'
-import { isMissingMethod } from '@/hermes/compat'
+import { agentIdOn, firstHermes, hermesIds, hermesOf, homeOf, noteHome, profileOf, sameHermes } from '@/hermes/instance'
+import { isMissingMethod, listProfiles } from '@/hermes/compat'
 import { approvalText } from '@/features/chat/approval-text'
 
 // ── Wire shapes (groups.* JSON-RPC) ─────────────────────────────────────────
 
+/** `profile` is the agent's id here (hermes/instance.ts): `homed` makes it so as a room arrives. */
 type WireMember = { member_id: string; profile: string; handle: string; display_name?: string }
 type WireRoom = {
   room_id: string
@@ -137,16 +138,30 @@ const SLOW = 5000
 const titleCase = (s: string) => s.replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 
 /** Hermes's handle for an agent: its profile name, and "hermes" for the main one. */
-export const handleFor = (profile: string) => (profile === 'default' ? 'hermes' : profile)
+export const handleFor = (agentId: string) => {
+  const profile = profileOf(agentId)
+  return profile === 'default' ? 'hermes' : profile
+}
+
+/** A room as Murmur holds it: its members named as agents are here, whichever Hermes it came from. */
+const homed = (room: WireRoom, hermes: string | null): WireRoom =>
+  hermes === firstHermes()
+    ? room
+    : { ...room, members: room.members.map((m) => ({ ...m, profile: agentIdOn(hermes, m.profile) })) }
+
+/** The Hermes a room is on. */
+const hermesOfRoom = (id: string) => homeOf(id) ?? firstHermes()
+const several = () => hermesIds().length > 1
 
 function toMember(m: WireMember, agents?: Agent[]): GroupMember {
   const agent = agents?.find((a) => a.id === m.profile)
+  const profile = profileOf(m.profile)
   return {
     id: m.member_id,
     profile: m.profile,
     handle: m.handle,
-    name: agent?.name ?? (m.display_name?.trim() || (m.profile === 'default' ? 'Hermes' : titleCase(m.profile))),
-    hue: agent?.hue ?? (m.profile === 'default' ? 278 : hueFor(m.profile)),
+    name: agent?.name ?? (m.display_name?.trim() || (profile === 'default' ? 'Hermes' : titleCase(profile))),
+    hue: agent?.hue ?? (profile === 'default' ? 278 : hueFor(profile)),
     role: agent?.role ?? '',
   }
 }
@@ -183,17 +198,48 @@ const refreshLists = () => {
 
 // ── Lists ───────────────────────────────────────────────────────────────────
 
-async function fetchRooms() {
+async function roomsOn(hermes: string | null) {
   // Hermes before group chats: there are none, rather than an error on repeat.
-  const res = await rpc<{ rooms: WireRoom[] }>('groups.list', { limit: 200 }).catch((error) => {
+  const res = await rpc<{ rooms: WireRoom[] }>('groups.list', { limit: 200 }, undefined, hermes).catch((error) => {
     if (isMissingMethod(error)) return { rooms: [] as WireRoom[] }
     throw error
   })
+  for (const room of res.rooms) noteHome(room.room_id, hermes)
+  return res.rooms.map((room) => homed(room, hermes))
+}
+
+/** How long a list waits on a Hermes that isn't answering before going on without it. */
+const AWAY_MS = 3500
+
+async function fetchRooms() {
+  let rooms: WireRoom[]
+  if (!several()) rooms = await roomsOn(firstHermes())
+  else {
+    // A Hermes that's away keeps the groups it was last known to have: nothing leaves the list.
+    const before = qc?.getQueryData<WireRoom[]>(LIST)
+    const each = await Promise.all(
+      hermesIds().map(async (hermes) => {
+        try {
+          if (!(await openSoon(hermes, AWAY_MS))) throw new Error('away')
+          return await roomsOn(hermes)
+        } catch {
+          return before?.filter((r) => homeOf(r.room_id) === hermes) ?? []
+        }
+      }),
+    )
+    rooms = each.flat()
+  }
   // In development, probe scripts' leftover test rooms are hidden; they're not
   // anyone's conversation. Production builds never hide a group, so a person's
   // own room with that name can't vanish (same rule as agents.ts).
-  if (!import.meta.env.DEV) return res.rooms
-  return res.rooms.filter((r) => !r.room_id.startsWith('murmur-test-room'))
+  if (!import.meta.env.DEV) return rooms
+  return rooms.filter((r) => !r.room_id.startsWith('murmur-test-room'))
+}
+
+/** With several Hermes, a group opened before the list is in (a link straight to it) isn't known to be anyone's yet. */
+async function placed(id: string) {
+  if (!several() || homeOf(id)) return
+  await qc?.fetchQuery({ queryKey: LIST, queryFn: fetchRooms, staleTime: 5_000 }).catch(() => {})
 }
 
 /** Every group, most recently active first. */
@@ -205,22 +251,34 @@ export function useGroups() {
   return { ...rooms, data }
 }
 
-/** Whether this Hermes can host group chats at all (gate "New group" on it). */
-export function useGroupsAvailable() {
+const canHost = async (hermes: string | null) =>
+  (
+    await rpc<{ driver?: boolean }>('groups.capabilities', {}, undefined, hermes).catch((error) => {
+      if (isMissingMethod(error)) return { driver: false }
+      throw error
+    })
+  ).driver === true
+
+/** The Hermes that can host group chats (gate "New group" on there being one). A group's agents all live on one. */
+export function useGroupHosts(): (string | null)[] {
+  const ids = hermesIds()
   const q = useQuery({
-    queryKey: ['group-capabilities'],
-    queryFn: async () =>
-      (
-        await rpc<{ driver?: boolean }>('groups.capabilities', {}).catch((error) => {
-          if (isMissingMethod(error)) return { driver: false }
-          throw error
-        })
-      ).driver === true,
-    staleTime: Infinity,
+    queryKey: ['group-capabilities', ids.join('.')],
+    queryFn: async () => {
+      if (!several()) return (await canHost(firstHermes())) ? [firstHermes()] : []
+      const each = await Promise.all(
+        ids.map(async (hermes) => ((await openSoon(hermes, AWAY_MS)) && (await canHost(hermes).catch(() => false)) ? hermes : undefined)),
+      )
+      return each.filter((h): h is string => h !== undefined)
+    },
+    // One that was away when asked gets asked again.
+    staleTime: several() ? 60_000 : Infinity,
     retry: 1,
   })
-  return q.data ?? false
+  return q.data ?? NO_HOSTS
 }
+const NO_HOSTS: (string | null)[] = []
+
 
 // ── Create, rename, delete ──────────────────────────────────────────────────
 
@@ -232,19 +290,28 @@ export async function createGroup({ name, memberIds }: { name?: string; memberId
   if (ids.length < MIN_MEMBERS || ids.length > MAX_MEMBERS) {
     throw new Error(`Pick ${MIN_MEMBERS} to ${MAX_MEMBERS} agents.`)
   }
-  const { profiles } = await api.get<{ profiles: Profile[] }>('/api/profiles')
-  const agents = profiles.map((p) => toAgent(p))
+  // Hermes runs a group itself, so its agents all live on one.
+  const hermes = hermesOf(ids[0])
+  if (!ids.every((id) => sameHermes(id, ids[0]))) throw new Error('A group’s agents have to be on the same server.')
+  const agents = (await listProfiles<Profile>({}, hermes)).map((p) => toAgent(p))
   const members = ids.map((id) => {
     const agent = agents.find((a) => a.id === id)
     if (!agent) throw new Error('One of those agents no longer exists.')
-    return { member_id: id, profile: id, handle: handleFor(id), display_name: agent.name }
+    // Hermes knows each by its own name for it; `profile` is put back to that on the way out (hermes/route.ts).
+    return { member_id: profileOf(id), profile: id, handle: handleFor(id), display_name: agent.name }
   })
   const id = roomId()
-  await rpc('groups.create', {
-    room_id: id,
-    name: (name?.trim() || joinNames(members.map((m) => m.display_name))).slice(0, 200),
-    members,
-  })
+  noteHome(id, hermes)
+  await rpc(
+    'groups.create',
+    {
+      room_id: id,
+      name: (name?.trim() || joinNames(members.map((m) => m.display_name))).slice(0, 200),
+      members,
+    },
+    undefined,
+    hermes,
+  )
   markSeen(id, 0)
   refreshLists()
   return id
@@ -278,16 +345,23 @@ export async function newGroupChat(id: string) {
     if ((room.latest_seq ?? 0) <= 16 && !spoken(await fetchTail(room))) return room.room_id
   }
   const next = roomId()
-  await rpc('groups.create', {
-    room_id: next,
-    name: from.name,
-    members: from.members.map((m) => ({
-      member_id: m.member_id,
-      profile: m.profile,
-      handle: m.handle,
-      ...(m.display_name && { display_name: m.display_name }),
-    })),
-  })
+  const hermes = hermesOfRoom(id)
+  noteHome(next, hermes)
+  await rpc(
+    'groups.create',
+    {
+      room_id: next,
+      name: from.name,
+      members: from.members.map((m) => ({
+        member_id: m.member_id,
+        profile: m.profile,
+        handle: m.handle,
+        ...(m.display_name && { display_name: m.display_name }),
+      })),
+    },
+    undefined,
+    hermes,
+  )
   markSeen(next, 0)
   refreshLists()
   return next
@@ -341,7 +415,12 @@ async function forgetMemberCopy(room: string, profile: string) {
   if (!rows.length) return
   for (const [runtime, who] of runtimes) if (who.room === room) runtimes.delete(runtime)
   // Hermes keeps them loaded; let go of them first, or it won't delete them.
-  const live = await rpc<{ sessions: { id: string; session_key?: string }[] }>('session.active_list', {})
+  const live = await rpc<{ sessions: { id: string; session_key?: string }[] }>(
+    'session.active_list',
+    {},
+    undefined,
+    hermesOf(profile),
+  )
   for (const row of rows) {
     for (const s of live.sessions.filter((s) => s.session_key === row.id)) {
       await rpc('session.close', { session_id: s.id }).catch(() => {})
@@ -352,24 +431,13 @@ async function forgetMemberCopy(room: string, profile: string) {
 
 // ── Unread ──────────────────────────────────────────────────────────────────
 
-const SEEN_KEY = scoped('murmur:group-seen')
-
-function seenMap(): Record<string, number> {
-  try {
-    return JSON.parse(localStorage.getItem(SEEN_KEY) ?? '{}')
-  } catch {
-    return {}
-  }
-}
+// Kept with the Hermes each group is on, as it was when the app used one at a time.
+const seenMarks = keptByHome<number>('murmur:group-seen')
+const seenMap = () => seenMarks.all()
 
 function markSeen(id: string, seq: number) {
-  const seen = seenMap()
-  if ((seen[id] ?? -1) >= seq) return
-  try {
-    localStorage.setItem(SEEN_KEY, JSON.stringify({ ...seen, [id]: seq }))
-  } catch {
-    // Private mode: everything just reads as seen.
-  }
+  if ((seenMap()[id] ?? -1) >= seq) return
+  seenMarks.set(id, seq)
 }
 
 // ── Live state ──────────────────────────────────────────────────────────────
@@ -533,6 +601,8 @@ function poll(id: string): Promise<void> {
   const task = (async () => {
     const startedAt = Date.now()
     try {
+      if (!get(id)) return
+      await placed(id)
       const live = get(id)
       if (!live) return
       // State and log together: one round trip per look. (If a round ends
@@ -591,8 +661,12 @@ function poll(id: string): Promise<void> {
 /** A room that couldn't be read is gone when Hermes says so (4112, or "not found"), or no longer lists it:
  *  Hermes 0.22.6 on answers a disbanded room's reads with invalid_params. A list that fails says nothing. */
 async function isGone(id: string, error: unknown) {
+  // Not known to be on any Hermes, and one of them hasn't been asked: it may be there.
+  if (several() && !homeOf(id) && hermesIds().some((h) => gateway.stateOf(h) !== 'open')) return false
   if ((error as { code?: number }).code === 4112 || /not found/i.test(String((error as Error).message))) return true
-  const listed = await rpc<{ rooms: WireRoom[] }>('groups.list', { limit: 200 }).catch(() => undefined)
+  const listed = await rpc<{ rooms: WireRoom[] }>('groups.list', { limit: 200 }, undefined, hermesOfRoom(id)).catch(
+    () => undefined,
+  )
   return !!listed && !listed.rooms.some((r) => r.room_id === id)
 }
 
@@ -681,7 +755,7 @@ function apply(id: string, state: StateResult, fresh: RoomEvent[], cursor: numbe
     }
 
     return {
-      room: state.room,
+      room: homed(state.room, hermesOfRoom(id)),
       driver,
       events,
       cursor: end,
@@ -1061,11 +1135,14 @@ function wire() {
   // Words written while we were away are lost to the stream, so half-heard
   // turns step aside: listening in again picks up a reply still going, and the
   // log (read fresh, right away) tells the rest.
-  gateway.onState((state) => {
+  gateway.onState((state, hermes) => {
     if (state !== 'open') return
-    runtimes.clear()
+    // Only that Hermes's groups: the others' sockets never dropped.
+    const here = (room: string) => !several() || hermesOfRoom(room) === hermes
+    for (const [runtime, who] of runtimes) if (here(who.room)) runtimes.delete(runtime)
     listening.clear()
     for (const id of watchers.keys()) {
+      if (!here(id)) continue
       patch(id, (l) => ({ streams: Object.fromEntries(Object.entries(l.streams).filter(([, s]) => s.done)) }))
       fastUntil.set(id, Date.now() + 3000)
       void poll(id)

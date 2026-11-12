@@ -8,7 +8,7 @@ class HermesError extends Error {
     super(message)
   }
 }
-vi.mock('@/hermes/rest', () => ({ api: { get: vi.fn(), post: vi.fn() }, HermesError }))
+vi.mock('@/hermes/rest', () => ({ api: { get: vi.fn(), post: vi.fn() }, on: () => undefined, HermesError }))
 vi.mock('@/state/telegram', () => ({ telegramKey: (id: string) => ['telegram', id] }))
 vi.mock('@/state/whatsapp', () => ({ whatsappKey: (id: string) => ['whatsapp', id] }))
 

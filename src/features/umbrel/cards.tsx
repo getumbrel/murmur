@@ -11,6 +11,7 @@ import { motion, useReducedMotion } from 'motion/react'
 import { ArrowUpRight, Folder, Play, SearchX } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { linkOut } from '@/lib/device'
+import { firstHermes, HERMES_PARAM, hermesOf, profileOf } from '@/hermes/instance'
 import { TypeIcon } from '@/features/media/blocks'
 import { useMediaContext } from '@/features/media/context'
 import { fileUrl } from '@/features/media/files'
@@ -35,7 +36,10 @@ export function useUmbrelLink(server: string) {
 export function photoSrc(photo: Photo, server: string, agent?: string) {
   // One the agent looked at is already on Hermes, full size.
   if (photo.media) return fileUrl({ path: photo.media, profile: agent })
-  const q = new URLSearchParams({ agent: agent ?? 'default', server, id: photo.id, v: __MURMUR_VERSION__ })
+  const q = new URLSearchParams({ agent: agent ? profileOf(agent) : 'default', server, id: photo.id, v: __MURMUR_VERSION__ })
+  // (An image carries no header: the agent's Hermes goes in the address, unless it's the first.)
+  const hermes = agent ? hermesOf(agent) : firstHermes()
+  if (hermes && hermes !== firstHermes()) q.set(HERMES_PARAM, hermes)
   return `/murmur/umbrel/photo?${q}`
 }
 

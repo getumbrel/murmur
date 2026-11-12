@@ -2,11 +2,15 @@
 // model servers, at home or online. Hermes keeps these per agent; Murmur
 // manages the main agent's, which new agents copy. Spec:
 // docs/hermes/models-and-onboarding.md.
+//
+// Each Hermes has its own. Everything here says which (`hermes`, its id):
+// the one Settings is showing, or the one an agent lives on.
 
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { api, HermesError } from '@/hermes/rest'
-import { rpc } from '@/hermes/gateway'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { HermesError } from '@/hermes/rest'
+import { at, type At } from '@/hermes/at'
+import { firstHermes, hermesOf } from '@/hermes/instance'
 import type { ApiKeyService, ChatGPTFlow } from '@/features/onboarding/connect'
 import { addressesFor, hostOf, isPrivateUrl, serverName, ServerProblem, type ModelServer, type ServerModel } from '@/features/onboarding/servers'
 import { readinessKey, type RuntimeCheck } from './readiness'
@@ -62,23 +66,25 @@ const NAMES: Record<string, string> = {
   'minimax-oauth': 'MiniMax',
 }
 
-export const modelsKey = ['models'] as const
+export const modelsKey = (hermes: string | null) => ['models', hermes] as const
 
 /** Hermes's own model runtime (local-runtime.ts), in /api/model/options. */
 export const LOCAL_SLUG = 'llamacpp'
 
-export function useModels() {
+/** What one Hermes is connected to, and what its main agent thinks with. */
+export function useModels(hermes: string | null) {
   const qc = useQueryClient()
   return useQuery({
-    queryKey: modelsKey,
+    queryKey: modelsKey(hermes),
     queryFn: async (): Promise<Models> => {
+      const h = at(hermes)
       // A first look can be an hour old (see freshenModels): fetch them fresh too, then show those.
-      freshenModels('/api/model/options', () => void qc.invalidateQueries({ queryKey: modelsKey }))
+      freshenModels('/api/model/options', () => void qc.invalidateQueries({ queryKey: modelsKey(hermes) }), hermes)
       const [options, oauth, env, custom] = await Promise.all([
-        api.get<Options>('/api/model/options'),
-        api.get<{ providers: OAuthRow[] }>('/api/providers/oauth').catch(() => ({ providers: [] })),
-        api.get<Record<string, EnvRow>>('/api/env').catch(() => ({}) as Record<string, EnvRow>),
-        api.get<{ endpoints: Endpoint[] }>('/api/providers/custom-endpoints').catch(() => ({ endpoints: [] })),
+        h.get<Options>('/api/model/options'),
+        h.get<{ providers: OAuthRow[] }>('/api/providers/oauth').catch(() => ({ providers: [] })),
+        h.get<Record<string, EnvRow>>('/api/env').catch(() => ({}) as Record<string, EnvRow>),
+        h.get<{ endpoints: Endpoint[] }>('/api/providers/custom-endpoints').catch(() => ({ endpoints: [] })),
       ])
       const services = options.providers
         .filter((p) => p.authenticated && p.slug !== 'moa' && p.models.length)
@@ -140,35 +146,36 @@ export type Confirm = (message: string) => Promise<boolean>
 
 type SetResult = { ok: boolean; confirm_required?: boolean; confirm_message?: string }
 
-/** Sets the main agent's model, or another agent's when `profile` says which. */
-export async function setMainModel(provider: string, model: string, confirm?: Confirm, profile?: string) {
+/** Sets a Hermes's main agent's model, or another agent's there when `profile` says which. */
+export async function setMainModel(hermes: string | null, provider: string, model: string, confirm?: Confirm, profile?: string) {
+  const h = at(hermes)
   const body = { scope: 'main', provider, model, ...(profile && { profile }) }
-  let res = await api.post<SetResult>('/api/model/set', body)
+  let res = await h.post<SetResult>('/api/model/set', body)
   if (!res.ok && res.confirm_required) {
     if (!(await (confirm?.(res.confirm_message || 'This model costs more to use.') ?? true))) return false
-    res = await api.post<SetResult>('/api/model/set', { ...body, confirm_expensive_model: true })
+    res = await h.post<SetResult>('/api/model/set', { ...body, confirm_expensive_model: true })
   }
   if (!res.ok) throw new Error('Hermes couldn’t switch to that model.')
   return true
 }
 
 /** After a service is connected, make it the main agent's model (keeping the current pick on a re-login). */
-async function adopt(slug: string, confirm?: Confirm) {
-  await rpc('reload.env', {}, 10_000).catch(() => {})
-  const options = await api.get<Options>('/api/model/options')
+async function adopt(h: At, slug: string, confirm?: Confirm) {
+  await h.rpc('reload.env', {}, 10_000).catch(() => {})
+  const options = await h.get<Options>('/api/model/options')
   const row = options.providers.find((p) => p.slug === slug || p.aliases?.includes(slug))
   if (row?.is_current && row.models.includes(options.model)) return
-  const rec = await api.get<{ model: string }>(`/api/model/recommended-default?provider=${encodeURIComponent(slug)}`)
+  const rec = await h.get<{ model: string }>(`/api/model/recommended-default?provider=${encodeURIComponent(slug)}`)
   const model = rec.model || row?.models[0]
   if (!model) throw new Error('That service has no models Murmur can use yet.')
-  await setMainModel(slug, model, confirm)
+  await setMainModel(h.hermes, slug, model, confirm)
 }
 
 /** Picks something else when the service in use goes away. */
-async function adoptAnother(except: string) {
-  const options = await api.get<Options>('/api/model/options')
+async function adoptAnother(h: At, except: string) {
+  const options = await h.get<Options>('/api/model/options')
   const next = options.providers.find((p) => p.authenticated && p.slug !== 'moa' && p.slug !== except && p.models.length)
-  if (next) await adopt(next.slug)
+  if (next) await adopt(h, next.slug)
 }
 
 /**
@@ -178,9 +185,10 @@ async function adoptAnother(except: string) {
  * a model again instead of pointing at a file that's gone. `profile` is
  * omitted for the main agent.
  */
-export async function moveOff(gone: ReadonlySet<string>, profile?: string) {
+export async function moveOff(hermes: string | null, gone: ReadonlySet<string>, profile?: string) {
+  const h = at(hermes)
   const query = profile ? `?profile=${encodeURIComponent(profile)}` : ''
-  const options = await api.get<Options>(`/api/model/options${query}`)
+  const options = await h.get<Options>(`/api/model/options${query}`)
   const rows = options.providers
     .filter((p) => p.authenticated && p.slug !== 'moa')
     .map((p) => (p.slug === LOCAL_SLUG ? { ...p, models: p.models.filter((m) => !gone.has(m)) } : p))
@@ -188,25 +196,27 @@ export async function moveOff(gone: ReadonlySet<string>, profile?: string) {
   const next = rows.find((p) => p.slug === LOCAL_SLUG) ?? rows[0]
   if (!next) {
     // What Hermes does itself when the endpoint in use is deleted: no provider, so it isn't ready.
-    await api.put(`/api/config${query}`, { config: { model: { provider: '', base_url: '' } } })
+    await h.put(`/api/config${query}`, { config: { model: { provider: '', base_url: '' } } })
     return
   }
   let model = next.slug === LOCAL_SLUG ? next.models[0] : ''
   if (!model) {
     const params = `provider=${encodeURIComponent(next.slug)}${profile ? `&profile=${encodeURIComponent(profile)}` : ''}`
-    const rec = await api.get<{ model: string }>(`/api/model/recommended-default?${params}`).catch(() => ({ model: '' }))
+    const rec = await h.get<{ model: string }>(`/api/model/recommended-default?${params}`).catch(() => ({ model: '' }))
     model = rec.model || next.models[0]
   }
-  await setMainModel(next.slug, model, undefined, profile)
+  await setMainModel(hermes, next.slug, model, undefined, profile)
 }
 
-export async function disconnect(service: Service) {
+/** Disconnects a service from the Hermes it's connected to. */
+export async function disconnect(hermes: string | null, service: Service) {
+  const h = at(hermes)
   const r = service.remove
   if (!r) return
-  if (r.kind === 'oauth') await api.delete(`/api/providers/oauth/${r.id}`)
-  if (r.kind === 'key') await api.delete('/api/env', { key: r.env })
-  if (r.kind === 'endpoint') await api.delete(`/api/providers/custom-endpoints/${r.id}`)
-  if (service.current) await adoptAnother(service.slug)
+  if (r.kind === 'oauth') await h.delete(`/api/providers/oauth/${r.id}`)
+  if (r.kind === 'key') await h.delete('/api/env', { key: r.env })
+  if (r.kind === 'endpoint') await h.delete(`/api/providers/custom-endpoints/${r.id}`)
+  if (service.current) await adoptAnother(h, service.slug)
 }
 
 /**
@@ -215,14 +225,15 @@ export async function disconnect(service: Service) {
  * way disconnecting it in Settings does.
  */
 export async function signOutChatGPT(profile: string) {
-  const { provider } = await api.get<Options>('/api/model/options')
+  const h = at(hermesOf(profile))
+  const { provider } = await h.get<Options>('/api/model/options')
   // Nothing to clear in that store: an agent's own is usually empty.
   const cleared = (e: unknown) => {
     if (!(e instanceof HermesError && e.status === 409)) throw e
   }
-  await api.delete(`${CODEX}?profile=${encodeURIComponent(profile)}`).catch(cleared)
-  await api.delete(CODEX).catch(cleared)
-  if (provider === 'openai-codex') await adoptAnother('openai-codex')
+  await h.delete(`${CODEX}?profile=${encodeURIComponent(profile)}`).catch(cleared)
+  await h.delete(CODEX).catch(cleared)
+  if (provider === 'openai-codex') await adoptAnother(h, 'openai-codex')
 }
 
 /** Everything that depends on which model is connected. */
@@ -231,7 +242,7 @@ export function useRefreshModels() {
   return useCallback(
     () =>
       Promise.all([
-        qc.invalidateQueries({ queryKey: modelsKey }),
+        qc.invalidateQueries({ queryKey: ['models'] }),
         qc.invalidateQueries({ queryKey: ['readiness'] }),
         qc.invalidateQueries({ queryKey: ['agents'] }),
         // Each agent's own picker.
@@ -245,7 +256,7 @@ export function useRefreshModels() {
 export function useCheckReady() {
   const qc = useQueryClient()
   return useCallback(
-    () => qc.fetchQuery({ queryKey: readinessKey(), queryFn: () => rpc<RuntimeCheck>('setup.runtime_check', {}, 20_000), staleTime: 0 }),
+    () => qc.fetchQuery({ queryKey: readinessKey(), queryFn: () => at(firstHermes()).rpc<RuntimeCheck>('setup.runtime_check', {}, 20_000), staleTime: 0 }),
     [qc],
   )
 }
@@ -262,13 +273,14 @@ const KEYS: Record<ApiKeyService, { env: string; slug: string }> = {
 
 type Validation = { ok: boolean; reachable: boolean; message?: string; models?: string[]; resolved_base_url?: string }
 
-export async function connectApiKey(service: ApiKeyService, key: string, confirm?: Confirm) {
+export async function connectApiKey(hermes: string | null, service: ApiKeyService, key: string, confirm?: Confirm) {
+  const h = at(hermes)
   const { env, slug } = KEYS[service]
-  const check = await api.post<Validation>('/api/providers/validate', { key: env, value: key })
+  const check = await h.post<Validation>('/api/providers/validate', { key: env, value: key })
   // Unreachable means "couldn't verify": save it anyway.
   if (!check.ok && check.reachable) throw new Error('That key didn’t work. Check it and try again.')
-  await api.put('/api/env', { key: env, value: key })
-  await adopt(slug, confirm)
+  await h.put('/api/env', { key: env, value: key })
+  await adopt(h, slug, confirm)
 }
 
 // ── Model servers ───────────────────────────────────────────────────────────
@@ -288,17 +300,18 @@ const NEARBY = ['localhost', 'host.docker.internal'].flatMap((host) =>
  * asked of Hermes, since it's Hermes that will use them: Ollama on an Umbrel
  * is no use to a Hermes on a laptop.
  */
-export function useLocalServers(enabled = true) {
-  return useQuery({ queryKey: ['local-servers'], enabled, queryFn: findLocalServers, staleTime: 15_000 })
+export function useLocalServers(hermes: string | null, enabled = true) {
+  return useQuery({ queryKey: ['local-servers', hermes], enabled, queryFn: () => findLocalServers(hermes), staleTime: 15_000 })
 }
 
-export async function findLocalServers(): Promise<ModelServer[]> {
+export async function findLocalServers(hermes: string | null): Promise<ModelServer[]> {
+  const h = at(hermes)
   const beside = await fetch('/murmur/local')
     .then(async (res) => (res.ok ? ((await res.json()) as { servers: ModelServer[] }).servers : []))
     .catch(() => [] as ModelServer[])
   const urls = [...beside.map((s) => s.baseUrl), ...NEARBY]
   const asked = await Promise.all(
-    urls.map((url) => api.post<Validation>('/api/providers/validate', { key: 'OPENAI_BASE_URL', value: url }).catch(() => null)),
+    urls.map((url) => h.post<Validation>('/api/providers/validate', { key: 'OPENAI_BASE_URL', value: url }).catch(() => null)),
   )
   const servers: ModelServer[] = []
   asked.forEach((res, i) => {
@@ -315,12 +328,12 @@ export async function findLocalServers(): Promise<ModelServer[]> {
 }
 
 /** Asks Hermes, from its side of the network, what answers at an address: each likely scheme in turn. */
-async function probe(input: string, apiKey?: string) {
+async function probe(h: At, input: string, apiKey?: string) {
   const { urls, host } = addressesFor(input)
   let url = urls[0]
   let res!: Validation
   for (url of urls) {
-    res = await api.post<Validation>('/api/providers/validate', { key: 'OPENAI_BASE_URL', value: url, ...(apiKey && { api_key: apiKey }) })
+    res = await h.post<Validation>('/api/providers/validate', { key: 'OPENAI_BASE_URL', value: url, ...(apiKey && { api_key: apiKey }) })
     // Nothing there, or plain http on a host that only redirects: the next one, if any.
     if (res.reachable && !/HTTP 30\d\b/.test(res.message ?? '')) break
   }
@@ -331,9 +344,9 @@ async function probe(input: string, apiKey?: string) {
  * What's at an address, as Hermes sees it: the server and its models, or a
  * ServerProblem saying which field would fix it. The key goes with the asking.
  */
-export async function findServer(input: string, apiKey?: string): Promise<ModelServer> {
+export async function findServer(hermes: string | null, input: string, apiKey?: string): Promise<ModelServer> {
   const key = apiKey?.trim() || undefined
-  const { url, host, res } = await probe(input, key)
+  const { url, host, res } = await probe(at(hermes), input, key)
   const name = serverName(url)
   if (!res.reachable) throw new ServerProblem(`Couldn’t reach ${host}. Check the address and that the server is running.`, 'unreachable')
   if (!res.ok && /HTTP 40[13]\b/.test(res.message ?? ''))
@@ -373,14 +386,15 @@ function newEndpoint(server: ModelServer, baseUrl: string, endpoints: Endpoint[]
 }
 
 /** Saves a server in Hermes (once, however often it's picked) and makes `model` the main agent's. */
-export async function connectServer(server: ModelServer, model: ServerModel) {
+export async function connectServer(hermes: string | null, server: ModelServer, model: ServerModel) {
+  const h = at(hermes)
   const key = server.apiKey
-  const check = await api.post<Validation>('/api/providers/validate', { key: 'OPENAI_BASE_URL', value: server.baseUrl, ...(key && { api_key: key }) })
+  const check = await h.post<Validation>('/api/providers/validate', { key: 'OPENAI_BASE_URL', value: server.baseUrl, ...(key && { api_key: key }) })
   if (!check.reachable) throw new Error(`Hermes can’t reach ${server.name}. Make sure it’s running, then try again.`)
   const base_url = check.resolved_base_url ?? server.baseUrl
-  const { endpoints } = await api.get<{ endpoints: Endpoint[] }>('/api/providers/custom-endpoints')
+  const { endpoints } = await h.get<{ endpoints: Endpoint[] }>('/api/providers/custom-endpoints')
   const saved = endpoints.find((e) => e.base_url === base_url)
-  await api.post('/api/providers/custom-endpoints', {
+  await h.post('/api/providers/custom-endpoints', {
     ...(saved ? { id: saved.id, name: saved.name } : newEndpoint(server, base_url, endpoints)),
     base_url,
     model: model.id,
@@ -390,7 +404,7 @@ export async function connectServer(server: ModelServer, model: ServerModel) {
     ...(key && { api_key: key }),
   })
   // Hermes reads keys from its environment.
-  if (key) await rpc('reload.env', {}, 10_000).catch(() => {})
+  if (key) await h.rpc('reload.env', {}, 10_000).catch(() => {})
 }
 
 /**
@@ -398,13 +412,14 @@ export async function connectServer(server: ModelServer, model: ServerModel) {
  * one (only ever at the same address), '' removes it. Checked first, with the
  * key it will have. `main` is the main agent's model, kept if it's still there.
  */
-export async function updateServer(service: Service, change: { address: string; apiKey?: string }, main?: string) {
+export async function updateServer(hermes: string | null, service: Service, change: { address: string; apiKey?: string }, main?: string) {
+  const h = at(hermes)
   const saved = service.server
   if (!saved) return
-  const found = await findServer(change.address, change.apiKey)
+  const found = await findServer(hermes, change.address, change.apiKey)
   const ids = found.models.map((m) => m.id)
   const want = service.current && main ? main : saved.model
-  await api.post('/api/providers/custom-endpoints', {
+  await h.post('/api/providers/custom-endpoints', {
     id: saved.id,
     name: service.name,
     base_url: found.baseUrl,
@@ -414,7 +429,7 @@ export async function updateServer(service: Service, change: { address: string; 
     make_default: service.current,
     ...(change.apiKey !== undefined && { api_key: change.apiKey.trim() }),
   })
-  if (change.apiKey !== undefined) await rpc('reload.env', {}, 10_000).catch(() => {})
+  if (change.apiKey !== undefined) await h.rpc('reload.env', {}, 10_000).catch(() => {})
 }
 
 // ── ChatGPT sign-in (device code) ───────────────────────────────────────────
@@ -428,8 +443,10 @@ const EXPIRED: ChatGPTFlow = { status: 'error', kind: 'expired', message: 'The c
 /**
  * Drives the ChatGPT device-code sign-in. `onApproved` runs once ChatGPT says
  * yes (Hermes has already saved the login by then). Leaving cancels the code.
+ * The sign-in is one Hermes's: the code is asked of it, and kept there.
  */
-export function useChatGPTSignIn(onApproved: () => Promise<void>) {
+export function useChatGPTSignIn(hermes: string | null, onApproved: () => Promise<void>) {
+  const h = useMemo(() => at(hermes), [hermes])
   const [flow, setFlow] = useState<ChatGPTFlow>({ status: 'idle' })
   const session = useRef<string | null>(null)
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined)
@@ -440,8 +457,8 @@ export function useChatGPTSignIn(onApproved: () => Promise<void>) {
     clearTimeout(timer.current)
     const sid = session.current
     session.current = null
-    if (sid) void api.delete(`/api/providers/oauth/sessions/${sid}`).catch(() => {})
-  }, [])
+    if (sid) void h.delete(`/api/providers/oauth/sessions/${sid}`).catch(() => {})
+  }, [h])
 
   useEffect(() => cancel, [cancel])
 
@@ -450,7 +467,7 @@ export function useChatGPTSignIn(onApproved: () => Promise<void>) {
     setFlow({ status: 'starting' })
     let res: Start
     try {
-      res = await api.post<Start>(`${CODEX}/start`)
+      res = await h.post<Start>(`${CODEX}/start`)
     } catch (e) {
       const message = e instanceof Error ? e.message : ''
       const disabled = /device[- ]code/i.test(message) && /authori|enable/i.test(message)
@@ -471,7 +488,7 @@ export function useChatGPTSignIn(onApproved: () => Promise<void>) {
       if (Date.now() > code.expiresAt) return cancel(), setFlow(EXPIRED)
       let p: Poll
       try {
-        p = await api.get<Poll>(`${CODEX}/poll/${sid}`)
+        p = await h.get<Poll>(`${CODEX}/poll/${sid}`)
       } catch (e) {
         // Hermes forgets codes on restart; anything else is worth another try.
         if (e instanceof HermesError && e.status === 404) return (session.current = null), setFlow(EXPIRED)
@@ -492,12 +509,12 @@ export function useChatGPTSignIn(onApproved: () => Promise<void>) {
       }
     }
     timer.current = setTimeout(poll, every)
-  }, [cancel])
+  }, [cancel, h])
 
   return { flow, start, cancel }
 }
 
-export const adoptChatGPT = (confirm?: Confirm) => adopt('openai-codex', confirm)
+export const adoptChatGPT = (hermes: string | null, confirm?: Confirm) => adopt(at(hermes), 'openai-codex', confirm)
 
 // ── How much of the ChatGPT plan is left ────────────────────────────────────
 
@@ -509,23 +526,24 @@ export { planUsageLine, type PlanUsage, type PlanWindow } from './limits'
  * a fresh, never-used chat answers too (and is never saved), so this opens
  * one, asks, and closes it. Null whenever anything doesn't line up.
  */
-export function useOlderPlanUsage(enabled: boolean) {
+export function useOlderPlanUsage(hermes: string | null, enabled: boolean) {
+  const h = at(hermes)
   const version = useQuery({
-    queryKey: ['hermes-status'],
-    queryFn: () => api.get<{ version?: string }>('/api/status'),
+    queryKey: ['hermes-status', hermes],
+    queryFn: () => h.get<{ version?: string }>('/api/status'),
     staleTime: 5 * 60_000,
     enabled,
   }).data?.version
   return useQuery({
-    queryKey: ['plan-usage'],
+    queryKey: ['plan-usage', hermes],
     enabled: enabled && reportsPlanAsText(version),
     queryFn: async () => {
-      const { session_id } = await rpc<{ session_id: string }>('session.create', {}, 15_000)
+      const { session_id } = await h.rpc<{ session_id: string }>('session.create', {}, 15_000)
       try {
-        const usage = await rpc<{ account_lines?: unknown }>('session.usage', { session_id }, 15_000)
+        const usage = await h.rpc<{ account_lines?: unknown }>('session.usage', { session_id }, 15_000)
         return planFromAccountLines(usage.account_lines)
       } finally {
-        void rpc('session.close', { session_id }).catch(() => {})
+        void h.rpc('session.close', { session_id }).catch(() => {})
       }
     },
     staleTime: 5 * 60_000,

@@ -1,8 +1,9 @@
 // Groups as roster rows, from the groups store (state/groups).
 
-import { useAgents } from '@/state/agents'
+import { useAgents, type Agent } from '@/state/agents'
+import { byHermes, hermesOf } from '@/hermes/instance'
 import { useMemo } from 'react'
-import { createGroup as create, foldGroups, useGroupSummaries, useGroupsAvailable } from '@/state/groups'
+import { createGroup as create, foldGroups, useGroupHosts, useGroupSummaries } from '@/state/groups'
 
 export type GroupChatRow = {
   id: string
@@ -67,12 +68,24 @@ export function useGroupRows(): GroupRow[] {
   )
 }
 
-/** Whether "New group" makes sense here: Hermes can host groups, and there are two agents to put in one. */
-export function useCanMakeGroups() {
-  const available = useGroupsAvailable()
+/**
+ * The agents a new group could have: those on a Hermes that can host groups
+ * and has two of them to put in one (a group's agents all live on one Hermes).
+ */
+export function useGroupCandidates(): Agent[] {
+  const hosts = useGroupHosts()
   const { data: agents } = useAgents()
-  return available && (agents?.length ?? 0) >= 2
+  return useMemo(() => {
+    const on = byHermes((agents ?? []).map((a) => a.id))
+    return (agents ?? []).filter((a) => {
+      const hermes = hermesOf(a.id)
+      return hosts.includes(hermes) && (on.get(hermes)?.length ?? 0) >= 2
+    })
+  }, [agents, hosts])
 }
+
+/** Whether "New group" makes sense here: a Hermes can host groups, and has two agents to put in one. */
+export const useCanMakeGroups = () => useGroupCandidates().length >= 2
 
 export async function createGroup(group: { name?: string; memberIds: string[] }): Promise<string | null> {
   return create(group)

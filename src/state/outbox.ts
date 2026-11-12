@@ -1,9 +1,10 @@
 // Messages Hermes hasn't taken yet, kept in this browser by chat so a reload
 // while it's away doesn't lose them: what never got there goes back in the box.
 
-import { scoped } from '@/hermes/instance'
+import { keyForChat } from '@/hermes/kept'
 
-const KEY = scoped('murmur:outbox:')
+// Kept with the Hermes the chat is on.
+const key = (chatId: string) => keyForChat('murmur:outbox:', chatId)
 
 export type Held = {
   id: string
@@ -17,7 +18,7 @@ export type Held = {
 
 export function held(chatId: string): Held[] {
   try {
-    return JSON.parse(localStorage.getItem(KEY + chatId) ?? '[]') as Held[]
+    return JSON.parse(localStorage.getItem(key(chatId)) ?? '[]') as Held[]
   } catch {
     return []
   }
@@ -25,8 +26,8 @@ export function held(chatId: string): Held[] {
 
 function keep(chatId: string, messages: Held[]) {
   try {
-    if (messages.length) localStorage.setItem(KEY + chatId, JSON.stringify(messages))
-    else localStorage.removeItem(KEY + chatId)
+    if (messages.length) localStorage.setItem(key(chatId), JSON.stringify(messages))
+    else localStorage.removeItem(key(chatId))
   } catch {
     /* storage unavailable: nothing outlives the page */
   }

@@ -1,3 +1,4 @@
+import { hermesOf } from '@/hermes/instance'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useLocation } from 'wouter'
 import { ListGroup, ListRow } from '@/ui/list'
@@ -67,7 +68,7 @@ export function Home({
   onClose: () => void
 }) {
   const [, navigate] = useLocation()
-  const onUmbrel = useHermesOnUmbrel().data
+  const onUmbrel = useHermesOnUmbrel(hermesOf(agent.id)).data
   const [query, setQuery] = useState('')
   // While there's a search the sheet keeps its height, so the field stays put as results come and go.
   const { ref: held, hold } = useSheetHold()
@@ -168,6 +169,7 @@ export function Home({
             ))}
             {viaNous.map((c) => (
               <HostedRow
+                hermes={hermesOf(agent.id)}
                 key={c.account.id}
                 app={c.app}
                 account={c.account}

@@ -252,7 +252,7 @@ afterEach(() => {
 describe('Nous’s catalog', () => {
   it('reads each app the way Murmur offers it, never with Nous’s logo', async () => {
     routes['connectors.catalog'] = () => ({ connectors: [...CATALOG, row('Not A Slug', 'Bad', 'Developer')] })
-    const { available, apps } = await readHostedCatalog()
+    const { available, apps } = await readHostedCatalog(null)
     expect(available).toBe(true)
     expect(sent('connectors.catalog')).toEqual([{ profile: 'default' }])
     expect(apps.find((a) => a.slug === 'slack')).toEqual({
@@ -284,18 +284,18 @@ describe('Nous’s catalog', () => {
   })
 
   it('offers none on a Hermes without it, or with it switched off', async () => {
-    expect(await readHostedCatalog()).toEqual({ available: false, apps: [] })
+    expect(await readHostedCatalog(null)).toEqual({ available: false, apps: [] })
     routes['connectors.catalog'] = () => {
       throw refused(4031, 'CONNECTORS_UNAVAILABLE', 'Connectors are not available.')
     }
-    expect(await readHostedCatalog()).toEqual({ available: false, apps: [] })
+    expect(await readHostedCatalog(null)).toEqual({ available: false, apps: [] })
   })
 
   it('says when Nous can’t be reached', async () => {
     routes['connectors.catalog'] = () => {
       throw refused(5034, 'CATALOG_UNAVAILABLE', 'Connector catalog is unavailable.')
     }
-    expect(await readHostedCatalog()).toEqual({ available: true, apps: [], unreachable: true })
+    expect(await readHostedCatalog(null)).toEqual({ available: true, apps: [], unreachable: true })
   })
 })
 
@@ -395,7 +395,7 @@ describe('accounts connected through Nous', () => {
         account({ connection_id: 'ca_box', connector: 'box', status: 'pending', alias: ' work ' }),
       ],
     })
-    const list = await readHostedAccounts()
+    const list = await readHostedAccounts(null)
     expect(sent('connectors.accounts')).toEqual([{ profile: 'default' }])
     expect(list.map((a) => [a.id, a.state, a.alias])).toEqual([
       ['ca_box', 'pending', 'work'],
@@ -406,11 +406,11 @@ describe('accounts connected through Nous', () => {
   })
 
   it('are none on a Hermes without apps through Nous', async () => {
-    expect(await readHostedAccounts()).toEqual([])
+    expect(await readHostedAccounts(null)).toEqual([])
     routes['connectors.accounts'] = () => {
       throw refused(4031, 'CONNECTORS_UNAVAILABLE')
     }
-    expect(await readHostedAccounts()).toEqual([])
+    expect(await readHostedAccounts(null)).toEqual([])
   })
 
   it('list what works or needs signing in again, with their apps', () => {
@@ -435,10 +435,10 @@ describe('accounts connected through Nous', () => {
 describe('asking first', () => {
   it('reads the answer from the main agent', async () => {
     agreed(false)
-    expect(await consent.hostedConsent()).toBe(false)
+    expect(await consent.hostedConsent(null)).toBe(false)
     consent.forgetHostedConsent()
     agreed(true)
-    expect(await consent.hostedConsent()).toBe(true)
+    expect(await consent.hostedConsent(null)).toBe(true)
   })
 
   it('never connects before the person agreed: nothing reaches Hermes that could make a Nous account', async () => {
@@ -446,7 +446,7 @@ describe('asking first', () => {
     routes['connectors.connect'] = () => started({ state: 'initiated', connect_url: LINK })
     const tab = fakeTab()
     await expect(
-      connectHostedApp(qc as never, { slug: 'slack', name: 'Slack' }, { tab: tab as never }),
+      connectHostedApp(qc as never, null, { slug: 'slack', name: 'Slack' }, { tab: tab as never }),
     ).rejects.toBeInstanceOf(HostedConsentNeeded)
     expect(tab.close).toHaveBeenCalled()
     expect(calls.map((c) => c.method)).toEqual(['profiles.list'])
@@ -458,7 +458,7 @@ describe('asking first', () => {
       throw new Error('Lost connection to Hermes')
     }
     const tab = fakeTab()
-    await connectHostedApp(qc as never, { slug: 'slack', name: 'Slack' }, { tab: tab as never })
+    await connectHostedApp(qc as never, null, { slug: 'slack', name: 'Slack' }, { tab: tab as never })
     expect(connection()).toEqual({ phase: 'failed', message: 'Couldn’t connect Slack. Try again in a moment.' })
     expect(tab.close).toHaveBeenCalled()
     expect(sent('connectors.connect')).toEqual([])
@@ -467,29 +467,29 @@ describe('asking first', () => {
   it('keeps the answer on the main agent, then lets every agent reach the apps', async () => {
     routes['profiles.configure'] = () => ({ ok: true, applied: { ui_meta: true } })
     vi.setSystemTime(new Date('2026-10-28T10:00:00Z'))
-    await agreeToHostedApps(qc as never, ['default', 'scout'])
+    await agreeToHostedApps(qc as never, null, ['default', 'scout'])
     expect(sent('profiles.configure')).toEqual([
       { name: 'default', ui_meta: { 'murmur-nous': { since: Date.parse('2026-10-28T10:00:00Z') } } },
     ])
     expect(allowHostedApps).toHaveBeenCalledWith(['default', 'scout'])
-    expect(await consent.hostedConsent()).toBe(true)
+    expect(await consent.hostedConsent(null)).toBe(true)
     expect(calls.some((c) => c.method === 'profiles.list')).toBe(false)
   })
 
   it('doesn’t count an answer Hermes didn’t keep', async () => {
     routes['profiles.configure'] = () => ({ ok: false, applied: { ui_meta: false } })
-    await expect(agreeToHostedApps(qc as never, ['default'])).rejects.toThrow()
+    await expect(agreeToHostedApps(qc as never, null, ['default'])).rejects.toThrow()
     expect(allowHostedApps).not.toHaveBeenCalled()
   })
 
   it('lets agents use apps from before Murmur asked, when this Hermes has a Nous identity already', async () => {
     agreed(false)
     routes['free_tier.status'] = () => ({ has_guest: true, enabled: false, available: false })
-    expect(await consent.hostedAppsAllowed()).toBe(true)
+    expect(await consent.hostedAppsAllowed(null)).toBe(true)
     expect(sent('free_tier.status')).toEqual([{ profile: 'default' }])
     consent.forgetHostedConsent()
     routes['free_tier.status'] = () => ({ has_guest: false, enabled: false, available: false })
-    expect(await consent.hostedAppsAllowed()).toBe(false)
+    expect(await consent.hostedAppsAllowed(null)).toBe(false)
   })
 })
 
@@ -503,7 +503,7 @@ describe('connecting an app', () => {
     routes['connectors.operation.status'] = () =>
       status({ state: 'initiated', connect_url: LINK, connection_id: 'ca_new' }, 2)
     const tab = fakeTab()
-    await connectHostedApp(qc as never, { slug: 'slack', name: 'Slack' }, { tab: tab as never })
+    await connectHostedApp(qc as never, null, { slug: 'slack', name: 'Slack' }, { tab: tab as never })
     expect(sent('connectors.connect')).toEqual([
       { profile: 'default', owner: { type: 'account' }, connectors: ['slack'] },
     ])
@@ -514,8 +514,8 @@ describe('connecting an app', () => {
     expect(connection()).toEqual({ phase: 'done' })
     expect(tab.close).toHaveBeenCalled()
     // The first connect makes the identity, and with it the person's own catalog.
-    expect(qc.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['hosted-accounts'] })
-    expect(qc.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['hosted-catalog'] })
+    expect(qc.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['hosted-accounts', null] })
+    expect(qc.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['hosted-catalog', null] })
     expect(sent('connection.respond')).toEqual([])
   })
 
@@ -525,7 +525,7 @@ describe('connecting an app', () => {
     routes['connectors.operation.status'] = () =>
       status({ state: link ? 'initiated' : 'pending', connect_url: link, connection_id: 'ca_new' }, link ? 2 : 1)
     const tab = fakeTab()
-    await connectHostedApp(qc as never, { slug: 'slack', name: 'Slack' }, { tab: tab as never })
+    await connectHostedApp(qc as never, null, { slug: 'slack', name: 'Slack' }, { tab: tab as never })
     expect(connection()).toEqual({ phase: 'starting' })
     expect(tab.location.replace).not.toHaveBeenCalled()
 
@@ -540,10 +540,10 @@ describe('connecting an app', () => {
   it('needs a tap when the browser blocked the tab', async () => {
     routes['connectors.connect'] = () => started({ state: 'initiated', connect_url: LINK })
     vi.stubGlobal('window', { open: vi.fn(() => null) })
-    await connectHostedApp(qc as never, { slug: 'slack', name: 'Slack' }, { tab: null })
+    await connectHostedApp(qc as never, null, { slug: 'slack', name: 'Slack' }, { tab: null })
     expect(connection()).toEqual({ phase: 'blocked', url: LINK })
     vi.stubGlobal('window', { open: vi.fn(() => ({ opener: {} })) })
-    openHostedSignIn('slack')
+    openHostedSignIn(null, 'slack')
     expect(window.open).toHaveBeenCalledWith(LINK, '_blank')
     expect(connection()).toEqual({ phase: 'signing-in', url: LINK })
   })
@@ -555,7 +555,7 @@ describe('connecting an app', () => {
         { settled: true, settled_at: 1_800_000_001, settled_by: 'all_resolved' },
       )
     const tab = fakeTab()
-    await connectHostedApp(qc as never, { slug: 'slack', name: 'Slack' }, { tab: tab as never })
+    await connectHostedApp(qc as never, null, { slug: 'slack', name: 'Slack' }, { tab: tab as never })
     expect(connection()).toEqual({ phase: 'done' })
     expect(tab.close).toHaveBeenCalled()
     expect(sent('connectors.operation.status')).toEqual([])
@@ -569,7 +569,7 @@ describe('connecting an app', () => {
       connector: 'slack',
       status: 'removed',
     })
-    await connectHostedApp(qc as never, { slug: 'slack', name: 'Slack' }, { tab: fakeTab() as never })
+    await connectHostedApp(qc as never, null, { slug: 'slack', name: 'Slack' }, { tab: fakeTab() as never })
     emit('connection.update', update('failed', 3, { detail: "not allowed by your organization's policy" }))
     expect(connection()).toEqual({ phase: 'failed', message: 'Slack isn’t allowed for your Nous Research account.' })
     await flush()
@@ -581,14 +581,14 @@ describe('connecting an app', () => {
 
   it('says a sign-in took too long when Hermes gave up on it', async () => {
     routes['connectors.connect'] = () => started({ state: 'initiated', connect_url: LINK, connection_id: 'ca_new' })
-    await connectHostedApp(qc as never, { slug: 'slack', name: 'Slack' }, { tab: fakeTab() as never })
+    await connectHostedApp(qc as never, null, { slug: 'slack', name: 'Slack' }, { tab: fakeTab() as never })
     emit('connection.update', update('expired', 3))
     expect(connection()).toEqual({ phase: 'failed', message: 'The sign-in took too long. Try again.' })
   })
 
   it('ignores a frame older than one it has', async () => {
     routes['connectors.connect'] = () => started({ state: 'initiated', connect_url: LINK }, { seq: 5 })
-    await connectHostedApp(qc as never, { slug: 'slack', name: 'Slack' }, { tab: fakeTab() as never })
+    await connectHostedApp(qc as never, null, { slug: 'slack', name: 'Slack' }, { tab: fakeTab() as never })
     emit('connection.update', update('failed', 4))
     emit('connection.update', update('failed', 5))
     expect(connection()?.phase).toBe('signing-in')
@@ -600,7 +600,7 @@ describe('connecting an app', () => {
       throw refused(4004, 'UNKNOWN_OPERATION', 'No open operation with that op_id.')
     }
     routes['connectors.accounts'] = () => ({ accounts: [account({ connection_id: 'ca_new' })] })
-    await connectHostedApp(qc as never, { slug: 'slack', name: 'Slack' }, { tab: fakeTab() as never })
+    await connectHostedApp(qc as never, null, { slug: 'slack', name: 'Slack' }, { tab: fakeTab() as never })
     await vi.advanceTimersByTimeAsync(2500)
     expect(sent('connectors.operation.status')).toEqual([
       { profile: 'default', owner: { type: 'account' }, op_id: 'a1b2c3d4e5f6' },
@@ -612,7 +612,7 @@ describe('connecting an app', () => {
     routes['connectors.connect'] = () => started({ state: 'initiated', connect_url: LINK })
     routes['connectors.operation.wake'] = () => ({ status: 'ok' })
     routes['connectors.operation.status'] = () => status({ state: 'connected', resolved: true }, 3, true)
-    await connectHostedApp(qc as never, { slug: 'slack', name: 'Slack' }, { tab: fakeTab() as never })
+    await connectHostedApp(qc as never, null, { slug: 'slack', name: 'Slack' }, { tab: fakeTab() as never })
     visibility?.()
     await flush()
     expect(sent('connectors.operation.wake')).toEqual([
@@ -626,8 +626,8 @@ describe('connecting an app', () => {
     routes['connection.respond'] = () => ({ status: 'ok', settled: true })
     routes['connectors.accounts.remove'] = () => ({ connection_id: 'ca_new', connector: 'slack', status: 'removed' })
     const tab = fakeTab()
-    await connectHostedApp(qc as never, { slug: 'slack', name: 'Slack' }, { tab: tab as never })
-    await cancelHostedConnect(qc as never, 'slack')
+    await connectHostedApp(qc as never, null, { slug: 'slack', name: 'Slack' }, { tab: tab as never })
+    await cancelHostedConnect(qc as never, null, 'slack')
     expect(connection()).toBeUndefined()
     expect(tab.close).toHaveBeenCalled()
     expect(sent('connection.respond')[0]).toMatchObject({ op_id: 'a1b2c3d4e5f6', result: { settled_by: 'continue' } })
@@ -643,6 +643,7 @@ describe('connecting an app', () => {
     routes['connection.respond'] = () => ({ status: 'ok', settled: true })
     await connectHostedApp(
       qc as never,
+      null,
       { slug: 'slack', name: 'Slack' },
       { tab: fakeTab() as never, account: { id: 'ca_slack_0' } },
     )
@@ -667,7 +668,7 @@ describe('connecting an app', () => {
       )
     }
     const tab = fakeTab()
-    await connectHostedApp(qc as never, { slug: 'slack', name: 'Slack' }, { tab: tab as never })
+    await connectHostedApp(qc as never, null, { slug: 'slack', name: 'Slack' }, { tab: tab as never })
     expect(connection()).toEqual({
       phase: 'failed',
       message: 'Nous Research couldn’t set up apps just now. Try again in about 5 minutes.',
@@ -735,16 +736,16 @@ describe('disconnecting', () => {
       connector: 'slack',
       status: 'removed',
     })
-    await disconnectHostedApp(qc as never, slack, 'Slack')
+    await disconnectHostedApp(qc as never, null, slack, 'Slack')
     expect(sent('connectors.accounts.remove')).toEqual([{ profile: 'default', connection_id: 'ca_slack_1' }])
-    expect(qc.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['hosted-accounts'] })
+    expect(qc.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['hosted-accounts', null] })
   })
 
   it('counts one Nous no longer has as done', async () => {
     routes['connectors.accounts.remove'] = () => {
       throw refused(4041, 'CONNECTION_NOT_FOUND', 'Connector account not found.')
     }
-    await expect(disconnectHostedApp(qc as never, slack, 'Slack')).resolves.toBeUndefined()
+    await expect(disconnectHostedApp(qc as never, null, slack, 'Slack')).resolves.toBeUndefined()
   })
 
   it('says when Nous couldn’t be reached, and puts the row back', async () => {
@@ -752,9 +753,9 @@ describe('disconnecting', () => {
       throw refused(5034, 'ACCOUNTS_UNAVAILABLE', 'Connector accounts are unavailable.')
     }
     qc.getQueryData.mockReturnValueOnce([slack] as never)
-    await expect(disconnectHostedApp(qc as never, slack, 'Slack')).rejects.toThrow(
+    await expect(disconnectHostedApp(qc as never, null, slack, 'Slack')).rejects.toThrow(
       'Couldn’t reach Nous Research to disconnect Slack. Try again in a moment.',
     )
-    expect(qc.setQueryData).toHaveBeenLastCalledWith(['hosted-accounts'], [slack])
+    expect(qc.setQueryData).toHaveBeenLastCalledWith(['hosted-accounts', null], [slack])
   })
 })

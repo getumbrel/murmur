@@ -2,20 +2,17 @@ import { useEffect, useState } from 'react'
 import { LayoutGroup, motion } from 'motion/react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { Check, Info, Plus } from 'lucide-react'
-import { Button } from '@/ui/button'
+import { Check, ChevronRight, Plus } from 'lucide-react'
 import { Buddy, BuddyStack } from '@/ui/buddy'
 import { Label } from '@/ui/field'
 import { ListGroup, ListRow } from '@/ui/list'
 import { Sheet } from '@/ui/sheet'
 import { Spinner } from '@/ui/spinner'
 import { cn } from '@/lib/cn'
-import { tabHermes } from '@/hermes/instance'
 import {
   connectionApi,
   connectionsKey,
   ssoOnly,
-  switchHermes,
   useHermesManager,
   type ConnectionRequest,
   type HermesConnection,
@@ -33,16 +30,17 @@ import {
   useOnUmbrel,
 } from '@/features/connection/hermes-connection-form'
 import { Field } from '@/features/connection/fields'
-import { hermesDetail, toneOf } from '@/features/connection/switcher'
+import { hermesDetail, toneOf } from '@/features/connection/describe'
 import { StatusDot } from '@/features/connection/fields'
 import { agentHue } from '@/features/onboarding/setup-copy'
 import { ask } from './ask'
 import { Tile } from './page'
 import { ServerIcon } from '@/ui/icons'
 
-// Settings → Server: every Hermes this Murmur knows, the way iOS lists Wi-Fi
-// networks. A tap moves to that Hermes; (i) opens its details (name, address,
-// password, Forget). "Add another server" connects one more and moves to it.
+// Settings → Server: every Hermes this Murmur has. All of them are in use at
+// once, their agents side by side in the one list, so there's nothing to
+// choose here: a tap opens a server's details (name, address, password,
+// Forget), and "Add another server" brings one more's agents in.
 // Before any Hermes is set up, it's just the connection form. On screen each
 // is a "server", named for where it is ("Built-in", "Hermes Agent", a host),
 // so none reads like the main agent (whom Hermes also calls "Hermes").
@@ -76,7 +74,6 @@ export function HermesSection() {
   if (!connections.length || (connections.length === 1 && connections[0].source === 'default')) {
     return <HermesConnectionForm embedded />
   }
-  const inUse = tabHermes() ?? list.data!.active
   const open = connections.find((c) => c.id === details)
   const starting = setup?.builtin?.state === 'starting'
   const takenFound = new Set(Object.values(moved))
@@ -87,13 +84,13 @@ export function HermesSection() {
         title={connections.length > 1 ? 'Your servers' : undefined}
         footer={
           connections.length > 1
-            ? 'Murmur uses one server at a time. Each keeps its own agents, chats and groups.'
-            : 'Running Hermes somewhere else too, like on another computer? Add it, then switch between them.'
+            ? 'Their agents are side by side in Murmur. Each server keeps its own agents, chats and groups.'
+            : 'Running Hermes somewhere else too, like on another computer? Add it, and its agents join these.'
         }
       >
         {connections.map((c) => (
           <motion.div key={c.id} layoutId={`hermes-${moved[c.id] ?? c.id}`} transition={{ type: 'spring', duration: 0.35, bounce: 0 }} data-has-icon="">
-            <HermesRow hermes={c} inUse={c.id === inUse} starting={isBuiltinHermes(c) && starting} onDetails={() => setDetails(c.id)} />
+            <HermesRow hermes={c} starting={isBuiltinHermes(c) && starting} onDetails={() => setDetails(c.id)} />
           </motion.div>
         ))}
       </ListGroup>
@@ -121,7 +118,7 @@ export function HermesSection() {
         />
       )}
 
-      <DetailsSheet hermes={open} inUse={open?.id === inUse} starting={starting} onClose={() => setDetails(null)} />
+      <DetailsSheet hermes={open} starting={starting} onClose={() => setDetails(null)} />
       <AddSheet open={!!adding} prefill={adding ?? undefined} onOpenChange={(o) => !o && setAdding(null)} />
     </LayoutGroup>
   )
@@ -162,9 +159,9 @@ function Suggestions({
     ? 'A Hermes that comes with Murmur, for a separate set of agents.'
     : one
       ? one.where === 'umbrel'
-        ? 'Your Hermes Agent app. Add it to switch between its agents and these.'
-        : 'Add it to switch between its agents and these.'
-      : 'Add one to switch between them.'
+        ? 'Your Hermes Agent app. Add it, and its agents join these.'
+        : 'Add it, and its agents join these.'
+      : 'Add one, and its agents join these.'
 
   const add = async (id: string, name: string) => {
     if (busy) return
@@ -186,12 +183,7 @@ function Suggestions({
       onAdded(id, connection.id)
       qc.setQueryData(connectionsKey, { active: result.active, connections: result.connections })
       void qc.invalidateQueries({ queryKey: setupKey })
-      toast(`Added ${connection.name}`, {
-        action: {
-          label: 'Switch',
-          onClick: () => void switchHermes(connection).catch((e: unknown) => toast.error(errorText(e, 'Couldn’t switch. Try again.'))),
-        },
-      })
+      toast(`Added ${connection.name}`)
     } catch (e) {
       toast.error(errorText(e, `Couldn’t add ${name}. Try again.`))
     } finally {
@@ -295,48 +287,31 @@ function AddPill({ label, busy, onClick }: { label: string; busy: boolean; onCli
   )
 }
 
-/** A row: tap to use it, (i) for its details. Two buttons side by side, so the row itself isn't one. */
-function HermesRow({ hermes: c, inUse, starting, onDetails }: { hermes: KnownHermes; inUse: boolean; starting?: boolean; onDetails: () => void }) {
-  const use = () => {
-    if (inUse) return onDetails()
-    switchHermes(c).catch((e: unknown) => toast.error(errorText(e, 'Couldn’t switch. Try again.')))
-  }
+/** A row: how it's doing, what it's called, where it is. A tap opens its details. */
+function HermesRow({ hermes: c, starting, onDetails }: { hermes: KnownHermes; starting?: boolean; onDetails: () => void }) {
   return (
-    <div className="flex items-center">
-      <button
-        type="button"
-        onClick={use}
-        aria-current={inUse || undefined}
-        title={inUse ? `${c.name} (in use)` : `Use ${c.name}`}
-        className="flex min-h-13 min-w-0 flex-1 items-center gap-3 py-2.5 pl-4 text-left transition-colors select-none hover:bg-fill-1 focus-visible:-outline-offset-2 active:bg-fill-2"
-      >
-        <span className="flex size-7 flex-none items-center justify-center">
-          <StatusDot tone={toneOf(c, starting)} />
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="block truncate text-body">{c.name}</span>
-          {/* Two lines before it clips, so "Comes with Murmur · Hermes 0.23.1" keeps its version on a phone. */}
-          <span className="line-clamp-2 block text-footnote text-pretty text-ink-2">{hermesDetail(c, { starting })}</span>
-        </span>
-        <span className="flex w-6 flex-none justify-end">
-          {inUse && <Check size={20} strokeWidth={2.25} className="text-accent" aria-label="In use" />}
-        </span>
-      </button>
-      <button
-        type="button"
-        onClick={onDetails}
-        aria-label={`${c.name} details`}
-        title="Details"
-        className="grid min-h-13 w-13 flex-none place-items-center self-stretch text-accent transition-colors select-none hover:bg-fill-1 focus-visible:-outline-offset-2 active:bg-fill-2"
-      >
-        <Info size={20} strokeWidth={1.75} />
-      </button>
-    </div>
+    <button
+      type="button"
+      onClick={onDetails}
+      title={c.name}
+      className="flex min-h-13 w-full items-center gap-3 py-2.5 pr-4 pl-4 text-left transition-colors select-none hover:bg-fill-1 focus-visible:-outline-offset-2 active:bg-fill-2"
+    >
+      <span className="flex size-7 flex-none items-center justify-center">
+        <StatusDot tone={toneOf(c, starting)} />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-body">{c.name}</span>
+        {/* Two lines before it clips, so "Comes with Murmur · Hermes 0.23.1" keeps its version on a phone. */}
+        <span className="line-clamp-2 block text-footnote text-pretty text-ink-2">{hermesDetail(c, { starting })}</span>
+      </span>
+      {/* The glyph sits inside its box; nudge it so its stroke, not its box, meets the edge. */}
+      <ChevronRight size={18} className="-mr-1.5 flex-none text-ink-3" aria-hidden />
+    </button>
   )
 }
 
 /** One Hermes: its name, how Murmur reaches it, and the ways out. */
-function DetailsSheet({ hermes, inUse, starting, onClose }: { hermes?: KnownHermes; inUse: boolean; starting?: boolean; onClose: () => void }) {
+function DetailsSheet({ hermes, starting, onClose }: { hermes?: KnownHermes; starting?: boolean; onClose: () => void }) {
   // Kept while the sheet animates out.
   const [shown, setShown] = useState(hermes)
   useEffect(() => {
@@ -350,21 +325,6 @@ function DetailsSheet({ hermes, inUse, starting, onClose }: { hermes?: KnownHerm
       open={!!hermes}
       onOpenChange={(o) => !o && onClose()}
       title={c?.name ?? 'Server'}
-      footer={
-        c && !inUse ? (
-          <Button
-            size="lg"
-            variant="accent"
-            onClick={() => {
-              // Out of the way first: the sheet slides down as the curtain comes over it.
-              onClose()
-              switchHermes(c).catch((e: unknown) => toast.error(errorText(e, 'Couldn’t switch. Try again.')))
-            }}
-          >
-            Use this server
-          </Button>
-        ) : undefined
-      }
     >
       {c && (
         <div className="space-y-8 pt-1">
@@ -474,7 +434,7 @@ function NameField({ hermes: c }: { hermes: KnownHermes }) {
 /** A found Hermes that needs a sign-in: its address, and how it takes one. */
 type AddPrefill = { url?: string; signIns?: SignInWay[] }
 
-/** Connect one more, then move to it. `prefill`: a found Hermes, when it needs a sign-in. */
+/** Connect one more: its agents join the list. `prefill`: a found Hermes, when it needs a sign-in. */
 function AddSheet({ open, prefill, onOpenChange }: { open: boolean; prefill?: AddPrefill; onOpenChange: (open: boolean) => void }) {
   const { add, list } = useHermesManager()
   const onUmbrel = useOnUmbrel() || !!list.data?.connections.some(isUmbrelHermes)
@@ -485,7 +445,7 @@ function AddSheet({ open, prefill, onOpenChange }: { open: boolean; prefill?: Ad
   }, [open])
 
   return (
-    <Sheet open={open} onOpenChange={onOpenChange} title="Add another server" description="Pick one Murmur found, or enter its address. Murmur checks it, then switches to it.">
+    <Sheet open={open} onOpenChange={onOpenChange} title="Add another server" description="Pick one Murmur found, or enter its address. Murmur checks it, then its agents join yours.">
       <div className="pt-1">
         <HermesConnectionFormView
           key={round}
@@ -507,13 +467,13 @@ function AddSheet({ open, prefill, onOpenChange }: { open: boolean; prefill?: Ad
           added={list.data?.connections.map((c) => c.url)}
           onTest={connectionApi.test}
           onSave={async (req) => {
-            const next = await add.mutateAsync({ ...req, activate: true })
+            const next = await add.mutateAsync(req)
             return next.connection
           }}
           onConnected={(connection: HermesConnection) => {
             if (!connection.id || !connection.name) return
             onOpenChange(false)
-            void switchHermes({ id: connection.id, name: connection.name }, { activated: true })
+            toast(`Added ${connection.name}`)
           }}
         />
       </div>

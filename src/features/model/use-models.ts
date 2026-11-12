@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { api } from '@/hermes/rest'
+import { api, on } from '@/hermes/rest'
 import { rpc } from '@/hermes/gateway'
 import { serviceName } from './names'
 import { planUsage, restingUntil, type PlanUsage } from '@/state/limits'
@@ -13,12 +13,13 @@ export type ModelPick = { model: string; provider: string }
 // asks Hermes to fetch them fresh, then shows what came back.
 const freshened = new Set<string>()
 
-/** Ask Hermes once per page load to fetch a list's models fresh, then reload it. */
-export function freshenModels(path: string, reload: () => void) {
-  if (freshened.has(path)) return
-  freshened.add(path)
+/** Ask Hermes once per page load to fetch a list's models fresh, then reload it. `hermes` for a path that names no agent. */
+export function freshenModels(path: string, reload: () => void, hermes?: string | null) {
+  const key = hermes ? `${hermes} ${path}` : path
+  if (freshened.has(key)) return
+  freshened.add(key)
   const join = path.includes('?') ? '&' : '?'
-  void api.get(`${path}${join}refresh=true`).then(reload, () => freshened.delete(path))
+  void api.get(`${path}${join}refresh=true`, hermes === undefined ? undefined : on(hermes)).then(reload, () => freshened.delete(key))
 }
 
 export type ModelGroup = {

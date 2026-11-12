@@ -9,8 +9,9 @@
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { ios, standalone } from '@/lib/device'
+import { firstHermes, hermesOf, homeOf, HERMES_PARAM, profileOf } from '@/hermes/instance'
 
-/** Where a file lives: its path on the host, and (optionally) the chat it came from. */
+/** Where a file lives: its path on the host, and (optionally) the chat it came from and the agent (its id) whose host that is. */
 export type FileRef = { path: string; sessionId?: string; profile?: string }
 
 export type MediaKind = 'image' | 'video' | 'audio' | 'file'
@@ -91,11 +92,22 @@ export const baseName = (path: string) =>
     .split(/[\\/]/)
     .pop() || path
 
+/**
+ * Which Hermes's disk a file is on: its agent's, or its chat's. Said in the
+ * address (an image or a download carries no header), except for the first
+ * Hermes, whose addresses stay as they always were.
+ */
+function onHost(q: URLSearchParams, ref: Pick<FileRef, 'sessionId' | 'profile'>) {
+  const hermes = ref.profile ? hermesOf(ref.profile) : (homeOf(ref.sessionId) ?? firstHermes())
+  if (hermes && hermes !== firstHermes()) q.set(HERMES_PARAM, hermes)
+  return q
+}
+
 function query(ref: FileRef) {
   const q = new URLSearchParams({ path: ref.path })
   if (ref.sessionId) q.set('session_id', ref.sessionId)
-  if (ref.profile) q.set('profile', ref.profile)
-  return q.toString()
+  if (ref.profile) q.set('profile', profileOf(ref.profile))
+  return onHost(q, ref).toString()
 }
 
 /** A URL the browser can stream from (img/video/audio src, or a download link). */
@@ -225,9 +237,9 @@ export function formatSize(bytes: number) {
 
 export type TextFile = { text: string; truncated: boolean; binary: boolean; byteSize: number; language: string }
 
-/** A text preview (Hermes caps it at 512 KB). Never cached: widgets get rewritten. */
-export async function readText(path: string): Promise<TextFile> {
-  const res = await fetchOk(`/hermes/api/fs/read-text?${new URLSearchParams({ path })}`)
+/** A text preview (Hermes caps it at 512 KB) of a file on an agent's host. Never cached: widgets get rewritten. */
+export async function readText(path: string, profile?: string): Promise<TextFile> {
+  const res = await fetchOk(`/hermes/api/fs/read-text?${onHost(new URLSearchParams({ path }), { profile })}`)
   return res.json()
 }
 

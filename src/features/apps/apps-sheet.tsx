@@ -1,3 +1,4 @@
+import { hermesOf } from '@/hermes/instance'
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { AnimatePresence, motion, useReducedMotion, type Variants } from 'motion/react'
 import { useQueryClient } from '@tanstack/react-query'
@@ -24,6 +25,8 @@ import {
   useHostedCatalog,
   useHostedConnections,
   useHostedConsent,
+  hostedConnection,
+  hostedConnectionsOn,
   type HostedApp,
 } from '@/state/hosted-apps'
 import { queueOpeningLine } from '@/features/chat-screen/opening-line'
@@ -83,14 +86,15 @@ export function AppsSheet({ agent, open, onOpenChange, onAddLogin, onAsk }: Prop
   const [, navigate] = useLocation()
   const reduce = useReducedMotion()
   // Fetched with the page, so the wall is there the moment the sheet opens.
-  const catalog = useCatalog()
+  const hermes = hermesOf(agent.id)
+  const catalog = useCatalog(hermes)
   const [route, setRoute] = useState<Route>({ to: 'list' })
   // Watched while Email is open on a Hermes without it, so a plugin added by hand shows by itself.
   const mail = useMailStatus(agent.id, true, { watch: open && route.to === 'email' })
-  const hosted = useHostedCatalog()
+  const hosted = useHostedCatalog(hermes)
   const servers = useAgentApps(agent.id, open)
-  const connectedHosted = useConnectedHostedApps(open)
-  const consent = useHostedConsent(open && hosted.data?.available === true)
+  const connectedHosted = useConnectedHostedApps(hermes, open)
+  const consent = useHostedConsent(hermes, open && hosted.data?.available === true)
   const status = mail.isError ? null : mail.data
   // Hermes said the agent has no email (no plugin), rather than not answering.
   const missing = mail.data === null
@@ -120,14 +124,14 @@ export function AppsSheet({ agent, open, onOpenChange, onAddLogin, onAsk }: Prop
         const [profile, app] = key.split('\n')
         if (profile === agent.id && (all[key].phase === 'done' || all[key].phase === 'failed')) clearConnection(profile, app)
       }
-      for (const [slug, c] of Object.entries(useHostedConnections.getState()))
-        if (c.phase === 'done' || c.phase === 'failed') clearHostedConnection(slug)
+      for (const [slug, c] of hostedConnectionsOn(useHostedConnections.getState(), hermesOf(agent.id)))
+        if (c.phase === 'done' || c.phase === 'failed') clearHostedConnection(hermesOf(agent.id), slug)
     }, 400)
     return () => clearTimeout(t)
   }, [open, agent.id])
 
   const byName = useMemo(() => new Map((catalog.data ?? []).map((a) => [a.name, a])), [catalog.data])
-  const umbrel = useUmbrel()
+  const umbrel = useUmbrel(hermesOf(agent.id))
 
   const connect = (app: CatalogApp, env?: Record<string, string>) => {
     const name = appName(app.name)
@@ -154,8 +158,8 @@ export function AppsSheet({ agent, open, onOpenChange, onAddLogin, onAsk }: Prop
       if (phase === 'done' || phase === 'failed') clearConnection(agent.id, route.name)
     }
     if (route.to === 'hosted') {
-      const phase = useHostedConnections.getState()[route.slug]?.phase
-      if (phase === 'done' || phase === 'failed') clearHostedConnection(route.slug)
+      const phase = hostedConnection(hermes, route.slug)?.phase
+      if (phase === 'done' || phase === 'failed') clearHostedConnection(hermes, route.slug)
     }
     go(route.to === 'email-form' || route.to === 'email-password' ? { to: 'email' } : { to: 'list' })
   }
@@ -219,7 +223,7 @@ export function AppsSheet({ agent, open, onOpenChange, onAddLogin, onAsk }: Prop
             onAddApp={(app) => (app.required_env.length ? go({ to: 'app', name: app.name }) : connect(app))}
             onEmail={() => go({ to: 'email' })}
             onHosted={(app) => {
-              if (consent.data === true) startHosted(qc, app)
+              if (consent.data === true) startHosted(qc, hermes, app)
               go({ to: 'hosted', slug: app.slug })
             }}
             onOpenHosted={(c) => go({ to: 'hosted', slug: c.app.slug, account: c.account.id })}

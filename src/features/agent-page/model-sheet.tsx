@@ -59,6 +59,7 @@ export function AgentModelSheet({
         )}
 
         <ModelList
+          agent={agent.id}
           options={options}
           query={query}
           selected={current}

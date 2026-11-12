@@ -12,11 +12,18 @@ import { agentAt } from '@/features/home/roster'
 import { AgentCard, NewAgentCard } from '@/features/agent-page/agent-card'
 import { PageBar } from '@/features/agent-page/page-bar'
 import { usePageScroll } from '@/features/agent-page/scroll'
+import { hermesDetail, hostOf } from '@/features/connection/describe'
+import { chooseLivesOn } from '@/features/connection/lives-on'
+import { useServers, type KnownHermes } from '@/state/connection'
+import { hermesOf } from '@/hermes/instance'
+import { cn } from '@/lib/cn'
 
 // All agents: everyone you can talk to, as a gallery of cards, with a card
 // for making another. The main agent leads; the rest follow by who you
 // talked to last (one at work stays put until it replies, as in the roster).
 // With sections, each is a shelf of its own under its name, in the roster's order.
+// With several servers, each server is a shelf instead: its agents under its
+// name and where it is, and a card for making another there.
 
 const grid = 'grid grid-cols-2 gap-3 min-[600px]:grid-cols-3 md:grid-cols-[repeat(auto-fill,minmax(184px,1fr))] md:gap-4'
 
@@ -41,8 +48,10 @@ export function AgentsScreen() {
   const known = new Set(sections.map((s) => s.id))
   const shelf = (id?: string) => sorted?.filter((a) => (id ? sectionOf(a) === id : !known.has(sectionOf(a) ?? ''))) ?? []
   const shelves = sections.map((s) => ({ ...s, agents: shelf(s.id) })).filter((s) => s.agents.length)
+  const servers = useServers()
+  const several = servers.length > 1
   let n = 0
-  const card = (key: string, agent?: Agent) => (
+  const card = (key: string, agent?: Agent, server?: { id: string; name: string }) => (
     <motion.li
       key={key}
       className="grid"
@@ -50,7 +59,18 @@ export function AgentsScreen() {
       animate={{ opacity: 1, y: 0, scale: 1 }}
       transition={{ type: 'spring', duration: 0.5, bounce: 0.18, delay: Math.min(n++, 8) * 0.04 }}
     >
-      {agent ? <AgentCard agent={agent} /> : <NewAgentCard onClick={actions.newAgent} />}
+      {agent ? (
+        <AgentCard agent={agent} />
+      ) : (
+        <NewAgentCard
+          on={server?.name}
+          onClick={() => {
+            // Made from a server's shelf, it lives there.
+            if (server) chooseLivesOn(server.id)
+            actions.newAgent()
+          }}
+        />
+      )}
     </motion.li>
   )
 
@@ -81,24 +101,43 @@ export function AgentsScreen() {
             </p>
           </div>
 
-          <ul className={grid}>
-            {isPending || !sorted
-              ? [0, 1, 2, 3].map((i) => (
-                  <li key={i} className="flex flex-col items-center rounded-2xl bg-fill-1 px-3 pt-6 pb-4">
-                    <Skeleton className="size-18 rounded-full" />
-                    <Skeleton className="mt-4 h-3.5 w-20 rounded-full" />
-                    <Skeleton className="mt-2.5 h-2.5 w-28 rounded-full opacity-60" />
-                    <Skeleton className="mt-4 h-2 w-14 rounded-full opacity-50" />
-                  </li>
-                ))
-              : [...shelf().map((a) => card(a.id, a)), card('new')]}
-          </ul>
-          {shelves.map((s) => (
-            <section key={s.id} className="mt-8 md:mt-10">
-              <h2 className="px-1 pb-3 text-footnote font-semibold text-ink-2">{s.name}</h2>
-              <ul className={grid}>{s.agents.map((a) => card(a.id, a))}</ul>
-            </section>
-          ))}
+          {several && sorted ? (
+            servers.map((server, i) => (
+              <section key={server.id} className={cn(i > 0 && 'mt-8 md:mt-10')} aria-label={server.name}>
+                <h2 className="flex items-baseline gap-2 px-1 pb-3">
+                  <span className="flex-none text-footnote font-semibold text-ink-2">{server.name}</span>
+                  <span className="min-w-0 truncate text-footnote text-ink-3">
+                    {server.status ? hermesDetail({ ...server, status: server.status } as KnownHermes) : hostOf(server.url)}
+                  </span>
+                </h2>
+                <ul className={grid}>
+                  {sorted.filter((a) => hermesOf(a.id) === server.id).map((a) => card(a.id, a))}
+                  {card(`new:${server.id}`, undefined, server)}
+                </ul>
+              </section>
+            ))
+          ) : (
+            <>
+              <ul className={grid}>
+                {isPending || !sorted
+                  ? [0, 1, 2, 3].map((i) => (
+                      <li key={i} className="flex flex-col items-center rounded-2xl bg-fill-1 px-3 pt-6 pb-4">
+                        <Skeleton className="size-18 rounded-full" />
+                        <Skeleton className="mt-4 h-3.5 w-20 rounded-full" />
+                        <Skeleton className="mt-2.5 h-2.5 w-28 rounded-full opacity-60" />
+                        <Skeleton className="mt-4 h-2 w-14 rounded-full opacity-50" />
+                      </li>
+                    ))
+                  : [...shelf().map((a) => card(a.id, a)), card('new')]}
+              </ul>
+              {shelves.map((s) => (
+                <section key={s.id} className="mt-8 md:mt-10">
+                  <h2 className="px-1 pb-3 text-footnote font-semibold text-ink-2">{s.name}</h2>
+                  <ul className={grid}>{s.agents.map((a) => card(a.id, a))}</ul>
+                </section>
+              ))}
+            </>
+          )}
         </div>
         {actions.sheets}
       </div>

@@ -20,9 +20,9 @@
 
 import { useEffect, useState } from 'react'
 import { create } from 'zustand'
-import { api } from '@/hermes/rest'
+import { api, hermesSocket } from '@/hermes/rest'
 import { gateway, rpc, type GatewayEvent } from '@/hermes/gateway'
-import { HERMES_PARAM, scoped, tabHermes } from '@/hermes/instance'
+import { agentIdOn, byHermes, firstHermes, hermesOf, mainOn, scoped } from '@/hermes/instance'
 import { rememberedSet, upkeep } from '@/lib/upkeep'
 import type { GatewayEventMap } from '@/hermes/vendor/gateway-events'
 import type {
@@ -76,9 +76,15 @@ function setUnseen(profile: string, unseen: boolean) {
 
 /** Hermes names a screen in its events by the agent's Hermes home; Murmur names it by the agent. */
 const agentOf = new Map<string, string>()
+/** Two Hermes can keep their agents under the same path: a home is one Hermes's. */
+const homeKey = (hermes: string | null | undefined, key: string) => `${hermes ?? ''}\n${key}`
+
+/** A screen as one Hermes gave it, named by the agent as it is here (`profile` is the agent's id from here on). */
+const from = <S extends Screen>(hermes: string | null | undefined, screen: S): S =>
+  hermes && hermes !== firstHermes() ? { ...screen, profile: agentIdOn(hermes, screen.profile) } : screen
 
 function put(screen: Screen) {
-  agentOf.set(screen.profile_key, screen.profile)
+  agentOf.set(homeKey(hermesOf(screen.profile), screen.profile_key), screen.profile)
   useScreens.setState((s) => ({ screens: { ...s.screens, [screen.profile]: screen } }))
   // A screen that stops is given another chance the next time it starts.
   if (!screen.running) setUnseen(screen.profile, false)
@@ -96,14 +102,14 @@ function wire() {
   wired = true
   gateway.onEvent((ev) => {
     const status = payloadOf(ev, 'display.status') ?? payloadOf(ev, 'display.install.done')?.status
-    if (status?.profile) put(status)
+    if (status?.profile) put(from(ev.hermes, status))
     const lease = payloadOf(ev, 'display.lease')
-    const profile = lease && agentOf.get(lease.profile_key)
+    const profile = lease && agentOf.get(homeKey(ev.hermes ?? firstHermes(), lease.profile_key))
     if (lease && profile) putLease(profile, lease.lease)
   })
   // Hermes knows a viewer only on the connection that made it: a new connection makes a new one.
-  gateway.onState((state) => {
-    if (state !== 'open') viewer = undefined
+  gateway.onState((state, hermes) => {
+    if (state !== 'open') viewers.delete(hermes)
   })
 }
 
@@ -115,7 +121,11 @@ export function loadScreen(profile: string): Promise<Screen | null> {
   const running = asking.get(profile)
   if (running) return running
   const job = rpc<Screen>('display.status', { profile })
-    .then((screen) => (put(screen), screen))
+    .then((answer) => {
+      const screen = from(hermesOf(profile), answer)
+      put(screen)
+      return screen
+    })
     .catch(() => null)
     .finally(() => asking.delete(profile))
   asking.set(profile, job)
@@ -153,27 +163,27 @@ export function useControl(profile: string | undefined): Control {
 
 // ── Watching and taking over ─────────────────────────────────────────────────
 
-/** This window, to Hermes: made on the first watch and kept for the connection, so control survives a redraw. */
-let viewer: string | undefined
+/** This window, to each Hermes: made on the first watch and kept for the connection, so control survives a redraw. */
+const viewers = new Map<string | null, string>()
 
 /** The address of the screen's live picture, with a ticket that's good once, for 30 seconds. */
 export async function watch(profile: string) {
   wire()
+  const hermes = hermesOf(profile)
+  const viewer = viewers.get(hermes)
   const { ticket, path, viewer_id, ...screen } = await rpc<DisplayObserveResult>('display.observe', {
     profile,
     ...(viewer && { viewer_id: viewer }),
   })
-  viewer = viewer_id
-  put(screen)
-  const params = new URLSearchParams({ display_ticket: ticket })
-  const hermes = tabHermes()
-  if (hermes) params.set(HERMES_PARAM, hermes)
-  return `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/hermes${path}?${params}`
+  viewers.set(hermes, viewer_id)
+  put(from(hermes, screen))
+  return hermesSocket(`${path}?${new URLSearchParams({ display_ticket: ticket })}`, hermesOf(profile))
 }
 
 /** Takes the agent's browser, from wherever the person had it: its browser tools wait until it's handed back. */
 export async function takeOver(profile: string, reason = '') {
-  if (!viewer) await watch(profile)
+  if (!viewers.has(hermesOf(profile))) await watch(profile)
+  const viewer = viewers.get(hermesOf(profile))
   const { lease } = await rpc<DisplayLeaseResult>('display.lease.acquire', { profile, viewer_id: viewer, reason })
   useScreens.setState((s) => ({ held: { ...s.held, [profile]: lease.viewer_hash ?? undefined } }))
   putLease(profile, lease)
@@ -181,6 +191,7 @@ export async function takeOver(profile: string, reason = '') {
 
 /** Gives the browser back to the agent, which carries on (one that asked for a hand does by itself). */
 export async function handBack(profile: string) {
+  const viewer = viewers.get(hermesOf(profile))
   let lease = await rpc<DisplayLeaseResult>('display.lease.release', { profile, viewer_id: viewer }).then(
     (r) => r.lease,
     () => undefined,
@@ -265,7 +276,7 @@ export async function stillNow(profile: string): Promise<string | null> {
 
 // ── Every agent's browser on its screen ──────────────────────────────────────
 
-/** The main agent: its Hermes host's screen is what this Hermes can show at all. */
+/** The first Hermes's main agent. A main agent's Hermes host's screen is what that Hermes can show at all. */
 const MAIN = 'default'
 
 const yes = (v: unknown) => v === true || (typeof v === 'string' && /^(true|1|yes|on)$/i.test(v.trim()))
@@ -367,13 +378,17 @@ let known: readonly string[] = []
  * that's offered in the chat (src/features/screen/screen-setup.tsx).
  */
 export async function syncScreens(agentIds: readonly string[]) {
-  if (!(await loadScreen(MAIN))?.installed) return
-  for (const id of [MAIN, ...agentIds.filter((id) => id !== MAIN)]) {
-    // Its browser and its tool to ask with, each checked: one left behind (Murmur closed between the
-    // two) is caught up next time.
-    const { shown, plugin } = await agentState(id)
-    if (!shown || plugin?.status !== 'enabled') await showBrowser(id, plugin)
-    synced.add(id)
+  // Each Hermes for itself: one host having the screen says nothing of another.
+  for (const [hermes, ids] of agentIds.length ? byHermes(agentIds) : [[firstHermes(), []] as const]) {
+    const main = mainOn(hermes)
+    if (!(await loadScreen(main))?.installed) continue
+    for (const id of [main, ...ids.filter((id) => id !== main)]) {
+      // Its browser and its tool to ask with, each checked: one left behind (Murmur closed between the
+      // two) is caught up next time.
+      const { shown, plugin } = await agentState(id)
+      if (!shown || plugin?.status !== 'enabled') await showBrowser(id, plugin)
+      synced.add(id)
+    }
   }
 }
 
@@ -392,8 +407,8 @@ export function useScreenSync(agentIds: readonly string[] | undefined) {
   }, [key])
 }
 
-/** The screen as the main agent's Hermes host has it: what this Hermes can show at all. */
-export const useHostScreen = () => useScreen(MAIN)
+/** The screen as a Hermes's host has it (its main agent's): what that Hermes can show at all. The first Hermes's, unless one is named. */
+export const useHostScreen = (hermes?: string | null) => useScreen(hermes === undefined ? MAIN : mainOn(hermes))
 
 // ── Installing the screen (a Linux Hermes without it) ────────────────────────
 
@@ -425,11 +440,13 @@ export async function installScreen(profile = MAIN) {
   const set = (state: Install) => useInstall.setState({ [profile]: state })
   set({ phase: 'running' })
   const key = (await loadScreen(profile))?.profile_key
+  // Two Hermes can call a home the same thing: only this agent's Hermes is listened to.
+  const mine = (heard: { hermes?: string | null }) => (heard.hermes ?? firstHermes()) === hermesOf(profile)
   let line: string | undefined
   let finish: (done: { code: number; status?: Screen }) => void = () => {}
   const done = new Promise<{ code: number; status?: Screen }>((resolve) => (finish = resolve))
   const offRequest = gateway.onRequest((req) => {
-    if (req.method !== 'display.install.sudo' || req.params.profile_key !== key) return false
+    if (req.method !== 'display.install.sudo' || req.params.profile_key !== key || !mine(req)) return false
     set({
       phase: 'password',
       answer: (password) => {
@@ -439,10 +456,11 @@ export async function installScreen(profile = MAIN) {
     })
   })
   const offEvents = gateway.onEvent((ev) => {
+    if (!mine(ev)) return
     const log = payloadOf(ev, 'display.install.log')
     if (log && log.profile_key === key && log.line.trim()) set({ phase: 'running', line: (line = log.line.trim()) })
     const end = payloadOf(ev, 'display.install.done')
-    if (end && end.profile_key === key) finish(end)
+    if (end && end.profile_key === key) finish({ ...end, status: end.status && from(ev.hermes, end.status) })
   })
   const failed = (command = useScreens.getState().screens[profile]?.install_command) =>
     set({ phase: 'failed', command, line })

@@ -8,9 +8,10 @@
 // Per Hermes, not per agent. The person's Nous identity lives with the main
 // agent and every agent Murmur makes shares it (profiles.create's share_auth),
 // and the connected accounts live with that identity at Nous. So an app
-// connected here serves every agent, and disconnecting it removes it for all
-// of them, at Nous too. Every call names the main agent, so the identity
-// lands where all agents read it.
+// connected here serves every agent on that Hermes, and disconnecting it
+// removes it for all of them, at Nous too. Every call names that Hermes's
+// main agent, so the identity lands where all its agents read it. Everything
+// here says which Hermes (`hermes`: the one the agent in hand lives on).
 //
 // The identity is an account at Nous, created by the first connect. Murmur
 // asks once first (state/hosted-apps-consent.ts), and connectHostedApp won't
@@ -42,7 +43,8 @@ import type {
   ConnectorsConnectResult,
 } from '@/hermes/vendor/gateway-contract.generated'
 import { arrange, isOffered, showSignIn, type CatalogApp } from './apps'
-import { hostedConsent, MAIN_AGENT, recordHostedConsent } from './hosted-apps-consent'
+import { agentIdOn, mainOn } from '@/hermes/instance'
+import { hostedConsent, recordHostedConsent } from './hosted-apps-consent'
 import { allowHostedApps } from './toolsets'
 import { hostedAppFrom, normal, SLUG, TWIN, type HostedApp } from './hosted-apps-names'
 
@@ -106,25 +108,25 @@ export function signInFailureText(name: string, target: Pick<ConnectionOperation
 
 // ── Asking first ────────────────────────────────────────────────────────────
 
-export const hostedConsentKey = ['hosted-consent'] as const
+export const hostedConsentKey = (hermes: string | null) => ['hosted-consent', hermes] as const
 
 /**
- * Whether the person agreed to apps through Nous on this Hermes. Until then,
+ * Whether the person agreed to apps through Nous on a Hermes. Until then,
  * a tap on one of its apps shows the consent step instead of connecting.
  */
-export function useHostedConsent(enabled = true) {
-  return useQuery({ queryKey: hostedConsentKey, enabled, queryFn: hostedConsent, staleTime: Infinity })
+export function useHostedConsent(hermes: string | null, enabled = true) {
+  return useQuery({ queryKey: hostedConsentKey(hermes), enabled, queryFn: () => hostedConsent(hermes), staleTime: Infinity })
 }
 
 /**
- * The consent step's Continue: keeps the answer on this Hermes for every
- * browser, then lets every agent (`agentIds`) reach apps through Nous, in the
- * background (connecting needn't wait for it). Throws when Hermes didn't keep
- * the answer, and then nothing connects.
+ * The consent step's Continue: keeps the answer on that Hermes for every
+ * browser, then lets every agent there (`agentIds`) reach apps through Nous,
+ * in the background (connecting needn't wait for it). Throws when Hermes
+ * didn't keep the answer, and then nothing connects.
  */
-export async function agreeToHostedApps(qc: QueryClient, agentIds: readonly string[]) {
-  await recordHostedConsent()
-  qc.setQueryData(hostedConsentKey, true)
+export async function agreeToHostedApps(qc: QueryClient, hermes: string | null, agentIds: readonly string[]) {
+  await recordHostedConsent(hermes)
+  qc.setQueryData(hostedConsentKey(hermes), true)
   void allowHostedApps(agentIds)
 }
 
@@ -139,9 +141,9 @@ export type HostedCatalog = {
 }
 
 /** Nous's catalog, through Hermes. Its public one until this Hermes has an identity, then the person's own. */
-export async function readHostedCatalog(): Promise<HostedCatalog> {
+export async function readHostedCatalog(hermes: string | null): Promise<HostedCatalog> {
   try {
-    const res = await rpc<ConnectorsCatalogResult>('connectors.catalog', { profile: MAIN_AGENT }, CONNECT_MS)
+    const res = await rpc<ConnectorsCatalogResult>('connectors.catalog', { profile: mainOn(hermes) }, CONNECT_MS)
     return { available: true, apps: res.connectors.filter((row) => SLUG.test(row.slug)).map(hostedAppFrom) }
   } catch (error) {
     if (isMissingMethod(error) || reasonOf(error) === 'CONNECTORS_UNAVAILABLE') return { available: false, apps: [] }
@@ -151,14 +153,14 @@ export async function readHostedCatalog(): Promise<HostedCatalog> {
   }
 }
 
-export const hostedCatalogKey = ['hosted-catalog'] as const
+export const hostedCatalogKey = (hermes: string | null) => ['hosted-catalog', hermes] as const
 
-/** Nous's catalog. The same for every agent, so it's fetched once. */
-export function useHostedCatalog(enabled = true) {
+/** Nous's catalog. The same for every agent on a Hermes, so it's fetched once for each. */
+export function useHostedCatalog(hermes: string | null, enabled = true) {
   return useQuery({
-    queryKey: hostedCatalogKey,
+    queryKey: hostedCatalogKey(hermes),
     enabled,
-    queryFn: readHostedCatalog,
+    queryFn: () => readHostedCatalog(hermes),
     staleTime: 30 * 60_000,
     // Unreachable is an answer; ask again in a while rather than at once.
     refetchInterval: (query) => (query.state.data?.unreachable ? 5 * 60_000 : false),
@@ -272,10 +274,10 @@ export function hostedAccountFrom(row: ConnectorAccountRow): HostedAccount | nul
   }
 }
 
-/** The accounts connected through Nous on this Hermes. None, without a call to Nous, until it has an identity. */
-export async function readHostedAccounts(): Promise<HostedAccount[]> {
+/** The accounts connected through Nous on a Hermes. None, without a call to Nous, until it has an identity. */
+export async function readHostedAccounts(hermes: string | null): Promise<HostedAccount[]> {
   try {
-    const { accounts } = await rpc<ConnectorAccountsResult>('connectors.accounts', { profile: MAIN_AGENT })
+    const { accounts } = await rpc<ConnectorAccountsResult>('connectors.accounts', { profile: mainOn(hermes) })
     return accounts
       .map(hostedAccountFrom)
       .filter((a): a is HostedAccount => a !== null)
@@ -286,10 +288,10 @@ export async function readHostedAccounts(): Promise<HostedAccount[]> {
   }
 }
 
-export const hostedAccountsKey = ['hosted-accounts'] as const
+export const hostedAccountsKey = (hermes: string | null) => ['hosted-accounts', hermes] as const
 
-export function useHostedAccounts(enabled = true) {
-  return useQuery({ queryKey: hostedAccountsKey, enabled, queryFn: readHostedAccounts, staleTime: 30_000 })
+export function useHostedAccounts(hermes: string | null, enabled = true) {
+  return useQuery({ queryKey: hostedAccountsKey(hermes), enabled, queryFn: () => readHostedAccounts(hermes), staleTime: 30_000 })
 }
 
 export type ConnectedHostedApp = { app: HostedApp; account: HostedAccount }
@@ -313,9 +315,9 @@ export function connectedHostedApps(
 }
 
 /** The apps connected through Nous, for the Apps sheet's list. */
-export function useConnectedHostedApps(enabled = true) {
-  const catalog = useHostedCatalog(enabled)
-  const accounts = useHostedAccounts(enabled && catalog.data?.available === true)
+export function useConnectedHostedApps(hermes: string | null, enabled = true) {
+  const catalog = useHostedCatalog(hermes, enabled)
+  const accounts = useHostedAccounts(hermes, enabled && catalog.data?.available === true)
   return { ...accounts, data: accounts.data && connectedHostedApps(catalog.data?.apps, accounts.data) }
 }
 
@@ -339,22 +341,38 @@ export type HostedConnection = {
   message?: string
 }
 
+// Connects under way, by app and the Hermes it's being connected on (an app's
+// slug alone on the first Hermes, as an agent's id is its name there).
 type Store = Record<string, HostedConnection>
+const slot = (hermes: string | null, slug: string) => agentIdOn(hermes, slug)
 export const useHostedConnections = create<Store>(() => ({}))
-const patch = (slug: string, next: HostedConnection | null) =>
+const patch = (hermes: string | null, slug: string, next: HostedConnection | null) =>
   useHostedConnections.setState((all) => {
     const copy = { ...all }
-    if (next) copy[slug] = next
-    else delete copy[slug]
+    if (next) copy[slot(hermes, slug)] = next
+    else delete copy[slot(hermes, slug)]
     return copy
   }, true)
 
-/** How connecting one app is going, in this tab. */
-export const useHostedConnection = (slug: string | undefined) =>
-  useHostedConnections((all) => (slug ? all[slug] : undefined))
+/** How connecting one app on a Hermes is going, in this tab. */
+export const useHostedConnection = (hermes: string | null, slug: string | undefined) =>
+  useHostedConnections((all) => (slug ? all[slot(hermes, slug)] : undefined))
+
+/** How connecting one app on a Hermes is going, as it stands now. */
+export const hostedConnection = (hermes: string | null, slug: string) => useHostedConnections.getState()[slot(hermes, slug)]
+
+/** One Hermes's connects under way, by app. */
+export function hostedConnectionsOn(all: Store, hermes: string | null): [slug: string, connection: HostedConnection][] {
+  return Object.entries(all).flatMap(([key, connection]) => {
+    const at = key.indexOf('~')
+    const slug = at < 0 ? key : key.slice(at + 1)
+    return slot(hermes, slug) === key ? [[slug, connection] as [string, HostedConnection]] : []
+  })
+}
 
 /** One connect in this tab, from the tap to the end. */
 type Flow = {
+  hermes: string | null
   slug: string
   name: string
   tab?: Window | null
@@ -368,7 +386,7 @@ type Flow = {
   over?: boolean
 }
 const flows = new Map<string, Flow>()
-const live = (flow: Flow) => flows.get(flow.slug) === flow && !flow.over
+const live = (flow: Flow) => flows.get(slot(flow.hermes, flow.slug)) === flow && !flow.over
 
 type Snapshot = Pick<ConnectionOperationStatus, 'op_id' | 'seq' | 'settled' | 'settled_by' | 'targets'>
 
@@ -429,9 +447,9 @@ function apply(qc: QueryClient, flow: Flow, snapshot: Snapshot, from: 'reply' | 
   if (phase === 'signing-in' && url && url !== flow.shown) {
     flow.shown = url
     const opened = showSignIn(url, flow.tab)
-    patch(flow.slug, { phase: opened ? 'signing-in' : 'blocked', url })
+    patch(flow.hermes, flow.slug, { phase: opened ? 'signing-in' : 'blocked', url })
   } else if (phase === 'starting') {
-    patch(flow.slug, { phase: 'starting' })
+    patch(flow.hermes, flow.slug, { phase: 'starting' })
   }
   return false
 }
@@ -439,12 +457,12 @@ function apply(qc: QueryClient, flow: Flow, snapshot: Snapshot, from: 'reply' | 
 /** Ends a connect: shows how it went, and lets go of what's left of it at Nous. */
 function finish(qc: QueryClient, flow: Flow, outcome: HostedConnection | null): true {
   flow.over = true
-  flows.delete(flow.slug)
-  patch(flow.slug, outcome)
+  flows.delete(slot(flow.hermes, flow.slug))
+  patch(flow.hermes, flow.slug, outcome)
   // Done: back to Murmur. Otherwise the tab may say what went wrong.
   if (outcome?.phase === 'done') flow.tab?.close()
   else void letGo(flow)
-  void refresh(qc, outcome?.phase === 'done')
+  void refresh(qc, flow.hermes, outcome?.phase === 'done')
   return true
 }
 
@@ -456,21 +474,21 @@ function finish(qc: QueryClient, flow: Flow, outcome: HostedConnection | null): 
 async function letGo(flow: Flow) {
   if (!flow.opId) return
   await rpc('connection.respond', {
-    profile: MAIN_AGENT,
+    profile: mainOn(flow.hermes),
     owner: ACCOUNT,
     op_id: flow.opId,
     result: { settled_by: 'continue' },
   }).catch(() => {})
   const made = flow.target?.connection_id
   if (made && flow.target?.state !== 'connected' && !flow.repair)
-    await rpc('connectors.accounts.remove', { profile: MAIN_AGENT, connection_id: made }).catch(() => {})
+    await rpc('connectors.accounts.remove', { profile: mainOn(flow.hermes), connection_id: made }).catch(() => {})
 }
 
-/** The first connect also gives this Hermes its identity, and with it the person's own catalog. */
-const refresh = (qc: QueryClient, catalog: boolean) =>
+/** The first connect also gives its Hermes its identity, and with it the person's own catalog. */
+const refresh = (qc: QueryClient, hermes: string | null, catalog: boolean) =>
   Promise.all([
-    qc.invalidateQueries({ queryKey: hostedAccountsKey }),
-    catalog && qc.invalidateQueries({ queryKey: hostedCatalogKey }),
+    qc.invalidateQueries({ queryKey: hostedAccountsKey(hermes) }),
+    catalog && qc.invalidateQueries({ queryKey: hostedCatalogKey(hermes) }),
   ])
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -479,7 +497,7 @@ const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
 async function check(qc: QueryClient, flow: Flow): Promise<boolean> {
   try {
     const status = await rpc<ConnectionOperationStatus>('connectors.operation.status', {
-      profile: MAIN_AGENT,
+      profile: mainOn(flow.hermes),
       owner: ACCOUNT,
       op_id: flow.opId,
     })
@@ -494,7 +512,7 @@ async function check(qc: QueryClient, flow: Flow): Promise<boolean> {
 
 async function settleByAccount(qc: QueryClient, flow: Flow): Promise<boolean> {
   const made = flow.target?.connection_id ?? flow.repair
-  const accounts = await readHostedAccounts().catch(() => undefined)
+  const accounts = await readHostedAccounts(flow.hermes).catch(() => undefined)
   if (!live(flow)) return true
   const account = accounts?.find((a) => a.id === made)
   if (account?.state === 'connected') return finish(qc, flow, { phase: 'done' })
@@ -504,6 +522,8 @@ async function settleByAccount(qc: QueryClient, flow: Flow): Promise<boolean> {
 async function follow(qc: QueryClient, flow: Flow) {
   const off = gateway.on('connection.update', (event) => {
     const update = event.payload as ConnectionUpdatePayload | undefined
+    // (Each Hermes numbers its own operations: only the one this connect is on speaks for it.)
+    if (event.hermes !== undefined && event.hermes !== flow.hermes) return
     if (update?.owner?.type !== 'account' || update.op_id !== flow.opId) return
     const over = apply(qc, flow, update, 'event')
     // A new attempt's link only comes with a reply.
@@ -512,7 +532,7 @@ async function follow(qc: QueryClient, flow: Flow) {
   // Back from the sign-in: Hermes reads the account now, not at its next look.
   const back = () => {
     if (document.visibilityState !== 'visible' || !live(flow)) return
-    void rpc('connectors.operation.wake', { profile: MAIN_AGENT, owner: ACCOUNT, op_id: flow.opId })
+    void rpc('connectors.operation.wake', { profile: mainOn(flow.hermes), owner: ACCOUNT, op_id: flow.opId })
       .catch(() => {})
       .then(() => live(flow) && check(qc, flow))
   }
@@ -531,7 +551,7 @@ async function follow(qc: QueryClient, flow: Flow) {
 }
 
 /**
- * Connects an app through Nous, for every agent on this Hermes. `tab` is the
+ * Connects an app through Nous, for every agent on a Hermes. `tab` is the
  * one openSignInTab (state/apps.ts) opened in the tap; `account` signs an
  * account that stopped working in again instead of adding another. Progress
  * is in useHostedConnection. Throws HostedConsentNeeded, before asking Hermes
@@ -539,32 +559,34 @@ async function follow(qc: QueryClient, flow: Flow) {
  */
 export async function connectHostedApp(
   qc: QueryClient,
+  hermes: string | null,
   app: Pick<HostedApp, 'slug' | 'name'>,
   { tab, account }: { tab?: Window | null; account?: Pick<HostedAccount, 'id'> } = {},
 ) {
+  const key = slot(hermes, app.slug)
   let agreed: boolean
   try {
-    agreed = await hostedConsent()
+    agreed = await hostedConsent(hermes)
   } catch (error) {
     // Hermes can't say: it can't connect anything either.
     tab?.close()
-    return patch(app.slug, { phase: 'failed', message: hostedErrorText(app.name, error) })
+    return patch(hermes, app.slug, { phase: 'failed', message: hostedErrorText(app.name, error) })
   }
   if (!agreed) {
     tab?.close()
     throw new HostedConsentNeeded()
   }
-  const earlier = flows.get(app.slug)
+  const earlier = flows.get(key)
   if (earlier) earlier.over = true
-  const flow: Flow = { slug: app.slug, name: app.name, tab, repair: account?.id, seq: -1 }
-  flows.set(app.slug, flow)
-  patch(app.slug, { phase: 'starting' })
+  const flow: Flow = { hermes, slug: app.slug, name: app.name, tab, repair: account?.id, seq: -1 }
+  flows.set(key, flow)
+  patch(hermes, app.slug, { phase: 'starting' })
   let started: ConnectorsConnectResult
   try {
     started = await rpc<ConnectorsConnectResult>(
       'connectors.connect',
       {
-        profile: MAIN_AGENT,
+        profile: mainOn(hermes),
         owner: ACCOUNT,
         connectors: [app.slug],
         ...(account && { reconnect: true, connection_id: account.id }),
@@ -574,10 +596,10 @@ export async function connectHostedApp(
   } catch (error) {
     if (!live(flow)) return
     flow.over = true
-    flows.delete(app.slug)
+    flows.delete(key)
     tab?.close()
-    patch(app.slug, { phase: 'failed', message: hostedErrorText(app.name, error) })
-    void refresh(qc, false)
+    patch(hermes, app.slug, { phase: 'failed', message: hostedErrorText(app.name, error) })
+    void refresh(qc, hermes, false)
     return
   }
   flow.opId = started.op_id
@@ -585,34 +607,34 @@ export async function connectHostedApp(
     // Cancelled while Nous made the link: let that go too. (A second tap's
     // connect shares this operation, and carries on with it.)
     flow.target = started.targets.find((t) => t.name === app.slug)
-    if (!flows.has(app.slug)) void letGo(flow)
+    if (!flows.has(key)) void letGo(flow)
     return
   }
-  void qc.invalidateQueries({ queryKey: hostedAccountsKey })
+  void qc.invalidateQueries({ queryKey: hostedAccountsKey(hermes) })
   if (!apply(qc, flow, started, 'reply')) void follow(qc, flow)
 }
 
 /** Opens a sign-in the browser blocked, from a tap. */
-export function openHostedSignIn(slug: string) {
-  const current = useHostedConnections.getState()[slug]
+export function openHostedSignIn(hermes: string | null, slug: string) {
+  const current = hostedConnection(hermes, slug)
   if (current?.phase !== 'blocked' || !current.url) return
-  if (showSignIn(current.url)) patch(slug, { ...current, phase: 'signing-in' })
+  if (showSignIn(current.url)) patch(hermes, slug, { ...current, phase: 'signing-in' })
 }
 
 /** Stops a connect: closes its tab, and leaves nothing half-made at Nous. */
-export async function cancelHostedConnect(qc: QueryClient, slug: string) {
-  const flow = flows.get(slug)
-  patch(slug, null)
+export async function cancelHostedConnect(qc: QueryClient, hermes: string | null, slug: string) {
+  const flow = flows.get(slot(hermes, slug))
+  patch(hermes, slug, null)
   if (!flow) return
   flow.over = true
-  flows.delete(slug)
+  flows.delete(slot(hermes, slug))
   flow.tab?.close()
   await letGo(flow)
-  void refresh(qc, false)
+  void refresh(qc, hermes, false)
 }
 
 /** Forgets how a connect went, once the person has seen it. */
-export const clearHostedConnection = (slug: string) => patch(slug, null)
+export const clearHostedConnection = (hermes: string | null, slug: string) => patch(hermes, slug, null)
 
 // ── Disconnecting ───────────────────────────────────────────────────────────
 
@@ -624,22 +646,23 @@ export function disconnectErrorText(name: string, error: unknown) {
 }
 
 /**
- * Disconnects an account from every agent on this Hermes, and removes it at
+ * Disconnects an account from every agent on its Hermes, and removes it at
  * Nous. Hermes would make an identity for a call like this one if there were
  * none, so it only takes an account Hermes listed (which means there is one).
  * One Hermes no longer has counts as done. Throws, with words for the person.
  */
-export async function disconnectHostedApp(qc: QueryClient, account: HostedAccount, name: string) {
-  const before = qc.getQueryData<HostedAccount[]>(hostedAccountsKey)
-  qc.setQueryData<HostedAccount[]>(hostedAccountsKey, (list) => list?.filter((a) => a.id !== account.id))
+export async function disconnectHostedApp(qc: QueryClient, hermes: string | null, account: HostedAccount, name: string) {
+  const key = hostedAccountsKey(hermes)
+  const before = qc.getQueryData<HostedAccount[]>(key)
+  qc.setQueryData<HostedAccount[]>(key, (list) => list?.filter((a) => a.id !== account.id))
   try {
-    await rpc('connectors.accounts.remove', { profile: MAIN_AGENT, connection_id: account.id })
+    await rpc('connectors.accounts.remove', { profile: mainOn(hermes), connection_id: account.id })
   } catch (error) {
     if (reasonOf(error) !== 'CONNECTION_NOT_FOUND') {
-      qc.setQueryData(hostedAccountsKey, before)
+      qc.setQueryData(key, before)
       throw new Error(disconnectErrorText(name, error))
     }
   } finally {
-    void qc.invalidateQueries({ queryKey: hostedAccountsKey })
+    void qc.invalidateQueries({ queryKey: key })
   }
 }

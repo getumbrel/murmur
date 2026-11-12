@@ -1,3 +1,4 @@
+import { useServerTags } from '@/features/connection/tag'
 import { AnimatePresence, motion } from 'motion/react'
 import { useState } from 'react'
 import { ChevronDown } from 'lucide-react'
@@ -44,6 +45,8 @@ export function SectionSheet({
   onSave,
   submitting,
 }: Props) {
+  // An agent's server, where another goes by the same name.
+  const tagOf = useServerTags()
   const [name, setName] = useState('')
   const [picked, setPicked] = useState<string[]>([])
   const [pickedGroups, setPickedGroups] = useState<string[]>([])
@@ -135,7 +138,7 @@ export function SectionSheet({
                 on={picked.includes(agent.id)}
                 onToggle={() => toggle(agent.id)}
                 icon={<Buddy hue={agent.hue} size={28} seed={agent.id} />}
-                title={agent.name}
+                title={tagOf(agent.id) ? `${agent.name} · ${tagOf(agent.id)}` : agent.name}
                 detail={sectionOf(agent) !== section?.id ? where(sectionOf(agent))?.name : undefined}
               />
             ))}

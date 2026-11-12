@@ -1,13 +1,15 @@
 import { AnimatePresence, MotionConfig, motion, useReducedMotion } from 'motion/react'
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
-import { useConnection } from '@/hermes/gateway'
+import { useLocation } from 'wouter'
+import { useConnections } from '@/hermes/gateway'
+import { firstHermes, hermesOf, homeOf } from '@/hermes/instance'
+import { troubleOf, useHermesIds, useServers, type HermesConnection, type Trouble } from '@/state/connection'
 import { useAway, type Away } from '@/state/reach'
-import { useHermesList } from '@/state/connection'
 import { Spinner } from '@/ui/spinner'
 import { Orb } from '@/ui/orb'
 import { cn } from '@/lib/cn'
+import { isBuiltinHermes, isUmbrelHermes } from '@/features/connection/hermes-connection-form'
 import { useAwayWords } from '@/features/connection/away-words'
-import { HermesPicker } from '@/features/connection/switcher'
 
 // A Dynamic Island for the connection. It only speaks up when Hermes has been
 // unreachable for a moment (blips under 1.5s never show): a small capsule drops
@@ -20,22 +22,67 @@ import { HermesPicker } from '@/features/connection/switcher'
 // chat's name stays readable, centred on the conversation (beside the sidebar
 // on wide screens, `inset` from the left). While the splash is up (`hold`) it
 // keeps quiet: the splash is already saying "one moment".
+//
+// With several Hermes it speaks for the one the screen in view is about (a
+// chat's agent, a group), by name. On the list itself each Hermes's agents
+// say so where they are (features/home/roster.tsx), so the island stays out of
+// it unless none of them can be reached.
 
 type Phase = 'hidden' | 'connecting' | 'reconnecting' | 'lost' | 'back'
+
+/** The Hermes the screen in view is about; none on a screen that's about them all. */
+function hermesInView(location: string): string | null | undefined {
+  const [, kind, id] = /^\/(chat|chats|agent|group)\/([^/]+)/.exec(location) ?? []
+  if (!id) return undefined
+  return kind === 'group' ? (homeOf(decodeURIComponent(id)) ?? firstHermes()) : hermesOf(decodeURIComponent(id))
+}
 
 const spring = { type: 'spring', visualDuration: 0.38, bounce: 0.22 } as const
 const fold = { type: 'spring', visualDuration: 0.3, bounce: 0.1 } as const
 const swap = { duration: 0.18, ease: [0.16, 1, 0.3, 1] } as const
 
 export function ConnectionBanner({ inset = 0, hold = false }: { inset?: number; hold?: boolean }) {
-  const { state, everOpened } = useConnection()
+  const [location] = useLocation()
+  const ids = useHermesIds()
+  const links = useConnections()
+  const servers = useServers()
   const away = useAway()
+  const several = ids.length > 1
+  const inView = several ? hermesInView(location) : firstHermes()
   // Idle is before the first dial (Connect to Hermes is up): nothing's away yet.
-  return <Island phase={usePhase(state !== 'open' && state !== 'idle', everOpened, hold, !!away)} away={away} inset={inset} />
+  const down = (id: string | null) => {
+    const state = links[id ?? '']?.state ?? 'idle'
+    return state !== 'open' && state !== 'idle'
+  }
+  const about = inView !== undefined ? [inView] : ids
+  const server = inView ? servers.find((s) => s.id === inView) : undefined
+  // One the app can't use as it is (too old, signed out) isn't dialed: said at once, and for as long as it's so.
+  const trouble = several ? troubleOf(server) : undefined
+  const phase = usePhase(
+    about.every(down),
+    about.some((id) => !!links[id ?? '']?.everOpened),
+    hold,
+    !!away,
+    several,
+  )
+  return (
+    <Island
+      phase={trouble && !hold ? 'lost' : phase}
+      away={away}
+      inset={inset}
+      server={several ? server : servers[0]}
+      named={several && !!server}
+      trouble={trouble}
+    />
+  )
 }
 
-/** `away`: it's known what's out of reach, and that it's worth saying (state/reach.ts). */
-function usePhase(down: boolean, everOpened: boolean, hold: boolean, away: boolean) {
+/**
+ * `away`: it's known what's out of reach for everything, and that it's worth
+ * saying (state/reach.ts). `alone`: one of several Hermes may be away by itself,
+ * which only time tells.
+ */
+function usePhase(down: boolean, everOpened: boolean, hold: boolean, away: boolean, alone: boolean) {
   const [phase, setPhase] = useState<Phase>('hidden')
   const shown = useRef(false)
   shown.current = phase === 'connecting' || phase === 'reconnecting' || phase === 'lost'
@@ -64,14 +111,38 @@ function usePhase(down: boolean, everOpened: boolean, hold: boolean, away: boole
     const waited = Date.now() - since.current
     const trying = everOpened ? 'reconnecting' : 'connecting'
     const show = setTimeout(() => setPhase((p) => (p === 'lost' ? p : trying)), Math.max(0, 1500 - waited))
-    return () => clearTimeout(show)
-  }, [down, everOpened, hold, away])
+    // Still away by itself: say what to check, not just "reconnecting". Sooner when it was never reached at all.
+    const give = alone ? setTimeout(() => setPhase('lost'), Math.max(0, (everOpened ? 12_000 : 6000) - waited)) : undefined
+    return () => {
+      clearTimeout(show)
+      clearTimeout(give)
+    }
+  }, [down, everOpened, hold, away, alone])
 
   return phase
 }
 
-/** The pill itself; `phase` drives it (exported for the UI lab). */
-export function Island({ phase, away = 'hermes', inset = 0 }: { phase: Phase; away?: Away; inset?: number }) {
+/**
+ * The pill itself; `phase` drives it (exported for the UI lab). `away` is
+ * what's out of reach, when it's more than Hermes. `server` is the Hermes it
+ * speaks for, called by its name when there are several (`named`); `trouble`
+ * is why that one can't be used, when it's not just away.
+ */
+export function Island({
+  phase,
+  away,
+  inset = 0,
+  server,
+  named = false,
+  trouble,
+}: {
+  phase: Phase
+  away?: Away
+  inset?: number
+  server?: Partial<HermesConnection>
+  named?: boolean
+  trouble?: Trouble
+}) {
   // Open as a capsule first, then widen; fold back before leaving.
   const [open, setOpen] = useState(false)
   const visible = phase !== 'hidden'
@@ -86,11 +157,12 @@ export function Island({ phase, away = 'hermes', inset = 0 }: { phase: Phase; aw
     }
   }, [visible, phase])
 
-  // Offline, or Murmur out of reach: there's nothing to check and it may last
-  // a train ride, so once it's said the island goes, out of the way of what's
-  // being read. The sleeping Buddies go on saying it, and a chat says it's as
-  // it was last seen. It comes back to say "Connected".
-  const resting = phase === 'lost' && away !== 'hermes'
+  // Offline, or Murmur out of reach: it's every agent, there's nothing to
+  // check, and it may last a train ride, so once it's said the island goes,
+  // out of the way of what's being read. The sleeping Buddies go on saying it,
+  // and a chat says it's as it was last seen. It comes back to say "Connected".
+  const everything = away === 'offline' || away === 'murmur'
+  const resting = phase === 'lost' && everything
   const [said, setSaid] = useState(false)
   useEffect(() => {
     if (!resting) return setSaid(false)
@@ -101,19 +173,34 @@ export function Island({ phase, away = 'hermes', inset = 0 }: { phase: Phase; aw
       clearTimeout(leave)
     }
   }, [resting, away])
+  const words = useAwayWords(everything ? away : undefined, visible && everything)
 
-  const [title, body] = useAwayWords(away, visible)!
-
-  // With another Hermes to go to, the island offers the way there: it hangs
-  // where the phone's home keeps its switcher, and a chat has none.
-  // Hermes is the one away: Murmur's server is there to say what else it knows.
-  const hermes = away === 'hermes'
-  const elsewhere = (useHermesList(hermes).data?.connections.length ?? 0) > 1 && hermes
-  const [picking, setPicking] = useState(false)
+  // The Umbrel's own Hermes app, not merely an address from the environment:
+  // a standalone Docker run sets HERMES_URL too, and has no Umbrel to check.
+  const umbrel = isUmbrelHermes(server as HermesConnection | undefined)
+  // Murmur's own: nothing to check but Murmur itself.
+  const builtin = isBuiltinHermes(server as HermesConnection | undefined)
+  // By name where there's more than one to tell apart.
+  const name = (named && server?.name) || 'Hermes'
+  const [title, body] = words ?? [
+    trouble === 'outdated'
+      ? `${name} needs an update`
+      : trouble === 'sign-in'
+        ? `${name} needs signing in`
+        : builtin
+          ? 'Murmur’s built-in Hermes isn’t responding'
+          : `Can’t reach ${name}`,
+    trouble
+      ? 'Settings → Server has the way back.'
+      : builtin
+        ? 'Try restarting Murmur.'
+        : umbrel
+          ? 'Make sure the Hermes Agent app is running on your Umbrel.'
+          : `Make sure ${named ? 'it' : 'Hermes'} is running. Murmur keeps trying.`,
+  ]
 
   return (
     <MotionConfig reducedMotion="user">
-      <HermesPicker open={picking} onOpenChange={setPicking} />
       <div
         role="status"
         aria-live="polite"
@@ -121,8 +208,7 @@ export function Island({ phase, away = 'hermes', inset = 0 }: { phase: Phase; aw
         style={{ left: inset }}
       >
         <AnimatePresence>
-          {/* Steps aside while the picker it opened is up; the list says the same. */}
-          {visible && !picking && !(resting && said) && (
+          {visible && !(resting && said) && (
             <Pill key="pill">
               {/* Icon and words crossfade together, in place, stacked in one
                   cell: the pill keeps the old size until the old words have
@@ -155,32 +241,17 @@ export function Island({ phase, away = 'hermes', inset = 0 }: { phase: Phase; aw
                     >
                       {phase === 'lost' ? (
                         <span className="flex items-center gap-3">
-                          <Hug
-                            className={cn(
-                              'py-2.5 whitespace-normal text-balance text-white/65',
-                              elsewhere ? 'max-w-[12.25rem]' : 'max-w-[15.5rem]',
-                            )}
-                          >
+                          <Hug className="max-w-[15.5rem] py-2.5 whitespace-normal text-balance text-white/65">
                             <span className="block text-white">{title}</span>
                             {body}
                           </Hug>
-                          {elsewhere && (
-                            <button
-                              type="button"
-                              onClick={() => setPicking(true)}
-                              aria-label="Switch server"
-                              className="pressable -mr-1 h-8 flex-none rounded-full bg-white/15 px-3 font-semibold text-white transition-colors hover:bg-white/25 focus-visible:outline-white active:bg-white/25"
-                            >
-                              Switch
-                            </button>
-                          )}
                         </span>
                       ) : phase === 'back' ? (
                         'Connected'
                       ) : phase === 'connecting' ? (
-                        'Connecting to Hermes…'
+                        `Connecting to ${name}…`
                       ) : (
-                        'Reconnecting to Hermes…'
+                        `Reconnecting to ${name}…`
                       )}
                     </motion.span>
                   )}

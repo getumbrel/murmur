@@ -13,9 +13,8 @@
 
 import { rpc } from '@/hermes/gateway'
 import { isMissingMethod, listProfiles } from '@/hermes/compat'
+import { mainOn, profileOf } from '@/hermes/instance'
 
-/** The main agent: where the identity and the answer live. */
-export const MAIN_AGENT = 'default'
 export const CONSENT_KEY = 'murmur-nous'
 
 /** Nous's own page on how it handles data (the one Hermes Desktop links to). */
@@ -25,31 +24,40 @@ type Profile = { name: string; is_default?: boolean; ui_meta?: Record<string, un
 
 /** When the person agreed, from the agents Hermes lists (the main agent's ui_meta), or null. */
 export function consentOf(profiles: readonly Profile[]): Date | null {
-  const main = profiles.find((p) => p.is_default) ?? profiles.find((p) => p.name === MAIN_AGENT)
+  const main = profiles.find((p) => p.is_default) ?? profiles.find((p) => profileOf(p.name) === 'default')
   const meta = main?.ui_meta?.[CONSENT_KEY] as { since?: unknown } | null | undefined
   return typeof meta?.since === 'number' ? new Date(meta.since) : null
 }
 
-// Asked once per page load: it only changes by agreeing, which this tab does
-// itself (another tab's answer is read on its next load).
-let consent: Promise<boolean> | null = null
-let allowed: Promise<boolean> | null = null
+// Asked of each Hermes once per page load: it only changes by agreeing, which
+// this tab does itself (another tab's answer is read on its next load).
+const consent = new Map<string | null, Promise<boolean>>()
+const allowed = new Map<string | null, Promise<boolean>>()
 
-/** Whether the person agreed to apps through Nous on this Hermes. Throws when Hermes can't say. */
-export function hostedConsent(): Promise<boolean> {
-  consent ??= listProfiles<Profile & { is_default: boolean }>()
-    .then((profiles) => consentOf(profiles) !== null)
-    .catch((error) => {
-      consent = null
+/** A promise kept per Hermes until it fails, so a failed read is asked again. */
+function once(kept: Map<string | null, Promise<boolean>>, hermes: string | null, ask: () => Promise<boolean>) {
+  let asked = kept.get(hermes)
+  if (!asked) {
+    asked = ask().catch((error) => {
+      if (kept.get(hermes) === asked) kept.delete(hermes)
       throw error
     })
-  return consent
+    kept.set(hermes, asked)
+  }
+  return asked
 }
 
-/** Whether this Hermes already has a Nous identity made for apps (free_tier.status reads it from disk). */
-async function hasNousGuest() {
+/** Whether the person agreed to apps through Nous on a Hermes. Throws when Hermes can't say. */
+export function hostedConsent(hermes: string | null): Promise<boolean> {
+  return once(consent, hermes, () =>
+    listProfiles<Profile & { is_default: boolean }>({}, hermes).then((profiles) => consentOf(profiles) !== null),
+  )
+}
+
+/** Whether a Hermes already has a Nous identity made for apps (free_tier.status reads it from disk). */
+async function hasNousGuest(hermes: string | null) {
   try {
-    const status = await rpc<{ has_guest?: unknown }>('free_tier.status', { profile: MAIN_AGENT })
+    const status = await rpc<{ has_guest?: unknown }>('free_tier.status', { profile: mainOn(hermes) })
     return status.has_guest === true
   } catch (error) {
     if (isMissingMethod(error)) return false
@@ -64,29 +72,23 @@ async function hasNousGuest() {
  * set one up in a chat). Then nothing new can be created, and switching it off
  * would only take away apps the person already connected.
  */
-export function hostedAppsAllowed(): Promise<boolean> {
-  allowed ??= hostedConsent()
-    .then(async (agreed) => agreed || (await hasNousGuest()))
-    .catch((error) => {
-      allowed = null
-      throw error
-    })
-  return allowed
+export function hostedAppsAllowed(hermes: string | null): Promise<boolean> {
+  return once(allowed, hermes, async () => (await hostedConsent(hermes)) || (await hasNousGuest(hermes)))
 }
 
-/** Records that the person agreed. Throws when Hermes didn't keep it, so nothing connects without it. */
-export async function recordHostedConsent() {
+/** Records that the person agreed, on one Hermes. Throws when Hermes didn't keep it, so nothing connects without it. */
+export async function recordHostedConsent(hermes: string | null) {
   const res = await rpc<{ applied?: { ui_meta?: unknown } }>('profiles.configure', {
-    name: MAIN_AGENT,
+    name: mainOn(hermes),
     ui_meta: { [CONSENT_KEY]: { since: Date.now() } },
   })
   if (res.applied?.ui_meta !== true) throw new Error('Hermes didn’t keep the answer')
-  consent = Promise.resolve(true)
-  allowed = Promise.resolve(true)
+  consent.set(hermes, Promise.resolve(true))
+  allowed.set(hermes, Promise.resolve(true))
 }
 
 /** Forgets what this page load read, so the next question asks Hermes again. */
 export function forgetHostedConsent() {
-  consent = null
-  allowed = null
+  consent.clear()
+  allowed.clear()
 }

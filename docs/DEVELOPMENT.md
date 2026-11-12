@@ -73,8 +73,9 @@ MURMUR_FIND_HERMES='Hermes Agent=http://localhost:18789' \
 - **`/murmur/local`** looks for model servers such as Ollama on the Umbrel network, because the browser can't reach other containers. One that answers with no models is still listed, so the app can say it's there but empty.
 - **Running a model on Hermes's own machine** uses Hermes 0.22's local runtime (`/api/local-models`, through the usual `/hermes` proxy). `src/state/local-tiers.ts` is the table of models Murmur offers, priced the way Hermes's estimator prices a launch; `src/state/local-runtime.ts` installs the runtime if needed, downloads, switches the main agent, and picks a setup up again from Hermes's jobs after a reload. The onboarding playground shows every state (`onboarding.html?screen=connect&open=device&device=downloading`).
 - **`src/hermes/`** talks to Hermes over the same JSON-RPC socket that Hermes Desktop uses:
-  - `gateway.ts` owns the single connection and redials it, and exposes `rpc()`.
+  - `gateway.ts` owns one connection per Hermes and redials each, and exposes `rpc()`.
   - `rest.ts` wraps the dashboard REST API.
+  - `instance.ts`, `route.ts` and `kept.ts` are what makes several Hermes one app: an agent's id says which Hermes it lives on (its plain name on the first, `<hermes>~<name>` on any other), every call is sent to the Hermes of the agent, chat or group it names, and what the browser keeps stays filed per Hermes. [`STANDALONE.md`](STANDALONE.md#more-than-one-hermes) has the rules.
   - `vendor/` holds Hermes's own typed client and the generated wire contract.
 - **`src/state/`** has these stores:
   - `chats.ts` is a zustand store that folds streamed events into chat items.

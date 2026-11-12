@@ -26,7 +26,7 @@ afterEach(() => {
 describe('model servers Hermes can use without being told where', () => {
   it('Ollama and LM Studio on the computer Hermes runs on', async () => {
     network([], { 'http://localhost:11434/v1': ['qwen3:8b'], 'http://localhost:1234/v1': ['qwen3.5-9b'] })
-    expect(await findLocalServers()).toEqual([
+    expect(await findLocalServers(null)).toEqual([
       { name: 'Ollama', baseUrl: 'http://localhost:11434/v1', models: [{ id: 'qwen3:8b', size: null, parameters: null }] },
       { name: 'LM Studio', baseUrl: 'http://localhost:1234/v1', models: [{ id: 'qwen3.5-9b', size: null, parameters: null }] },
     ])
@@ -34,7 +34,7 @@ describe('model servers Hermes can use without being told where', () => {
 
   it('from inside Docker, on the computer around it', async () => {
     network([], { 'http://host.docker.internal:11434/v1': ['qwen3:8b'] })
-    expect(await findLocalServers()).toMatchObject([{ name: 'Ollama', baseUrl: 'http://host.docker.internal:11434/v1' }])
+    expect(await findLocalServers(null)).toMatchObject([{ name: 'Ollama', baseUrl: 'http://host.docker.internal:11434/v1' }])
   })
 
   it('Ollama beside it on an Umbrel, with its sizes, once however many ways Hermes reaches it', async () => {
@@ -44,11 +44,11 @@ describe('model servers Hermes can use without being told where', () => {
       models: [{ id: 'llama3.2:3b', size: 2_019_393_189, parameters: '3.2B' }],
     }
     network([ollama], { 'http://ollama_ollama_1:11434/v1': ['llama3.2:3b'], 'http://host.docker.internal:11434/v1': ['llama3.2:3b'] })
-    expect(await findLocalServers()).toEqual([ollama])
+    expect(await findLocalServers(null)).toEqual([ollama])
   })
 
   it('not what Murmur’s server can reach but Hermes can’t, like an Umbrel’s Ollama for a Hermes on a laptop', async () => {
     network([{ name: 'Ollama', baseUrl: 'http://ollama_ollama_1:11434/v1', models: [] }], {})
-    expect(await findLocalServers()).toEqual([])
+    expect(await findLocalServers(null)).toEqual([])
   })
 })

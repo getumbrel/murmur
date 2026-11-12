@@ -4,6 +4,7 @@
 // follow each other on one timeline, so nothing is heard between them.
 
 import { hermesHeaders } from '@/hermes/rest'
+import { hermesOf, profileOf } from '@/hermes/instance'
 import { SILENCE, speakError, type Spoken } from './voice'
 
 const TYPE = 'audio/mp4; codecs="mp4a.40.2"'
@@ -128,9 +129,9 @@ export class PieceVoice {
 
   private async fetch(item: Item, mine: number) {
     try {
-      const res = await fetch(`/hermes/api/plugins/murmur-voice/say?profile=${encodeURIComponent(this.profile)}`, {
+      const res = await fetch(`/hermes/api/plugins/murmur-voice/say?profile=${encodeURIComponent(profileOf(this.profile))}`, {
         method: 'POST',
-        headers: hermesHeaders({ 'Content-Type': 'application/json' }),
+        headers: hermesHeaders({ 'Content-Type': 'application/json' }, hermesOf(this.profile)),
         body: JSON.stringify({ text: item.text }),
         signal: item.stop.signal,
       })

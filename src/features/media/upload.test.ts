@@ -11,6 +11,7 @@ class HermesError extends Error {
 vi.mock('@/hermes/rest', () => ({
   api: { get: vi.fn() },
   hermesHeaders: () => ({ 'x-murmur-hermes': 'h1' }),
+  on: () => undefined,
   HermesError,
 }))
 vi.mock('@/hermes/compat', () => ({ listProfiles: vi.fn() }))
@@ -62,7 +63,7 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals())
 
 describe('upload', () => {
-  it('streams the file to Hermes, for this tab’s Hermes, and says where it landed', async () => {
+  it('streams the file to Hermes, for the Hermes it’s on, and says where it landed', async () => {
     expect(await upload(file('notes.txt'), '/opt/data/attachments')).toBe('/opt/data/attachments/notes.txt')
     const [xhr] = FakeXhr.made
     expect(xhr.url).toBe('/hermes/api/files/upload-stream')
@@ -81,7 +82,7 @@ describe('upload', () => {
       '/d/README-2',
       '/d/photo.final.png',
     ])
-    expect(api.get).toHaveBeenCalledWith('/api/files?path=%2Fd')
+    expect(api.get).toHaveBeenCalledWith('/api/files?path=%2Fd', undefined)
   })
 
   it('makes the folder with the first file', async () => {

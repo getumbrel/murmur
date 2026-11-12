@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/hermes/gateway', () => ({ gateway: { onEvent: vi.fn(), onState: vi.fn() }, rpc: vi.fn() }))
-vi.mock('@/hermes/instance', () => ({ scoped: (key: string) => key }))
 vi.mock('@/hermes/compat', () => ({ listProfiles: vi.fn() }))
 vi.mock('@/state/chats', () => ({ useChats: Object.assign(vi.fn(), { getState: () => ({ chats: {} }), subscribe: vi.fn() }) }))
 

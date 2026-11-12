@@ -19,6 +19,8 @@ import { HUES } from '@/lib/hues'
 import { cn } from '@/lib/cn'
 import { useMedia } from '@/lib/use-media'
 import { slugFor } from '@/state/agents'
+import { ServerChips } from '@/features/connection/server-chips'
+import { agentIdOn } from '@/hermes/instance'
 import { useKeyboardInset } from '@/features/chat/use-keyboard-inset'
 
 // Make or edit an agent: a name, a colour, what it's for and how it talks.
@@ -244,6 +246,8 @@ export type AgentFieldsProps = Taken & {
   celebrate?: boolean
   /** Saving: the orb gets to work and the fields hold still. */
   busy?: boolean
+  /** Making one, with several servers: the one it will live on, and choosing another. */
+  livesOn?: { hermes: string | null; onChange: (hermes: string) => void }
 }
 
 /** The editor's fields on their own, for surfaces that bring their own chrome. */
@@ -260,6 +264,7 @@ export function AgentFields({
   seed,
   names,
   ids,
+  livesOn,
 }: AgentFieldsProps) {
   // Short phones keep the Name field in the first screenful.
   const short = useMedia('(max-height: 700px)')
@@ -293,7 +298,8 @@ export function AgentFields({
 
   // The id a new agent will get, once typing settles (straight away when saving).
   const typed = draft.name.trim()
-  const future = typed ? slugFor(typed, ids ?? []) : ''
+  // Its id here says where it lives, so its Buddy is the one the roster will show.
+  const future = typed ? agentIdOn(livesOn?.hermes, slugFor(typed, ids ?? [])) : ''
   const [settled, setSettled] = useState(() => future || 'new')
   useEffect(() => {
     if (seed || !future || future === settled) return
@@ -501,6 +507,14 @@ export function AgentFields({
             )}
           </div>
         </div>
+
+        {/* Where it lives: asked only when there's more than one place. */}
+        {livesOn && (
+          <div {...rise(220)}>
+            <Label>Lives on</Label>
+            <ServerChips label="Lives on" value={livesOn.hermes} onChange={livesOn.onChange} />
+          </div>
+        )}
 
         {(onExport || onDelete) && (
           <div className="space-y-2">

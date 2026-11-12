@@ -404,18 +404,19 @@ function Loading() {
 }
 
 function TextPreview({ path }: { path: string }) {
+  const { profile } = useMediaContext()
   const [file, setFile] = useState<TextFile | null>(null)
   const [error, setError] = useState<string | null>(null)
   useEffect(() => {
     let live = true
-    readText(path).then(
+    readText(path, profile).then(
       (f) => live && setFile(f),
       (e) => live && setError(e instanceof Error ? e.message : 'Couldn’t read this file.'),
     )
     return () => {
       live = false
     }
-  }, [path])
+  }, [path, profile])
 
   if (error) return <p className="px-4 py-3 text-footnote text-ink-3">{error}</p>
   if (!file) return <Loading />

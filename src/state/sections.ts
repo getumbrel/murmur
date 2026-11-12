@@ -1,7 +1,7 @@
 import { useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { create } from 'zustand'
 import { scoped } from '@/hermes/instance'
-import { agentsKey, useAgents, type Agent } from '@/state/agents'
+import { agentsKey, mainAgent, useAgents, type Agent } from '@/state/agents'
 import { agentsIn, settle, writeRecord } from '@/state/records'
 
 // Sections: shelves you file agents (and groups) on, so a long roster reads by
@@ -11,8 +11,8 @@ import { agentsIn, settle, writeRecord } from '@/state/records'
 // (ui_meta['hermes-bots'].sectionId and .sectionName), so a section made in
 // either app shows in both, on every device, against any Hermes. The list
 // itself (its order, and which groups sit on each) is Murmur's own, a record of
-// its own on the main agent (ui_meta['murmur-sections']), so editing the main
-// agent never touches it. A section only an agent knows about (made in Hermes
+// its own on the main agent (ui_meta['murmur-sections']; of several Hermes,
+// the first one's), so editing the main agent never touches it. A section only an agent knows about (made in Hermes
 // Desktop) joins the end of the list under the name it carries, and stays only
 // while something is on it: once its agents have all left, it was deleted there.
 
@@ -65,7 +65,7 @@ export function sectionsOf(agents: Agent[] | undefined): Section[] {
     const set = names.get(id)
     return set?.size === 1 ? [...set][0] : undefined
   }
-  const list = stored(agents.find((a) => a.isDefault))
+  const list = stored(mainAgent(agents))
     .filter((s) => !s.adopted || occupied.has(s.id) || s.groups?.length)
     .map((s) => ({ ...s, name: agreed(s.id) ?? s.name }))
   const listed = new Set(list.map((s) => s.id))
@@ -95,7 +95,7 @@ const place = (qc: QueryClient, id: string, section: Section | null) =>
 
 /** The list as `change` makes it from the list as it is now. */
 const writeList = (qc: QueryClient, change: (list: Section[]) => Section[]) => {
-  const main = agentsIn(qc).find((a) => a.isDefault)
+  const main = mainAgent(agentsIn(qc))
   return main ? writeRecord(qc, main.id, LIST, () => change(sectionsOf(agentsIn(qc)))) : Promise.resolve()
 }
 
@@ -127,7 +127,7 @@ export async function file(qc: QueryClient, items: { agents?: string[]; groups?:
   const moving = agents.filter((a) => items.agents?.includes(a.id) && !isOn(a, to))
   // A section renamed in Hermes Desktop has its new name only on its members: the list keeps it as they leave.
   const leaving = new Set(moving.map(sectionOf).filter((id) => id !== to?.id))
-  const listed = new Map(stored(agents.find((a) => a.isDefault)).map((s) => [s.id, s.name]))
+  const listed = new Map(stored(mainAgent(agents)).map((s) => [s.id, s.name]))
   const renamed = sectionsOf(agents).filter((s) => leaving.has(s.id) && listed.has(s.id) && listed.get(s.id) !== s.name)
   const named = (list: Section[]) =>
     list.map((s) => ({ ...s, name: renamed.find((r) => r.id === s.id)?.name ?? s.name }))

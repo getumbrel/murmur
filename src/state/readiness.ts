@@ -3,7 +3,8 @@
 
 import { useQuery } from '@tanstack/react-query'
 import { create } from 'zustand'
-import { rpc, useConnection } from '@/hermes/gateway'
+import { rpc, useAway, useConnection } from '@/hermes/gateway'
+import { firstHermes, hermesIds } from '@/hermes/instance'
 
 export type RuntimeCheck = { ok: boolean; provider?: string; model?: string; source?: string; error?: string }
 
@@ -84,8 +85,10 @@ export function useReadiness(): Readiness {
   const { data, isPending, isError } = useRuntimeCheck()
   const late = useBoot((s) => s.late)
   const open = useConnection((s) => s.state === 'open')
+  // With several Hermes, the first being away is no reason to keep the others waiting.
+  const away = useAway(firstHermes()) && hermesIds().length > 1
   const welcomed = useWelcomed()
-  if (isPending) return late && !open ? 'unknown' : 'loading'
+  if (isPending) return (late || away) && !open ? 'unknown' : 'loading'
   if (isError || !data) return 'unknown'
   if (!data.ok) return 'needs-setup'
   return welcomed ? 'ready' : 'needs-welcome'

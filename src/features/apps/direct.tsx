@@ -1,3 +1,4 @@
+import { hermesOf } from '@/hermes/instance'
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import { useQueryClient } from '@tanstack/react-query'
@@ -152,6 +153,7 @@ export function AppView({
         />
       ) : app ? (
         <Form
+          agent={agent}
           app={app}
           draft={draft}
           onDraft={setDraft}
@@ -345,12 +347,14 @@ type Draft = { here: boolean; values: Record<string, string>; token: string }
  * token; elsewhere, what it always asks for.
  */
 function Form({
+  agent,
   app,
   draft,
   onDraft,
   onConnect,
   onConnectHere,
 }: {
+  agent: Agent
   app: CatalogApp
   draft: Draft
   onDraft: (next: Draft) => void
@@ -359,8 +363,9 @@ function Form({
 }) {
   const label = appName(app.name)
   const local = onUmbrelHere(app.name)
-  const hermesOnUmbrel = useHermesOnUmbrel().data === true
-  const umbrel = useUmbrel()
+  // Whether the agent's own Hermes is on an Umbrel, and which.
+  const hermesOnUmbrel = useHermesOnUmbrel(hermesOf(agent.id)).data === true
+  const umbrel = useUmbrel(hermesOf(agent.id))
   const here = !!local && hermesOnUmbrel && draft.here
   const { values, token } = draft
   const ready = here ? !!token.trim() : app.required_env.every((e) => !e.required || values[e.name]?.trim())

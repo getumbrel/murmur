@@ -1,3 +1,5 @@
+import { hermesOf } from '@/hermes/instance'
+import { chooseSettingsHermes } from '@/features/connection/scope'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react'
 import { useLocation } from 'wouter'
 import { MotionConfig } from 'motion/react'
@@ -62,7 +64,7 @@ import {
   type Voice,
 } from '@/features/talk/voice-setup'
 import { useConnection } from '@/hermes/gateway'
-import { useAway } from '@/state/reach'
+import { useAwayOn } from '@/state/reach'
 import { useChatUsage } from '@/state/insights'
 import { useRunOf } from '@/state/routines'
 import { placeFindings, useChatFindings } from '@/state/findings'
@@ -182,10 +184,11 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
   const runOfChat = useRunOf(agentId, id)
   const run = useRunItems(runOfChat, useSolo(chat?.items ?? (starting ? [starting] : [])))
   // Asleep while nothing of the agent can be reached (state/reach.ts).
-  const away = useAway()
-  const online = useConnection((s) => s.state === 'open' || !s.everOpened) && !away
+  const hermes = hermesOf(agentId)
+  const away = useAwayOn(hermes)
+  const online = useConnection((s) => s.state === 'open' || !s.everOpened, hermes) && !away
   // Your message is waiting for the connection: Hermes hasn't got it, so nothing's thinking about it yet.
-  const connected = useConnection((s) => s.state === 'open')
+  const connected = useConnection((s) => s.state === 'open', hermes)
   const held = !connected && !!run.items.findLast((i) => i.kind === 'user' && i.pending)
   const busy = (status === 'thinking' || status === 'working' || status === 'waiting') && !held
   // What the routines set up here have found since, each where it came in.
@@ -549,7 +552,12 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
   // you're in it. While it's made, what came after the reply falls away; if it can't be, it
   // all comes back and you're where you were. Offered where this Hermes can do it, and not in
   // a routine's run, which is a report.
-  const canCarryOn = useQuery({ queryKey: ['can-continue-chats'], queryFn: canContinue, staleTime: Infinity, retry: false }).data
+  const canCarryOn = useQuery({
+    queryKey: ['can-continue-chats', hermesOf(agentId)],
+    queryFn: () => canContinue(hermesOf(agentId)),
+    staleTime: Infinity,
+    retry: false,
+  }).data
   const [cut, setCut] = useState<{ chat: string; item: string }>()
   /** The chat made that way just now: its "Continued from" line opens into place. */
   const [continued, setContinued] = useState<string>()
@@ -892,7 +900,11 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
           // A fresh reply to the message Hermes already saved, rather than a second copy of it.
           onRetry={id ? () => void regenerate(id).catch(() => toast.error('Couldn’t try again. Try once more in a moment.')) : undefined}
           onErrorAction={(action) => {
-            if (action === 'models') return navigate('/settings/models')
+            if (action === 'models') {
+              // The models of the server this agent lives on.
+              chooseSettingsHermes(hermesOf(agentId))
+              return navigate('/settings/models')
+            }
             if (action === 'continue-here' && id) {
               return void continueHere(id)
                 .then((copy) => copy && navigate(`/chat/${agentId}/${copy}`, { replace: true }))

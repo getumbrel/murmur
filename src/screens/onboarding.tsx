@@ -6,24 +6,20 @@ import { Welcome } from '@/features/onboarding/welcome'
 import { Done } from '@/features/onboarding/done'
 import { Arrived, clearArrived, readArrived } from '@/features/onboarding/arrived'
 import { FirstAgent } from '@/features/onboarding/first-agent'
-import { STEP_COLUMN } from '@/features/onboarding/step'
 import { ConnectFlow } from '@/features/settings/connect-flow'
 import { AskHost } from '@/features/settings/ask'
-import { HermesSwitcher, useCurrentHermes } from '@/features/connection/switcher'
 import type { AgentDraft } from '@/features/agents/agent-editor'
 import { markWelcomed, useReadiness, useWelcomed } from '@/state/readiness'
 import { composeSoul, updateAgent, useAgentChats, useAgents, useInvalidateAgents, type Agent } from '@/state/agents'
 import { useCheckReady } from '@/state/models'
-import { usePrefersReducedMotion } from '@/lib/use-media'
-import { WindowControlsGap } from '@/ui/titlebar'
 
 // First run: welcome → connect a model → shape the first agent → done.
 // People who already use Hermes see the welcome once and go straight in.
 // Having just chosen a Hermes that already has agents (the setup flow in
 // front of the app, features/onboarding/setup-flow.tsx), they're greeted
 // instead: "Your agents are here".
-// With more than one Hermes, the switcher sits top-left on every step, so a
-// Hermes that has no model yet is never a dead end.
+// These steps are for a Murmur with one Hermes. With more, the app is never
+// held here: a Hermes with no model yet waits in Settings → Models.
 
 type Step = 'welcome' | 'connect' | 'agent' | 'done' | 'here'
 
@@ -34,8 +30,6 @@ export function OnboardingScreen({ step: param }: { step?: string }) {
   const welcomed = useWelcomed()
   const fresh = useIsFresh()
   const checkReady = useCheckReady()
-  const reduced = usePrefersReducedMotion()
-  const switching = useSwitcherShown()
 
   // Just chose a Hermes with agents in it: they're greeted once.
   const [arrived] = useState(readArrived)
@@ -100,8 +94,7 @@ export function OnboardingScreen({ step: param }: { step?: string }) {
 
   return (
     <>
-      <Switcher delay={step === 'welcome' && !welcomed && !reduced ? 2.2 : 0.3} />
-      <div data-switcher={switching || undefined}>
+      <div>
         <AnimatePresence mode="wait" initial={false}>
           <motion.div
             key={allowed ? step : 'held'}
@@ -126,38 +119,6 @@ function useIsFresh() {
   if (agents.isError || chats.isError) return false
   if (!agents.data || !chats.data) return undefined
   return agents.data.length === 1 && chats.data.length === 0
-}
-
-// ── Which Hermes ────────────────────────────────────────────────────────────
-
-/**
- * Top-left, opposite Skip and on its line, in the step's own column. Nothing
- * until there are two Hermes. It arrives after the step's title, and after the
- * murmuration on the welcome.
- */
-function Switcher({ delay }: { delay: number }) {
-  return (
-    <div className="pointer-events-none absolute inset-x-0 top-0 z-20">
-      <div className={`flex h-11 items-center mt-[max(8px,env(safe-area-inset-top))] desktop:mt-0 desktop:h-(--titlebar-h) ${STEP_COLUMN}`}>
-        <WindowControlsGap side="start" column={480} />
-        <motion.div
-          className="pointer-events-auto min-w-0"
-          initial={{ opacity: 0, y: -4 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1], delay }}
-        >
-          {/* Its pill's left edge meets the column's text, like the title under it. */}
-          <HermesSwitcher />
-        </motion.div>
-      </div>
-    </div>
-  )
-}
-
-/** Whether HermesSwitcher draws anything: two Hermes or more, one of them this tab's. */
-function useSwitcherShown() {
-  const { list, current } = useCurrentHermes()
-  return !!current && (list?.connections.length ?? 0) >= 2
 }
 
 // ── Shape the main agent ────────────────────────────────────────────────────

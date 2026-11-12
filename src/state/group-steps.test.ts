@@ -11,6 +11,7 @@ vi.mock('@/hermes/rest', () => ({
   api: { get: (path: string) => get(path) },
   hermesHeaders: () => ({}),
   HermesError: class extends Error {},
+  on: () => undefined,
 }))
 vi.mock('@/hermes/gateway', () => ({
   gateway: { onEvent: () => {}, onRequest: () => {}, onState: () => {} },
@@ -18,7 +19,6 @@ vi.mock('@/hermes/gateway', () => ({
   useConnection: Object.assign(() => undefined, { getState: () => ({ state: 'open' }) }),
   whenOpen: async () => {},
 }))
-vi.mock('@/hermes/instance', () => ({ scoped: (key: string) => key }))
 vi.stubGlobal('document', { cookie: '', addEventListener: () => {}, visibilityState: 'visible' })
 vi.stubGlobal('window', { addEventListener: () => {}, setTimeout })
 vi.stubGlobal('addEventListener', () => {})

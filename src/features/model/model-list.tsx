@@ -19,6 +19,8 @@ import type { ModelPick, useModelOptions } from './use-models'
 // pointer passes over.
 
 type Props = {
+  /** Whose models these are. */
+  agent: string
   options: ReturnType<typeof useModelOptions>
   query: string
   /** The one with the tick. */
@@ -33,9 +35,9 @@ type Props = {
 const same = (a: ModelPick | undefined, b: ModelPick) => a?.model === b.model && a.provider === b.provider
 const grow = { type: 'spring', stiffness: 420, damping: 40 } as const
 
-export function ModelList({ options, query, selected, usual, busy, onPick }: Props) {
-  const pins = usePins()
-  const setPinned = useSetPinned()
+export function ModelList({ agent, options, query, selected, usual, busy, onPick }: Props) {
+  const pins = usePins(agent)
+  const setPinned = useSetPinned(agent)
   const hover = useMedia('(hover: hover)')
   const { pinned, groups, mixed } = useMemo(
     () => arrange(options.data?.groups ?? [], pins, query),

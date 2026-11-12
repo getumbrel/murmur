@@ -23,6 +23,7 @@ import { useQuery, type QueryClient } from '@tanstack/react-query'
 import { create } from 'zustand'
 import { api, HermesError } from '@/hermes/rest'
 import { rpc } from '@/hermes/gateway'
+import { isMain, profileOf } from '@/hermes/instance'
 
 export const MAIL_PLUGIN = 'murmur-mail'
 
@@ -355,7 +356,7 @@ export const MAIL_PLUGIN_URL = `https://github.com/${MAIL_PLUGIN_SOURCE.repo}/tr
 
 /** The same install by hand, where Hermes runs, for one agent (`default` is the main one). */
 export const mailPluginCommand = (profile: string) =>
-  `hermes ${profile === 'default' ? '' : `-p ${profile} `}plugins install ${SOURCE} --ref ${MAIL_PLUGIN_SOURCE.ref} --enable`
+  `hermes ${isMain(profile) ? '' : `-p ${profileOf(profile)} `}plugins install ${SOURCE} --ref ${MAIL_PLUGIN_SOURCE.ref} --enable`
 
 /** A clone can take a while on a slow line; Hermes itself gives one five minutes. */
 const INSTALL_MS = 5 * 60_000

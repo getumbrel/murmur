@@ -5,7 +5,8 @@
 // until the connection was given up on.
 
 import { listProfiles } from '@/hermes/compat'
-import { api, HermesError, hermesHeaders } from '@/hermes/rest'
+import { api, HermesError, hermesHeaders, on } from '@/hermes/rest'
+import { firstHermes, hermesOf } from '@/hermes/instance'
 
 /** Pictures Hermes hands the model as they are. Anything else is a file. */
 export const isPhoto = (f: File) => /^image\/(png|jpe?g|gif|webp|bmp)$/i.test(f.type)
@@ -41,7 +42,7 @@ export async function fitPhoto(file: File): Promise<File> {
 
 /** Where Hermes keeps what's sent to an agent: the attachments folder in its home. */
 export async function attachmentsDir(agent: string) {
-  const home = (await listProfiles<{ name: string; is_default: boolean; path?: string }>()).find(
+  const home = (await listProfiles<{ name: string; is_default: boolean; path?: string }>({}, hermesOf(agent))).find(
     (p) => p.name === agent,
   )?.path
   if (!home) throw new Error('Hermes didn’t say where this agent keeps its files.')
@@ -51,17 +52,23 @@ export async function attachmentsDir(agent: string) {
 /**
  * Put a file in `dir` on Hermes, under its own name or, when that's taken,
  * the next free one ("notes-2.txt", the way Hermes names them). Says how far
- * along it is, in hundredths. Returns where it landed.
+ * along it is, in hundredths. Returns where it landed. `hermes` is the one
+ * `dir` is on (`hermesOf(agentId)`).
  */
-export async function upload(file: File, dir: string, onProgress?: (done: number) => void): Promise<string> {
+export async function upload(
+  file: File,
+  dir: string,
+  onProgress?: (done: number) => void,
+  hermes: string | null = firstHermes(),
+): Promise<string> {
   const form = new FormData()
   form.append('file', file)
-  form.append('path', `${dir}/${await freeName(dir, file.name || 'file')}`)
+  form.append('path', `${dir}/${await freeName(dir, file.name || 'file', hermes)}`)
   form.append('overwrite', 'false')
   // XHR, not fetch: only XHR says how much has gone.
   const xhr = new XMLHttpRequest()
   xhr.open('POST', '/hermes/api/files/upload-stream')
-  for (const [key, value] of Object.entries(hermesHeaders())) xhr.setRequestHeader(key, value)
+  for (const [key, value] of Object.entries(hermesHeaders({}, hermes))) xhr.setRequestHeader(key, value)
   let shown = 0
   xhr.upload.onprogress = (e) => {
     const done = Math.floor((e.loaded / e.total) * 100) / 100
@@ -81,9 +88,9 @@ export async function upload(file: File, dir: string, onProgress?: (done: number
   return landed.path
 }
 
-async function freeName(dir: string, name: string) {
+async function freeName(dir: string, name: string, hermes: string | null) {
   const listed = await api
-    .get<{ entries: { name: string }[] }>(`/api/files?${new URLSearchParams({ path: dir })}`)
+    .get<{ entries: { name: string }[] }>(`/api/files?${new URLSearchParams({ path: dir })}`, on(hermes))
     .catch((e) => {
       // Not there yet: Hermes makes it with the first file.
       if (e instanceof HermesError && e.status === 404) return { entries: [] }

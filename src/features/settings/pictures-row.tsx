@@ -4,6 +4,7 @@ import { ListRow } from '@/ui/list'
 import { Toggle } from '@/ui/toggle'
 import { cn } from '@/lib/cn'
 import { usePictures, useSetPictures } from '@/state/pictures'
+import { useScopeHermes } from '@/features/connection/scope'
 import { Tile } from './page'
 import { Swap } from './swap'
 import { PicturesIcon } from '@/ui/icons'
@@ -12,8 +13,9 @@ import { PicturesIcon } from '@/ui/icons'
 // render it when ChatGPT is connected: the pictures come out of that plan.
 
 export function PicturesRow() {
-  const { data: on, isPending } = usePictures()
-  const set = useSetPictures()
+  const hermes = useScopeHermes()
+  const { data: on, isPending } = usePictures(hermes)
+  const set = useSetPictures(hermes)
   const [ready, setReady] = useState(false)
 
   useEffect(() => {

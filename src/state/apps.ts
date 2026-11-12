@@ -11,8 +11,9 @@
 
 import { create } from 'zustand'
 import { useQueries, useQuery, type QueryClient } from '@tanstack/react-query'
-import { api, HermesError } from '@/hermes/rest'
+import { api, HermesError, on } from '@/hermes/rest'
 import { rpc } from '@/hermes/gateway'
+import { firstHermes, hermesOf } from '@/hermes/instance'
 import { isDesktop } from '@/lib/desktop'
 
 export type CatalogApp = {
@@ -101,13 +102,13 @@ const ABOUT: Record<string, string> = {
   'n8n-official': 'Search and run your n8n workflows.',
 }
 
-/** Hermes's catalog. The same for every agent, so it's fetched once. */
-export function useCatalog(enabled = true) {
+/** A Hermes's catalog. The same for every agent there, so it's fetched once for each Hermes. */
+export function useCatalog(hermes: string | null, enabled = true) {
   return useQuery({
-    queryKey: ['apps-catalog'],
+    queryKey: ['apps-catalog', hermes],
     enabled,
     queryFn: async () =>
-      (await api.get<{ entries: CatalogApp[] }>('/api/mcp/catalog')).entries.map((a) =>
+      (await api.get<{ entries: CatalogApp[] }>('/api/mcp/catalog', on(hermes))).entries.map((a) =>
         ABOUT[a.name] ? { ...a, description: ABOUT[a.name] } : a,
       ),
     staleTime: 30 * 60_000,
@@ -204,8 +205,13 @@ const patch = (key: string, next: Connection | null) =>
 export const useConnection = (profile: string, app: string | undefined) =>
   useConnections((all) => (app ? all[keyOf(profile, app)] : undefined))
 
-/** Where the app sends the browser back: Murmur's relay to Hermes. */
-export const returnUrl = (origin: string, app: string) => `${origin}/hermes/api/mcp/oauth/callback/${path(app)}`
+/**
+ * Where the app sends the browser back: Murmur's relay to Hermes. To a Hermes
+ * other than the first, the address says which (the first's stays as it
+ * always was, since apps signed into before know it by that).
+ */
+export const returnUrl = (origin: string, app: string, hermes: string | null = firstHermes()) =>
+  `${origin}/hermes/api/mcp/oauth/callback/${path(app)}${hermes && hermes !== firstHermes() ? `?hermes=${encodeURIComponent(hermes)}` : ''}`
 
 /** What went wrong, in a sentence for the person. `secure`: Murmur is on https or this computer. */
 export function friendlyError(name: string, raw: string, secure: boolean) {
@@ -278,8 +284,11 @@ async function removeServer(profile: string, app: string) {
   }
 }
 
-/** Running chats pick up the change now rather than on their next start. */
-const reload = () => rpc('reload.mcp', { confirm: true }).catch(() => {})
+/** Running chats (on the agent's Hermes) pick up the change now rather than on their next start. */
+const reload = (profile: string) => rpc('reload.mcp', { confirm: true }, undefined, hermesOf(profile)).catch(() => {})
+
+/** A sign-in under way is Hermes's, not an agent's: its address says no agent, so each call says the agent's Hermes. */
+const flowPath = (flowId: string) => `/api/mcp/oauth/flows/${encodeURIComponent(flowId)}`
 
 const refresh = (qc: QueryClient, profile: string) =>
   Promise.all([
@@ -303,7 +312,7 @@ export async function connectApp(
   // A sign-in left open (its tab closed, say) would hold Hermes's place for this app: let it go.
   const stale = useConnections.getState()[key]?.flowId
   patch(key, { phase: 'adding' })
-  if (stale) await api.delete(`/api/mcp/oauth/flows/${encodeURIComponent(stale)}`).catch(() => {})
+  if (stale) await api.delete(flowPath(stale), undefined, on(hermesOf(profile))).catch(() => {})
   let added = false
   try {
     if (!had) {
@@ -317,11 +326,11 @@ export async function connectApp(
     }
     if (app.auth_type !== 'oauth') {
       tab?.close()
-      await reload()
+      await reload(profile)
       await refresh(qc, profile)
       return patch(key, { phase: 'done', added })
     }
-    const config = { mcp_servers: { [app.name]: { oauth: { redirect_uri: returnUrl(location.origin, app.name) } } } }
+    const config = { mcp_servers: { [app.name]: { oauth: { redirect_uri: returnUrl(location.origin, app.name, hermesOf(profile)) } } } }
     await api.put(`/api/config?${q(profile)}`, { config, profile })
     const flow = await startSignIn(profile, app.name)
     if (flow.status === 'error' || !flow.authorization_url) throw new Error(flow.error || 'error')
@@ -407,7 +416,7 @@ export async function connectOnUmbrel(
       `/api/mcp/servers/${path(app.name)}/test?${q(profile)}`,
     )
     if (!probe.ok) throw new Error(probe.error ?? '')
-    await reload()
+    await reload(profile)
     await refresh(qc, profile)
     patch(key, { phase: 'done', token: true, added })
   } catch (e) {
@@ -427,20 +436,20 @@ async function watch(qc: QueryClient, profile: string, app: string, name: string
     if (current()?.flowId !== flowId) return
     let flow: Flow
     try {
-      flow = await api.get<Flow>(`/api/mcp/oauth/flows/${encodeURIComponent(flowId)}`)
+      flow = await api.get<Flow>(flowPath(flowId), on(hermesOf(profile)))
     } catch (e) {
       if (e instanceof HermesError && e.status === 404) return fail('expired')
       continue
     }
     if (current()?.flowId !== flowId) return
     if (flow.status === 'approved') {
-      await reload()
+      await reload(profile)
       await refresh(qc, profile)
       return patch(key, { ...current(), phase: 'done' })
     }
     if (flow.status === 'error') return fail(flow.error ?? '')
   }
-  void api.delete(`/api/mcp/oauth/flows/${encodeURIComponent(flowId)}`).catch(() => {})
+  void api.delete(flowPath(flowId), undefined, on(hermesOf(profile))).catch(() => {})
   return fail('expired')
 
   async function fail(raw: string) {
@@ -456,7 +465,7 @@ export async function cancelConnect(qc: QueryClient, profile: string, app: strin
   const key = keyOf(profile, app)
   const was = useConnections.getState()[key]
   patch(key, null)
-  if (was?.flowId) await api.delete(`/api/mcp/oauth/flows/${encodeURIComponent(was.flowId)}`).catch(() => {})
+  if (was?.flowId) await api.delete(flowPath(was.flowId), undefined, on(hermesOf(profile))).catch(() => {})
   if (was?.added) await removeServer(profile, app).catch(() => {})
   void refresh(qc, profile)
 }
@@ -470,7 +479,7 @@ export async function setAppEnabled(qc: QueryClient, profile: string, app: strin
   qc.setQueryData<AppServer[]>(appsKey(profile), (list) => list?.map((s) => (s.name === app ? { ...s, enabled } : s)))
   try {
     await api.put(`/api/mcp/servers/${path(app)}/enabled?${q(profile)}`, { enabled, profile })
-    await reload()
+    await reload(profile)
   } finally {
     void refresh(qc, profile)
   }
@@ -481,7 +490,7 @@ export async function removeApp(qc: QueryClient, profile: string, app: string) {
   qc.setQueryData<AppServer[]>(appsKey(profile), (list) => list?.filter((s) => s.name !== app))
   try {
     await removeServer(profile, app)
-    await reload()
+    await reload(profile)
   } finally {
     void refresh(qc, profile)
   }

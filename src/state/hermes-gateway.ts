@@ -11,7 +11,8 @@
 // know is to watch for it coming up, or for Hermes's own start giving up.
 
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, HermesError } from '@/hermes/rest'
+import { api, HermesError, on } from '@/hermes/rest'
+import { hermesOf } from '@/hermes/instance'
 import { telegramKey } from '@/state/telegram'
 import { whatsappKey } from '@/state/whatsapp'
 
@@ -69,7 +70,7 @@ export async function startGateway(agentId: string): Promise<Status | null> {
     await new Promise((resolve) => setTimeout(resolve, 1000))
     const [now, action] = await Promise.all([
       api.get<Status>(`/api/status${q(agentId)}`).catch(() => null),
-      api.get<Action>('/api/actions/gateway-start/status').catch(() => null),
+      api.get<Action>('/api/actions/gateway-start/status', on(hermesOf(agentId))).catch(() => null),
     ])
     if (now?.gateway_running) return now
     // Hermes's own `hermes gateway start` gave up: no use waiting for it.

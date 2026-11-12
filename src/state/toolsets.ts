@@ -28,7 +28,7 @@
 import { useEffect } from 'react'
 import { api } from '@/hermes/rest'
 import { rememberedSet, upkeep } from '@/lib/upkeep'
-import { scoped } from '@/hermes/instance'
+import { byHermes, hermesOf, scoped } from '@/hermes/instance'
 import { hostedAppsAllowed } from './hosted-apps-consent'
 import { IMAGE_TOOL, PLAN_TOOL, nextDefer, readDefaultDefer, type ToolSearchConfig } from './tool-search'
 
@@ -85,13 +85,13 @@ export function murmurDefer(current: unknown, defaults: unknown): string[] | nul
  * not given.
  */
 export async function hideDesktopToolsets(profile: string, hosted?: boolean) {
-  const allowed = hosted ?? (await hostedAppsAllowed())
+  const allowed = hosted ?? (await hostedAppsAllowed(hermesOf(profile)))
   const q = `profile=${encodeURIComponent(profile)}`
   const [config, defaults] = await Promise.all([
     api.get<{ agent?: { disabled_toolsets?: unknown }; display?: Display } & ToolSearchConfig>(
       `/api/config?${q}&include_defaults=false`,
     ),
-    readDefaultDefer(),
+    readDefaultDefer(hermesOf(profile)),
   ])
   const next = withHiddenToolsets(config?.agent?.disabled_toolsets, allowed)
   const display = murmurDisplay(config?.display)
@@ -123,24 +123,26 @@ const synced = (hosted: boolean) => (hosted ? syncedOn : syncedOff)
 export function useDesktopToolsSync(agentIds: readonly string[] | undefined) {
   const key = agentIds?.join('\n') ?? ''
   useEffect(() => {
-    const ids = key ? key.split('\n') : []
-    // Every agent is in step for one answer: nothing to ask. The answer only
-    // changes by agreeing, and the tab that agrees puts every agent through.
-    if (ids.every((id) => syncedOn.has(id)) || ids.every((id) => syncedOff.has(id))) return
-    // Unreadable: left for the next load.
-    void upkeep(async () => {
-      const allowed = await hostedAppsAllowed()
-      for (const id of ids.filter((id) => !synced(allowed).has(id)))
-        await hideDesktopToolsets(id, allowed).catch(() => {})
-    }).catch(() => {})
+    // Each Hermes has its own answer about apps through Nous.
+    for (const [hermes, ids] of byHermes(key ? key.split('\n') : [])) {
+      // Every agent is in step for one answer: nothing to ask. The answer only
+      // changes by agreeing, and the tab that agrees puts every agent through.
+      if (ids.every((id) => syncedOn.has(id)) || ids.every((id) => syncedOff.has(id))) continue
+      // Unreadable: left for the next load.
+      void upkeep(async () => {
+        const allowed = await hostedAppsAllowed(hermes)
+        for (const id of ids.filter((id) => !synced(allowed).has(id)))
+          await hideDesktopToolsets(id, allowed).catch(() => {})
+      }).catch(() => {})
+    }
   }, [key])
 }
 
 /**
- * Puts every agent in step after the person agreed to apps through Nous. One
- * that can't be reached now is caught up on a later load.
+ * Puts a Hermes's agents in step after the person agreed to apps through Nous
+ * there. One that can't be reached now is caught up on a later load.
  */
 export async function allowHostedApps(agentIds: readonly string[]) {
-  syncedOff.clear()
+  for (const id of agentIds) syncedOff.delete(id)
   for (const id of agentIds) await hideDesktopToolsets(id, true).catch(() => {})
 }

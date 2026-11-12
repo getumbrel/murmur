@@ -11,8 +11,11 @@
 
 import { useQuery } from '@tanstack/react-query'
 import { api } from '@/hermes/rest'
+import { at } from '@/hermes/at'
+import { openSoon } from '@/hermes/gateway'
 import { rememberedSet, upkeep } from '@/lib/upkeep'
-import { scoped } from '@/hermes/instance'
+import { hermesOf, isMain, mainFor, mainOn, scoped } from '@/hermes/instance'
+import { everyHermes } from '@/hermes/kept'
 import { listProfiles } from '@/hermes/compat'
 
 export const browserTimeZone = () => {
@@ -46,34 +49,34 @@ async function writeTimezone(profile: string, zone: string, { stale = true } = {
   // PUT deep-merges into the file, so only this key changes.
   await api.put(`/api/config?${q(profile)}`, { config: { timezone: zone } })
   zones.set(profile, { zone, at: Date.now() })
-  if (stale) markStale()
+  if (stale) markStale(hermesOf(profile))
 }
 
 // ── Refreshing the routine runner ───────────────────────────────────────────
 
 // Remembered across reloads, so a refresh cut short by closing the tab
-// happens the next time Murmur starts.
-const STALE_KEY = scoped('murmur:routine-runner-stale')
+// happens the next time Murmur starts. Each Hermes has its own runner.
+const staleKey = (hermes: string | null) => scoped('murmur:routine-runner-stale', hermes)
 
-function markStale() {
+function markStale(hermes: string | null) {
   try {
-    localStorage.setItem(STALE_KEY, '1')
+    localStorage.setItem(staleKey(hermes), '1')
   } catch {
     // Private mode: this page load still refreshes it.
   }
 }
 
-function isStale() {
+function isStale(hermes: string | null) {
   try {
-    return localStorage.getItem(STALE_KEY) === '1'
+    return localStorage.getItem(staleKey(hermes)) === '1'
   } catch {
     return false
   }
 }
 
-function clearStale() {
+function clearStale(hermes: string | null) {
   try {
-    localStorage.removeItem(STALE_KEY)
+    localStorage.removeItem(staleKey(hermes))
   } catch {
     // Nothing to clear.
   }
@@ -81,29 +84,30 @@ function clearStale() {
 
 type Status = { gateway_running?: boolean; gateway_busy?: boolean }
 
-let restartTimer: ReturnType<typeof setTimeout> | undefined
-let restarting = false
+const restartTimers = new Map<string | null, ReturnType<typeof setTimeout>>()
+const restarting = new Set<string | null>()
 
-/** Restart the routine runner so it re-reads timezones, waiting until it's idle. */
-async function refreshRunner(attempt = 0) {
-  clearTimeout(restartTimer)
-  if (restarting) return
+/** Restart a Hermes's routine runner so it re-reads timezones, waiting until it's idle. */
+async function refreshRunner(hermes: string | null, attempt = 0) {
+  clearTimeout(restartTimers.get(hermes))
+  if (restarting.has(hermes)) return
+  const h = at(hermes)
   try {
-    const status = await api.get<Status>('/api/status')
+    const status = await h.get<Status>('/api/status')
     // Nothing running (a desktop backend ticks in-process): nothing to refresh.
-    if (!status?.gateway_running) return clearStale()
+    if (!status?.gateway_running) return clearStale(hermes)
     if (status.gateway_busy) {
       // Someone's mid-conversation on another app: try again shortly.
-      if (attempt < 20) restartTimer = setTimeout(() => void refreshRunner(attempt + 1), 30_000)
+      if (attempt < 20) restartTimers.set(hermes, setTimeout(() => void refreshRunner(hermes, attempt + 1), 30_000))
       return
     }
-    restarting = true
-    await api.post('/api/gateway/restart')
-    clearStale()
+    restarting.add(hermes)
+    await h.post('/api/gateway/restart')
+    clearStale(hermes)
   } catch {
     // Best effort: it's retried on the next start, and Hermes's own restart fixes it too.
   } finally {
-    restarting = false
+    restarting.delete(hermes)
   }
 }
 
@@ -117,8 +121,8 @@ type Options = {
 }
 
 /**
- * Give one agent a timezone if it has none: the main agent's when it has one,
- * else this browser's. Returns the zone the agent schedules in.
+ * Give one agent a timezone if it has none: its Hermes's main agent's when it
+ * has one, else this browser's. Returns the zone the agent schedules in.
  *
  * Call it with `{ restart: false }` right after creating an agent: the runner
  * hasn't looked at the new agent yet, so no restart is needed.
@@ -129,43 +133,59 @@ export async function ensureAgentTimezone(profile: string, { restart = true }: O
     checked.add(profile)
     return own
   }
-  const main = profile === 'default' ? '' : await agentZone('default').catch(() => '')
+  const main = isMain(profile) ? '' : await agentZone(mainFor(profile)).catch(() => '')
   const zone = main || browserTimeZone()
   await writeTimezone(profile, zone, { stale: restart })
   checked.add(profile)
-  if (restart) void refreshRunner()
+  if (restart) void refreshRunner(hermesOf(profile))
   return zone
 }
 
 let once: Promise<string[]> | undefined
 
+/** How long a Hermes gets to answer before app start goes on without it (it's looked at on the next start). */
+const AWAY_MS = 3500
+
 /**
  * Call once at app start, after Hermes is reachable. Fills in a timezone for
- * every agent that has none (the main agent from this browser, the rest from
- * the main agent), never overwriting a chosen one, then refreshes the routine
- * runner if anything changed. Quiet: it only looks at agents this browser
- * hasn't checked lately, one at a time when the page is idle. Returns the
- * agents it updated. Safe to call repeatedly: it runs once per load.
+ * every agent that has none (each Hermes's main agent from this browser, the
+ * rest from their main agent), never overwriting a chosen one, then refreshes
+ * the routine runner if anything changed. Quiet: it only looks at agents this
+ * browser hasn't checked lately, one at a time when the page is idle. Returns
+ * the agents it updated. Safe to call repeatedly: it runs once per load.
  */
 export function ensureTimezone(options: Options = {}) {
   once ??= upkeep(async () => {
     const { restart = true } = options
-    const profiles = await listProfiles()
-    // The main agent first: the others take its zone.
-    const names = ['default', ...profiles.map((p) => p.name).filter((n) => n !== 'default')]
+    const all = everyHermes()
     const updated: string[] = []
-    for (const name of names.filter((n) => !checked.has(n))) {
-      // Unreadable: leave it alone rather than guess (and look again next time).
-      const own = await agentZone(name).catch(() => undefined)
-      if (own === undefined) continue
-      if (!own) {
-        const main = name === 'default' ? '' : await agentZone('default').catch(() => '')
-        await writeTimezone(name, main || browserTimeZone())
-        updated.push(name)
+    let failure: unknown
+    for (const hermes of all) {
+      try {
+        // Of several, one that's away is left for the next start.
+        if (all.length > 1 && !(await openSoon(hermes, AWAY_MS))) continue
+        const profiles = await listProfiles({}, hermes)
+        // The main agent first: the others take its zone.
+        const main = mainOn(hermes)
+        const names = [main, ...profiles.map((p) => p.name).filter((n) => n !== main)]
+        for (const name of names.filter((n) => !checked.has(n))) {
+          // Unreadable: leave it alone rather than guess (and look again next time).
+          const own = await agentZone(name).catch(() => undefined)
+          if (own === undefined) continue
+          if (!own) {
+            const zone = name === main ? '' : await agentZone(main).catch(() => '')
+            await writeTimezone(name, zone || browserTimeZone())
+            updated.push(name)
+          }
+          checked.add(name)
+        }
+        if (restart && isStale(hermes)) void refreshRunner(hermes)
+      } catch (error) {
+        failure = error
       }
-      checked.add(name)
     }
-    if (restart && isStale()) void refreshRunner()
+    // One Hermes: its failure is the answer, as it always was.
+    if (failure && all.length === 1) throw failure
     return updated
   }).catch((err) => {
     once = undefined // try again next time

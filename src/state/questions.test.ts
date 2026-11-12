@@ -4,8 +4,8 @@ const get = vi.fn()
 const put = vi.fn(async (_path: string, _body: unknown) => ({}))
 vi.mock('@/hermes/rest', () => ({
   api: { get: (path: string) => get(path), put: (path: string, body: unknown) => put(path, body) },
+  on: () => undefined,
 }))
-vi.mock('@/hermes/instance', () => ({ scoped: (key: string) => key }))
 
 const { QUESTION_WAIT, keepQuestionWait, questionWait } = await import('./questions')
 

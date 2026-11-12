@@ -20,6 +20,7 @@ const call = (method: string) => async (path: string, body?: unknown) => {
 vi.mock('@/hermes/rest', () => ({
   HermesError,
   api: { get: call('GET'), post: call('POST'), put: call('PUT'), delete: call('DELETE') },
+  on: () => undefined,
 }))
 vi.mock('@/hermes/gateway', () => ({ rpc: vi.fn(() => Promise.resolve()) }))
 vi.mock('@/lib/desktop', () => ({ isDesktop: false }))

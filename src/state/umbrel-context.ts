@@ -7,14 +7,14 @@
 //
 // It only ever copies what the main agent already has, so on a Hermes that
 // isn't on an Umbrel there's nothing to copy and nothing happens. An agent that
-// switched the plugin off itself keeps it off.
+// switched the plugin off itself keeps it off. With several Hermes, each
+// agent takes after the main agent of the Hermes it lives on.
 
 import { useEffect } from 'react'
 import { api } from '@/hermes/rest'
 import { rememberedSet, upkeep } from '@/lib/upkeep'
-import { scoped } from '@/hermes/instance'
+import { isMain, mainFor, scoped } from '@/hermes/instance'
 
-const MAIN = 'default'
 export const UMBREL_PLUGIN = 'umbrel-runtime'
 /** Umbrel's skill folders, wherever an image version keeps them. */
 const isUmbrelSkills = (dir: string) => /umbrel/i.test(dir)
@@ -70,17 +70,26 @@ async function bring(profile: string, context: UmbrelContext) {
 
 /** Gives one agent the main agent's Umbrel context. Call after creating an agent. */
 export async function ensureUmbrelContext(profile: string) {
-  if (profile === MAIN) return
-  const context = umbrelContextOf(await read(MAIN))
+  if (isMain(profile)) return
+  const context = umbrelContextOf(await read(mainFor(profile)))
   if (context.plugin || context.skills.length) await bring(profile, context)
   else synced.add(profile)
 }
 
 async function catchUp(ids: string[]) {
-  const missing = ids.filter((id) => id !== MAIN && !synced.has(id))
+  const missing = ids.filter((id) => !isMain(id) && !synced.has(id))
   if (!missing.length) return
-  const context = umbrelContextOf(await read(MAIN))
+  // Each Hermes's main agent, read once.
+  const mains = new Map<string, Promise<UmbrelContext | undefined>>()
+  const contextFor = (id: string) => {
+    const main = mainFor(id)
+    if (!mains.has(main)) mains.set(main, read(main).then(umbrelContextOf, () => undefined))
+    return mains.get(main)!
+  }
   for (const id of missing) {
+    const context = await contextFor(id)
+    // Its Hermes couldn't be read: left for the next load.
+    if (!context) continue
     if (!context.plugin && !context.skills.length) {
       synced.add(id)
       continue
@@ -99,6 +108,6 @@ export function useUmbrelContextSync(agentIds: readonly string[] | undefined) {
   const key = agentIds?.join('\n') ?? ''
   useEffect(() => {
     const ids = key ? key.split('\n') : []
-    if (ids.some((id) => id !== MAIN && !synced.has(id))) void upkeep(() => catchUp(ids)).catch(() => {})
+    if (ids.some((id) => !isMain(id) && !synced.has(id))) void upkeep(() => catchUp(ids)).catch(() => {})
   }, [key])
 }

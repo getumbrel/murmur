@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/hermes/rest', () => ({ api: {} }))
-vi.mock('@/hermes/instance', () => ({ scoped: (key: string) => key }))
+vi.mock('@/hermes/rest', () => ({ api: {}, on: () => undefined }))
 vi.mock('@/lib/upkeep', () => ({ upkeep: () => {}, rememberedSet: () => new Set() }))
 const hostedAppsAllowed = vi.fn(async () => false)
 vi.mock('./hosted-apps-consent', () => ({ hostedAppsAllowed }))

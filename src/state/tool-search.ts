@@ -13,7 +13,7 @@
 // defaults (plus anything the agent added) each time it falls out of step,
 // e.g. after a Hermes update.
 
-import { api } from '@/hermes/rest'
+import { api, on } from '@/hermes/rest'
 
 export const PLAN_TOOL = 'todo_list'
 export const IMAGE_TOOL = 'image_generate'
@@ -45,11 +45,17 @@ export function nextDefer(current: unknown, defaults: unknown, toHand: readonly 
   return same ? null : next
 }
 
-let defaultDefer: Promise<unknown> | null = null
+const defaultDefer = new Map<string | null, Promise<unknown>>()
 
-/** This Hermes's default tool-search list (public, and the same for every agent). */
-export const readDefaultDefer = () =>
-  (defaultDefer ??= api.get<ToolSearchConfig>('/api/config/defaults').then(
-    (d) => d.tools?.tool_search?.defer,
-    () => (defaultDefer = null),
-  ))
+/** A Hermes's default tool-search list (public, and the same for every agent there). Read once; again after a failed read. */
+export function readDefaultDefer(hermes: string | null) {
+  let read = defaultDefer.get(hermes)
+  if (!read) {
+    read = api.get<ToolSearchConfig>('/api/config/defaults', on(hermes)).then(
+      (d) => d.tools?.tool_search?.defer,
+      () => void defaultDefer.delete(hermes),
+    )
+    defaultDefer.set(hermes, read)
+  }
+  return read
+}

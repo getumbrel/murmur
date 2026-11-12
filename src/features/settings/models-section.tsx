@@ -11,6 +11,10 @@ import { disconnect, LOCAL_SLUG, modelName, planUsageLine, setMainModel, useMode
 import { restingUntil } from '@/state/limits'
 import { PlanGauge, Resting, ServiceHeading } from '@/features/model/plan'
 import { SearchField } from '@/features/search/search-field'
+import { mainOn } from '@/hermes/instance'
+import { useSeveral, useServer } from '@/state/connection'
+import { chooseSettingsHermes, HermesScope, useScopeHermes, useSettingsHermes } from '@/features/connection/scope'
+import { ServerChips } from '@/features/connection/server-chips'
 import { ask } from './ask'
 import { ConnectFlow } from './connect-flow'
 import { LocalService } from './local-service'
@@ -21,26 +25,47 @@ import { Swap } from './swap'
 import { KeyIcon, ModelServerIcon, ModelsIcon, SparkIcon } from '@/ui/icons'
 
 // Settings → Models: what the main agent thinks with, and the services that
-// make models available.
+// make models available. Each server has its own: with several, the one being
+// shown is chosen at the top, and everything below is that server's.
 
 const confirmExpensive = (message: string) => ask({ title: 'Use this model?', body: message, action: 'Use it' })
 
 export function ModelsSection() {
-  const { data, isPending, isError } = useModels()
-  const main = useAgent('default')
+  const several = useSeveral()
+  const hermes = useSettingsHermes()
+  return (
+    <HermesScope value={hermes}>
+      {several && <ServerChips label="Server" value={hermes} onChange={chooseSettingsHermes} />}
+      {/* (Each server's page is its own: nothing half-done on one carries to the next.) */}
+      <Models key={hermes ?? ''} />
+    </HermesScope>
+  )
+}
+
+function Models() {
+  const hermes = useScopeHermes()
+  const server = useServer(hermes)
+  const named = useSeveral() ? server?.name : undefined
+  const { data, isPending, isError } = useModels(hermes)
+  const main = useAgent(mainOn(hermes))
   const refresh = useRefreshModels()
   const [picking, setPicking] = useState(false)
   const [adding, setAdding] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
   // The model server being looked at, as last seen: it stays in its sheet while that closes, even once disconnected.
-  const [server, setServer] = useState<{ service: Service; open: boolean } | null>(null)
+  const [sheet, setSheet] = useState<{ service: Service; open: boolean } | null>(null)
 
   const chatgpt = data?.services.find((s) => s.slug === 'openai-codex')
   // (A Hermes before 0.22 only says per chat; models.ts.)
-  const olderPlan = useOlderPlanUsage(!!chatgpt && !chatgpt.plan)
+  const olderPlan = useOlderPlanUsage(hermes, !!chatgpt && !chatgpt.plan)
 
   if (isPending) return <Loading />
-  if (isError || !data) return <p className="px-4 text-subhead text-pretty text-ink-2">Can’t reach Hermes right now. Check that it’s running, then try again.</p>
+  if (isError || !data)
+    return (
+      <p className="px-4 text-subhead text-pretty text-ink-2">
+        Can’t reach {named ?? 'Hermes'} right now. Check that it’s running, then try again.
+      </p>
+    )
 
   const current = data.services.find((s) => s.current)
   const others = data.services.filter((s) => s !== chatgpt)
@@ -70,7 +95,7 @@ export function ModelsSection() {
     if (!yes) return false
     setBusy(s.slug)
     try {
-      await disconnect(s)
+      await disconnect(hermes, s)
       await refresh()
       return true
     } catch (e) {
@@ -80,7 +105,7 @@ export function ModelsSection() {
       setBusy(null)
     }
   }
-  const shownServer = server && (data.services.find((s) => s.slug === server.service.slug) ?? server.service)
+  const shownServer = sheet && (data.services.find((s) => s.slug === sheet.service.slug) ?? sheet.service)
 
   return (
     <>
@@ -120,7 +145,7 @@ export function ModelsSection() {
               title={s.name}
               subtitle={<PlanLine service={s} />}
               chevron
-              onClick={() => setServer({ service: s, open: true })}
+              onClick={() => setSheet({ service: s, open: true })}
             />
           ) : (
             <ListRow key={s.slug} icon={<ServiceTile service={s} />} title={s.name} subtitle={<PlanLine service={s} />} trailing={trailingFor(s)} />
@@ -136,8 +161,8 @@ export function ModelsSection() {
       <ServerSheet
         service={shownServer ?? null}
         main={data.model}
-        open={!!server?.open}
-        onOpenChange={(open) => setServer((v) => v && { ...v, open })}
+        open={!!sheet?.open}
+        onOpenChange={(open) => setSheet((v) => v && { ...v, open })}
         onDisconnect={remove}
       />
 
@@ -217,6 +242,7 @@ function ModelPicker({
   model: string
   provider: string
 }) {
+  const hermes = useScopeHermes()
   const refresh = useRefreshModels()
   const [query, setQuery] = useState('')
   const [saving, setSaving] = useState<string | null>(null)
@@ -232,7 +258,7 @@ function ModelPicker({
   const pick = async (s: Service, m: string) => {
     setSaving(`${s.slug}/${m}`)
     try {
-      if (await setMainModel(s.slug, m, confirmExpensive)) {
+      if (await setMainModel(hermes, s.slug, m, confirmExpensive)) {
         await refresh()
         onOpenChange(false)
       }

@@ -12,9 +12,10 @@ import { gateway, rpc } from '@/hermes/gateway'
 import { useChats, type Chat } from '@/state/chats'
 import { secretAskText } from '@shared/notes.ts'
 import type { OrbState } from '@/ui/orb'
-import { scoped } from '@/hermes/instance'
-import { listProfiles } from '@/hermes/compat'
-import { useAway } from '@/state/reach'
+import { firstHermes, hermesOf, homeOf, onHermesIds, scoped } from '@/hermes/instance'
+import { everyHermes } from '@/hermes/kept'
+import { listEveryProfile } from '@/hermes/compat'
+import { useAwayOn } from '@/state/reach'
 
 type Remote = { status: 'working' | 'waiting'; title: string }
 
@@ -52,11 +53,14 @@ let lookedUpAt = 0
 async function lookUpOwners() {
   if (Date.now() - lookedUpAt < 15_000) return
   lookedUpAt = Date.now()
-  const profiles = await listProfiles()
+  // Every Hermes's agents, by id: each chat's owner is the agent it's listed under.
+  const profiles = await listEveryProfile()
   const owners: Record<string, string> = {}
   await Promise.all(
     profiles.map(async (p) => {
-      const res = await rpc<{ sessions: { id: string }[] }>('session.list', { profile: p.name, limit: 40, include_hidden: true })
+      const res = await rpc<{ sessions: { id: string }[] }>('session.list', { profile: p.name, limit: 40, include_hidden: true }).catch(
+        () => ({ sessions: [] }),
+      )
       for (const s of res.sessions) owners[s.id] = p.name
     }),
   )
@@ -64,9 +68,22 @@ async function lookUpOwners() {
 }
 
 async function refreshRemote() {
-  const { sessions } = await rpc<{ sessions: LiveRow[] }>('session.active_list', {})
+  // Each Hermes that's connected says what's mid-turn on it; one that's away has nothing to say.
+  const asked = everyHermes().filter((hermes) => gateway.stateOf(hermes) === 'open')
+  const lists = await Promise.all(
+    asked.map((hermes) =>
+      rpc<{ sessions: LiveRow[] }>('session.active_list', {}, undefined, hermes).then(
+        (r) => r.sessions,
+        (error) => {
+          // One Hermes: its failure is the answer, as it always was.
+          if (asked.length === 1) throw error
+          return [] as LiveRow[]
+        },
+      ),
+    ),
+  )
   const remote: Record<string, Remote> = {}
-  for (const row of sessions) {
+  for (const row of lists.flat()) {
     if (row.status === 'working' || row.status === 'waiting' || row.status === 'starting') {
       remote[row.session_key] = { status: row.status === 'waiting' ? 'waiting' : 'working', title: row.title }
     }
@@ -179,7 +196,7 @@ function activityOf(chat: Chat): string {
 /** The agent's state across all its chats: waiting beats working beats error. */
 export function useAgentStatus(agentId: string): AgentStatus {
   wireStatus()
-  const away = useAway()
+  const away = useAwayOn(hermesOf(agentId))
   const local = useChats(
     useShallow((s) => {
       let best: Chat | undefined
@@ -336,51 +353,67 @@ const restedAt = (chatId: string | undefined) => {
 // ran here, so a fresh install doesn't light everything up. Groups keep their
 // own watermark (the room's log position) in state/groups.
 
-const SEEN_KEY = scoped('murmur:seen')
-const SINCE_KEY = scoped('murmur:seen-since')
-/** Hermes's clock and ours can disagree by a moment. */
+const SEEN_KEY = 'murmur:seen'
+const SINCE_KEY = 'murmur:seen-since'
+/** A little slack, so a reply's own timestamp never reads as newer than the look that saw it. */
 const SLACK = 2_000
 
-function loadSeen(): { seen: Record<string, number>; since: number } {
-  try {
-    const seen = JSON.parse(localStorage.getItem(SEEN_KEY) ?? '{}') as Record<string, number>
-    let since = Number(localStorage.getItem(SINCE_KEY))
-    if (!since) {
-      since = Date.now()
-      localStorage.setItem(SINCE_KEY, String(since))
+// Each Hermes keeps its own marks, as it did when the app used one at a
+// time: read as one here, and a look is kept with the Hermes the chat is on.
+// "Since" is each Hermes's own too: one added today doesn't light up every
+// chat it already had.
+function loadSeen(): { seen: Record<string, number>; since: Record<string, number> } {
+  const seen: Record<string, number> = {}
+  const since: Record<string, number> = {}
+  for (const hermes of everyHermes()) {
+    try {
+      const kept = JSON.parse(localStorage.getItem(scoped(SEEN_KEY, hermes)) ?? '{}') as Record<string, number>
+      for (const [id, at] of Object.entries(kept)) if (!(seen[id] >= at)) seen[id] = at
+      let first = Number(localStorage.getItem(scoped(SINCE_KEY, hermes)))
+      if (!first) {
+        first = Date.now()
+        localStorage.setItem(scoped(SINCE_KEY, hermes), String(first))
+      }
+      since[hermes ?? ''] = first
+    } catch {
+      since[hermes ?? ''] = Date.now()
     }
-    return { seen, since }
-  } catch {
-    return { seen: {}, since: Date.now() }
   }
+  return { seen, since }
 }
 
 type SeenStore = {
   seen: Record<string, number>
-  since: number
+  /** When Murmur first ran here against each Hermes ('' where none is named yet). */
+  since: Record<string, number>
   /** The chat on screen right now (and the tab is visible). */
   viewing?: string
 }
 
 const useSeen = create<SeenStore>(() => loadSeen())
 
+// A Hermes just added: what it already has isn't new to you; what comes from
+// here on is. (One this browser has used before keeps the marks it had.)
+onHermesIds(() => {
+  const { seen, since } = loadSeen()
+  useSeen.setState((s) => ({ seen: { ...seen, ...s.seen }, since: { ...since, ...s.since } }))
+})
+
 const MAX_SEEN = 400
 
 /** You've just looked at this chat. */
 export function markChatSeen(chatId: string) {
   const at = Date.now()
-  useSeen.setState((s) => {
-    let entries = Object.entries({ ...s.seen, [chatId]: at })
+  useSeen.setState((s) => ({ seen: { ...s.seen, [chatId]: at } }))
+  const key = scoped(SEEN_KEY, homeOf(chatId) ?? firstHermes())
+  try {
+    let entries = Object.entries({ ...(JSON.parse(localStorage.getItem(key) ?? '{}') as Record<string, number>), [chatId]: at })
     // Keep the newest few hundred; anything older reads as seen anyway.
     if (entries.length > MAX_SEEN) entries = entries.sort((a, b) => b[1] - a[1]).slice(0, MAX_SEEN)
-    const seen = Object.fromEntries(entries)
-    try {
-      localStorage.setItem(SEEN_KEY, JSON.stringify(seen))
-    } catch {
-      // Private mode: unread only lasts the visit.
-    }
-    return { seen }
-  })
+    localStorage.setItem(key, JSON.stringify(Object.fromEntries(entries)))
+  } catch {
+    // Private mode: unread only lasts the visit.
+  }
 }
 
 /** The chat on screen while the tab is visible, if any. */
@@ -401,7 +434,8 @@ export function useChatUnread(chatId: string | undefined, at: number | undefined
 
 function isUnread(s: SeenStore, chatId: string | undefined, at: number | undefined) {
   if (!chatId || !at || s.viewing === chatId) return false
-  return at > (s.seen[chatId] ?? s.since) + SLACK
+  const since = s.since[homeOf(chatId) ?? firstHermes() ?? ''] ?? s.since[firstHermes() ?? ''] ?? 0
+  return at > (s.seen[chatId] ?? since) + SLACK
 }
 
 /** How many of these chats moved since you last looked (mid-turn, before the turn began). */

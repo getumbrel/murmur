@@ -1,3 +1,4 @@
+import { hermesOf } from '@/hermes/instance'
 import { useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import { Check, Ellipsis } from 'lucide-react'
@@ -90,7 +91,7 @@ export function VoiceSheet({
   const refreshModels = useRefreshModels()
   const audio = useRef<HTMLAudioElement>(null)
   // Signing in only lends the voice the plan: the agent keeps thinking with its own model.
-  const chatgpt = useChatGPTSignIn(async () => {
+  const chatgpt = useChatGPTSignIn(hermesOf(profile), async () => {
     await chooseVoice(profile, 'chatgpt')
     await refresh(profile)
     setPicked('chatgpt')

@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'motion/react'
-import { useEffect, useId, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useId, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { Check, ChevronLeft, Import } from 'lucide-react'
 import { AgentFields, canSubmit, type AgentDraft } from '@/features/agents/agent-editor'
 import { Button } from '@/ui/button'
@@ -10,6 +10,9 @@ import { useIsWide } from '@/lib/use-media'
 import { cn } from '@/lib/cn'
 import { TemplateGrid } from './template-grid'
 import { slugFor } from '@/state/agents'
+import { useSeveral } from '@/state/connection'
+import { agentIdOn, hermesOf, profileOf } from '@/hermes/instance'
+import { chooseLivesOn, useLivesOn } from '@/features/connection/lives-on'
 import { draftFromTemplate, suggestName, type Template } from './templates'
 
 // Making an agent: pick a starting point, then shape it. The grid fades out and
@@ -19,8 +22,8 @@ import { draftFromTemplate, suggestName, type Template } from './templates'
 type Props = {
   open: boolean
   onOpenChange: (open: boolean) => void
-  /** Called with the finished draft; `draft.template` names the template, if any. */
-  onSubmit: (draft: AgentDraft) => void
+  /** Called with the finished draft and the Hermes it should live on; `draft.template` names the template, if any. */
+  onSubmit: (draft: AgentDraft, hermes: string | null) => void
   submitting?: boolean
   /** It exists now: the orb celebrates and the button turns into a tick. */
   born?: boolean
@@ -28,7 +31,7 @@ type Props = {
   defaultHue?: number
   /** Names already in use, so a template suggests a fresh one. */
   takenNames?: string[]
-  /** Ids already in use: a newcomer's Buddy is seeded with the id it will get. */
+  /** Agents there already: a newcomer's Buddy is seeded with the id it will get. */
   takenIds?: string[]
   /** Bring in one exported from Murmur or Hermes instead. */
   onImport?: () => void
@@ -54,6 +57,15 @@ export function NewAgentSheet({
   const body = useRef<HTMLDivElement>(null)
   const [stage, setStage] = useState<Stage>({ kind: 'pick' })
   const [draft, setDraft] = useState<AgentDraft>(() => blank(defaultHue))
+  // With several servers, the one it will live on: the last one chosen.
+  const several = useSeveral()
+  const hermes = useLivesOn()
+  // What that Hermes calls its agents: the newcomer's name there has to be free among them.
+  const profiles = useMemo(
+    () => takenIds.filter((id) => hermesOf(id) === hermes).map(profileOf),
+    [takenIds, hermes],
+  )
+  const idOf = (name: string) => agentIdOn(hermes, slugFor(name, profiles))
 
   // Start fresh each time the sheet opens.
   const [wasOpen, setWasOpen] = useState(open)
@@ -83,7 +95,7 @@ export function NewAgentSheet({
 
   // The card's Buddy is the agent it will make: the suggested name's future id,
   // the same body the editor shows and the roster will keep.
-  const seedFor = (t: Template) => slugFor(suggestName(t, takenNames), takenIds)
+  const seedFor = (t: Template) => idOf(suggestName(t, takenNames))
 
   const editing = stage.kind === 'edit'
   const name = draft.name.trim()
@@ -166,12 +178,13 @@ export function NewAgentSheet({
                 id={formId}
                 draft={draft}
                 onChange={setDraft}
-                onSubmit={onSubmit}
+                onSubmit={(d) => onSubmit(d, hermes)}
                 entering
                 celebrate={born}
                 busy={submitting}
                 names={takenNames}
-                ids={takenIds}
+                ids={profiles}
+                livesOn={several ? { hermes, onChange: chooseLivesOn } : undefined}
               />
             </motion.div>
           )}

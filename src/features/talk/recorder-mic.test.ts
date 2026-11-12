@@ -74,7 +74,6 @@ vi.stubGlobal('MediaRecorder', FakeRecorder)
 vi.stubGlobal('RTCPeerConnection', FakePeer)
 vi.stubGlobal('WebSocket', FakeSocket)
 vi.stubGlobal('location', { protocol: 'https:', host: 'umbrel.local' })
-vi.mock('@/hermes/instance', () => ({ HERMES_PARAM: 'hermes', tabHermes: () => undefined }))
 vi.stubGlobal('navigator', {
   mediaDevices: { getUserMedia: async () => ({ getAudioTracks: () => [{}], getTracks: () => [] }) },
 })

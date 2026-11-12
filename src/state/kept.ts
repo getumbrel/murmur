@@ -6,12 +6,14 @@
 //
 // Nothing is ever answered from here while Hermes can answer: a kept list is
 // shown and asked for afresh at once, and a kept conversation only stands in
-// while the real one can't be read. Each Hermes's things are filed under it
-// (hermes/instance.ts). Signing out of Murmur forgets all of it, removing a
-// Hermes forgets its own, and deleting a chat forgets that chat.
+// while the real one can't be read. A conversation is filed under the Hermes
+// it's on. A list is filed under the Hermes that was first when it was seen,
+// whose agents go by their plain names in it (hermes/instance.ts), and notes
+// the Hermes whose agent it's about. Signing out of Murmur forgets all of it,
+// removing a Hermes forgets its own, and deleting a chat forgets that chat.
 
 import type { Query, QueryClient, QueryKey } from '@tanstack/react-query'
-import { scopeOf, tabHermes } from '@/hermes/instance'
+import { firstHermes, hermesOf, scopeOf } from '@/hermes/instance'
 import type { ChatItem } from '@/features/chat/types'
 
 const DB = 'murmur-kept'
@@ -27,7 +29,7 @@ const MAX_ITEMS = 400
 /** A list nobody has looked at in this long has likely outlived what it lists. */
 const LIST_LIFE_MS = 30 * 24 * 60 * 60 * 1000
 
-const filedUnder = (hermes = tabHermes()) => `${scopeOf(hermes)}\n`
+const filedUnder = (hermes: string | null | undefined) => `${scopeOf(hermes)}\n`
 const all = (prefix: string) => IDBKeyRange.bound(prefix, `${prefix}￿`)
 
 let opening: Promise<IDBDatabase> | undefined
@@ -73,7 +75,15 @@ async function run<T>(store: string, mode: IDBTransactionMode, work: (s: IDBObje
 
 // ── Lists ───────────────────────────────────────────────────────────────────
 
-type KeptList = { key: string; queryKey: QueryKey; data: unknown; at: number; version: string }
+type KeptList = {
+  key: string
+  queryKey: QueryKey
+  data: unknown
+  at: number
+  version: string
+  /** What the Hermes whose agent it's about files things under: the first's, for a list of every Hermes's (groups). */
+  of: string
+}
 
 /**
  * The queries worth having without Hermes: an agent's chats and when each
@@ -95,6 +105,9 @@ const LISTED = new Set([
 
 const listed = (query: Query) => LISTED.has(String(query.queryKey[0]))
 
+/** The Hermes a list is about: its agent's (each key names one after its kind), or the first. */
+const aboutHermes = (key: QueryKey) => (typeof key[1] === 'string' ? hermesOf(key[1]) : firstHermes())
+
 /**
  * Puts back the lists this device kept, and keeps them as Hermes answers from
  * here on. A kept list has no time (`updatedAt: 0`), like the kept roster: it's
@@ -102,8 +115,7 @@ const listed = (query: Query) => LISTED.has(String(query.queryKey[0]))
  * already answered is left alone. Call once, with the app's query client.
  */
 export function keepLists(qc: QueryClient) {
-  const mine = filedUnder()
-  void run<KeptList[]>(LISTS, 'readonly', (s) => s.getAll(all(mine)))
+  void run<KeptList[]>(LISTS, 'readonly', (s) => s.getAll(all(filedUnder(firstHermes()))))
     .then((lists) => {
       const stale: string[] = []
       for (const list of lists ?? []) {
@@ -126,11 +138,12 @@ export function keepLists(qc: QueryClient) {
       setTimeout(() => {
         waiting.delete(query.queryHash)
         const list: KeptList = {
-          key: mine + query.queryHash,
+          key: filedUnder(firstHermes()) + query.queryHash,
           queryKey: query.queryKey,
           data: query.state.data,
           at: Date.now(),
           version: VERSION,
+          of: scopeOf(aboutHermes(query.queryKey)),
         }
         void run(LISTS, 'readwrite', (s) => void s.put(list)).catch(() => {})
       }, 800),
@@ -163,8 +176,9 @@ function lasting(items: ChatItem[]): ChatItem[] {
 
 /** Keep a conversation as it stands now. */
 export function keepChat(chat: { id: string; profile: string; title?: string; items: ChatItem[] }) {
+  const on = filedUnder(hermesOf(chat.profile))
   const row: KeptChatRow = {
-    key: filedUnder() + chat.id,
+    key: on + chat.id,
     id: chat.id,
     profile: chat.profile,
     title: chat.title,
@@ -173,38 +187,50 @@ export function keepChat(chat: { id: string; profile: string; title?: string; it
     version: VERSION,
   }
   return run(CHATS, 'readwrite', (s) => void s.put(row))
-    .then(thin)
+    .then(() => thin(on))
     .catch(() => {})
 }
 
-let thinned = 0
+const thinned = new Map<string, number>()
 
-/** Lets go of all but the conversations seen most recently, now and then. */
-async function thin() {
-  if (Date.now() - thinned < 60_000) return
-  thinned = Date.now()
-  const rows = (await run<KeptChatRow[]>(CHATS, 'readonly', (s) => s.getAll(all(filedUnder())))) ?? []
+/** Lets go of all but the conversations on one Hermes seen most recently, now and then. */
+async function thin(on: string) {
+  if (Date.now() - (thinned.get(on) ?? 0) < 60_000) return
+  thinned.set(on, Date.now())
+  const rows = (await run<KeptChatRow[]>(CHATS, 'readonly', (s) => s.getAll(all(on)))) ?? []
   const old = rows.sort((a, b) => b.at - a.at).slice(MAX_CHATS)
   if (old.length) await run(CHATS, 'readwrite', (s) => old.forEach((row) => void s.delete(row.key)))
 }
 
-/** A conversation as this device last saw it, if it kept it. */
-export async function keptChat(id: string): Promise<KeptChat | undefined> {
-  const row = await run<KeptChatRow | undefined>(CHATS, 'readonly', (s) => s.get(filedUnder() + id)).catch(() => undefined)
+/** A conversation of an agent's as this device last saw it, if it kept it. */
+export async function keptChat(id: string, agentId: string): Promise<KeptChat | undefined> {
+  const key = filedUnder(hermesOf(agentId)) + id
+  const row = await run<KeptChatRow | undefined>(CHATS, 'readonly', (s) => s.get(key)).catch(() => undefined)
   return row && row.version === VERSION && row.items.length ? row : undefined
 }
 
-/** A chat was deleted: its kept copy goes too. */
-export function forgetKeptChat(id: string) {
-  void run(CHATS, 'readwrite', (s) => void s.delete(filedUnder() + id)).catch(() => {})
+/** A chat of an agent's was deleted: its kept copy goes too. */
+export function forgetKeptChat(id: string, agentId: string) {
+  const key = filedUnder(hermesOf(agentId)) + id
+  void run(CHATS, 'readwrite', (s) => void s.delete(key)).catch(() => {})
 }
 
 // ── Forgetting ──────────────────────────────────────────────────────────────
 
-/** Forget what was kept for one Hermes (it was removed). */
+/** Forget what was kept for one Hermes (it was removed): its conversations, the lists seen while it was first, and its agents' lists. */
 export function forgetKeptFor(hermes: string) {
-  const theirs = all(filedUnder(hermes))
-  for (const store of [LISTS, CHATS]) void run(store, 'readwrite', (s) => void s.delete(theirs)).catch(() => {})
+  const theirs = filedUnder(hermes)
+  for (const store of [LISTS, CHATS]) void run(store, 'readwrite', (s) => void s.delete(all(theirs))).catch(() => {})
+  const of = scopeOf(hermes)
+  void run(LISTS, 'readwrite', (s) => {
+    const each = s.openCursor()
+    each.onsuccess = () => {
+      const at = each.result
+      if (!at) return
+      if ((at.value as KeptList).of === of) at.delete()
+      at.continue()
+    }
+  }).catch(() => {})
 }
 
 /** Forget everything kept, for every Hermes: signing out of Murmur locks them all. */

@@ -521,7 +521,7 @@ describe('changing a chat', () => {
     const shape = (rows: Row[]) => rows.map((r) => `${r.role}${r.tool_calls?.length ? '+calls' : ''}`)
 
     it('copies it up to a reply, steps and what they found too, and leaves the original alone', async () => {
-      expect(await canContinue()).toBe(true)
+      expect(await canContinue(null)).toBe(true)
       const { stored, rows, reply } = await threeTurns()
       const copy = await copyChat(stored, 'default', reply.id)
       expect(copy.id).toMatch(/^\d{8}_\d{6}_[0-9a-f]{6}$/)

@@ -5,7 +5,12 @@
 // once the page is idle, and what's been done is remembered across reloads so
 // most page loads have nothing to do at all.
 
+import { hermesIds } from '@/hermes/instance'
+
 let queue: Promise<unknown> = Promise.resolve()
+
+/** How long a job may hold the queue where there are several Hermes: one that's away keeps its jobs waiting, and the others' mustn't wait with them. */
+const HOLD_MS = 45_000
 
 const idle = () =>
   new Promise<void>((resolve) => {
@@ -19,7 +24,8 @@ const idle = () =>
 /** Runs `job` after every job queued before it, once the page is idle. */
 export function upkeep<T>(job: () => Promise<T>): Promise<T> {
   const run = queue.then(idle).then(job)
-  queue = run.catch(() => {})
+  const held = hermesIds().length > 1 ? Promise.race([run, new Promise((next) => setTimeout(next, HOLD_MS))]) : run
+  queue = held.catch(() => {})
   return run
 }
 

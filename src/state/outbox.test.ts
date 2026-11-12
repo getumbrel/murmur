@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/hermes/instance', () => ({ scoped: (key: string) => key }))
 const store = new Map<string, string>()
 vi.stubGlobal('localStorage', {
   getItem: (k: string) => store.get(k) ?? null,

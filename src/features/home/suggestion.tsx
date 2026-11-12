@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { X } from 'lucide-react'
 import { Orb } from '@/ui/orb'
 import { useAgents } from '@/state/agents'
+import { sameHermes } from '@/hermes/instance'
 import { useGroupSummaries } from '@/state/groups'
 import { useSections } from '@/state/sections'
 import { cn } from '@/lib/cn'
@@ -68,11 +69,16 @@ export function Suggestion({ density, onNewAgent, onNewGroup, onNewSection }: Pr
 
   // The roster settles first; then the card arrives.
   const roomy = density === 'roomy'
+  // A group's agents all live on one server, so the card names ones that could be in it together.
+  const first = agents?.find((a) => agents.some((b) => b !== a && sameHermes(a.id, b.id)))
+  const together = agents?.filter((a) => !first || sameHermes(a.id, first.id)) ?? []
   const faces =
-    shown === 'group' || shown === 'section'
-      ? agents!.slice(shown === 'section' ? 1 : 0, shown === 'section' ? 4 : 3).map((a) => ({ id: a.id, hue: a.hue }))
-      : [TEMPLATES[0], TEMPLATES[1], TEMPLATES[3]].map((t) => ({ id: t.id, hue: t.hue }))
-  const names = agents?.slice(0, 2).map((a) => a.name) ?? []
+    shown === 'group'
+      ? together.slice(0, 3).map((a) => ({ id: a.id, hue: a.hue }))
+      : shown === 'section'
+        ? agents!.slice(1, 4).map((a) => ({ id: a.id, hue: a.hue }))
+        : [TEMPLATES[0], TEMPLATES[1], TEMPLATES[3]].map((t) => ({ id: t.id, hue: t.hue }))
+  const names = together.slice(0, 2).map((a) => a.name)
 
   return (
     <AnimatePresence mode="wait">

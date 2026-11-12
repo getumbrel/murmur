@@ -36,6 +36,7 @@ import { HomeScreen } from '@/screens/home'
 import { ChatScreen } from '@/screens/chat'
 import { ConnectionBanner } from '@/screens/connection-banner'
 import { HermesGate } from '@/features/connection/gate'
+import { useSeveral, useServersSync } from '@/state/connection'
 import { ShortcutsSheet, useShortcuts } from '@/features/commands/shortcuts'
 import { retryUnlessMissing } from '@/hermes/compat'
 import { setDesktopBadge } from '@/lib/desktop'
@@ -147,6 +148,8 @@ export function App() {
  */
 function Dial() {
   useEffect(() => startGateway(), [])
+  // One more Hermes or one fewer, wherever it was added or removed: the app follows.
+  useServersSync()
   return null
 }
 
@@ -169,7 +172,9 @@ function Gate({ children }: { children: ReactNode }) {
     if (readiness === 'needs-welcome' && inUse) markWelcomed()
   }, [readiness, inUse])
   const welcome = readiness === 'needs-welcome' && agents.data !== undefined && !inUse
-  const away = (readiness === 'needs-setup' || welcome) && !onboarding
+  // The steps are for a Murmur with one Hermes. With more, one that has no model yet holds nobody up.
+  const several = useSeveral()
+  const away = (readiness === 'needs-setup' || welcome) && !onboarding && !several
   useEffect(() => {
     if (away) navigate('/welcome', { replace: true })
   }, [away, navigate])

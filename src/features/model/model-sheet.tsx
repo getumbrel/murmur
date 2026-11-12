@@ -95,7 +95,7 @@ export function ModelSheet({ open, onOpenChange, agent, pick, effort, onPick, on
           </SheetPin>
         )}
 
-        <ModelList options={options} query={query} selected={current} usual={fallback} onPick={onPick} />
+        <ModelList agent={agent.id} options={options} query={query} selected={current} usual={fallback} onPick={onPick} />
       </div>
     </Sheet>
   )

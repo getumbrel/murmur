@@ -28,6 +28,9 @@ import { settledAt, useAgentStatus, useBusyAgents, useChatUnread, useNeedsYou, u
 import { sectionOf, setFolded, useFoldedMap, type Section } from '@/state/sections'
 import { newGroupChat, prefetchGroup, useGroupSummaries } from '@/state/groups'
 import { useAccessRequests } from '@/state/access'
+import { useServerTags } from '@/features/connection/tag'
+import { hermesOf } from '@/hermes/instance'
+import { useUnreachable } from '@/features/connection/unreachable'
 import { RequestCard } from '@/features/access/request-card'
 import { useAgentChatList } from '@/features/agent-page/chats'
 import { cn } from '@/lib/cn'
@@ -80,6 +83,8 @@ export function Roster({
   const groupsLoaded = !useGroupSummaries().isPending
   const busy = useBusyAgents()
   const folded = useFoldedMap()
+  // A server is named only where two agents share a name ("Hermes  VPS").
+  const tagOf = useServerTags()
   // Dragging a row onto a section files it there (wide screens; phones hold a row for its menu).
   const [dragging, setDragging] = useState<string | null>(null)
   const [over, setOver] = useState<string | null>(null)
@@ -351,6 +356,7 @@ export function Roster({
                 ) : entry.kind === 'agent' ? (
                   <AgentRow
                     agent={entry.agent}
+                    tag={tagOf(entry.agent.id)}
                     density={density}
                     selected={entry.key === selectedId}
                     openChatId={entry.key === selectedId ? openChatId : undefined}
@@ -467,6 +473,7 @@ type Shared = { density: Density; selected?: boolean; last?: boolean; fresh?: bo
 
 function AgentRow({
   agent,
+  tag,
   density,
   selected,
   openChatId,
@@ -478,6 +485,8 @@ function AgentRow({
   move,
 }: Shared & {
   agent: Agent
+  /** Its server's name, where another agent goes by the same name. */
+  tag?: string
   openChatId?: string
   alone?: boolean
   onEdit: () => void
@@ -524,7 +533,11 @@ function AgentRow({
   const active = Boolean(status.activity && status.state !== 'idle' && status.state !== 'done')
   const unread = useChatUnread(agent.lastChat?.id, agent.lastChat?.at) && !active
 
-  const subtitle = active ? (
+  // Its server can't be reached: it dozes off where it is, and says which one. The rest of the list carries on.
+  const unreachable = useUnreachable(hermesOf(agent.id))
+  const subtitle = unreachable ? (
+    <span className="text-ink-3">{unreachable}</span>
+  ) : active ? (
     <span className={cn(status.state === 'waiting' ? 'font-medium text-accent' : 'text-shimmer')}>
       {status.activity}
     </span>
@@ -550,8 +563,16 @@ function AgentRow({
             open={menu}
             roomy={roomy}
             selected={selected && !showsChat}
-            unread={unread}
-            label={unread ? `${agent.name}, new messages` : undefined}
+            unread={unread && !unreachable}
+            label={
+              unreachable
+                ? `${agent.name}${tag ? `, ${tag}` : ''}. ${unreachable}`
+                : unread
+                  ? `${agent.name}${tag ? `, ${tag}` : ''}, new messages`
+                  : tag
+                    ? `${agent.name}, ${tag}`
+                    : undefined
+            }
             disclosure={
               roomy
                 ? undefined
@@ -565,12 +586,14 @@ function AgentRow({
             face={
               <span className={cn('relative flex-none', roomy && 'my-2.5')}>
                 {halo && <Halo id={agent.id} />}
-                <Orb hue={agent.hue} size={roomy ? 52 : 40} state={status.state} seed={agent.id} />
+                <Orb hue={agent.hue} size={roomy ? 52 : 40} state={unreachable ? 'offline' : status.state} seed={agent.id} />
               </span>
             }
             name={agent.name}
-            time={agent.lastChat ? shortTime(agent.lastChat.at) : ''}
-            subtitleKey={active ? status.activity! : expanded ? 'role' : 'title'}
+            tag={tag}
+            away={!!unreachable}
+            time={unreachable ? '' : agent.lastChat ? shortTime(agent.lastChat.at) : ''}
+            subtitleKey={unreachable ? 'unreachable' : active ? status.activity! : expanded ? 'role' : 'title'}
             subtitle={subtitle}
             last={last}
             newChat={`/chat/${agent.id}/new`}
@@ -961,6 +984,8 @@ function RowLink({
   label,
   face,
   name,
+  tag,
+  away,
   time,
   subtitleKey,
   subtitle,
@@ -980,6 +1005,10 @@ function RowLink({
   label?: string
   face: ReactNode
   name: string
+  /** The server it lives on, said only when the name alone doesn't. */
+  tag?: string
+  /** Its server can't be reached. */
+  away?: boolean
   time: string
   subtitleKey: string
   subtitle: ReactNode
@@ -1056,9 +1085,14 @@ function RowLink({
                 'min-w-0 flex-1 truncate font-semibold tracking-[-0.015em]',
                 roomy ? 'text-body' : 'text-subhead',
               )}
-              title={name}
+              title={tag ? `${name} · ${tag}` : name}
             >
-              {name}
+              <span className={cn('transition-colors duration-300', away && 'text-ink-2')}>{name}</span>
+              {tag && (
+                <span className={cn('font-normal tracking-normal text-ink-3', roomy ? 'ml-2 text-footnote' : 'ml-1.5 text-caption')}>
+                  {tag}
+                </span>
+              )}
             </span>
             {shownTime && (
               <span

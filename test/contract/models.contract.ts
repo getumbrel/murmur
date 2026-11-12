@@ -3,6 +3,7 @@
 // the readiness check. The fake model stands in for Ollama or LM Studio.
 
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest'
+import { at } from '@/hermes/at'
 import { startGateway, stopGateway } from '@/hermes/gateway'
 import { narrowsWindows } from '@/state/local-runtime'
 import { connectServer, findServer, setMainModel, updateServer, type Service } from '@/state/models'
@@ -19,14 +20,14 @@ beforeAll(async () => {
 afterAll(async () => {
   // Leave the main agent on the model the other files expect.
   const { providers } = await api.get('/api/model/options')
-  await setMainModel(providers.find((p: { is_user_defined: boolean }) => p.is_user_defined).slug, MODELS[0])
+  await setMainModel(null, providers.find((p: { is_user_defined: boolean }) => p.is_user_defined).slug, MODELS[0])
   socket?.close()
   stopGateway()
 })
 
 describe('a model server', () => {
   it('is found at its address, with its models', async () => {
-    const server = await findServer(forHermes.replace(/\/v1$/, ''))
+    const server = await findServer(null, forHermes.replace(/\/v1$/, ''))
     expect(server.baseUrl).toBe(forHermes)
     expect(server.models.map((m) => m.id)).toEqual(MODELS)
   })
@@ -34,13 +35,13 @@ describe('a model server', () => {
   it('is reported unreachable when nothing answers', async () => {
     const res = await api.post('/api/providers/validate', { key: 'OPENAI_BASE_URL', value: 'http://host.docker.internal:9/v1' })
     expect(res).toMatchObject({ reachable: false })
-    await expect(findServer('host.docker.internal:9')).rejects.toThrow(/Couldn’t reach/)
+    await expect(findServer(null, 'host.docker.internal:9')).rejects.toThrow(/Couldn’t reach/)
   })
 
   it('is connected as the main model, once, however often it’s picked', async () => {
-    const server = await findServer(forHermes)
-    await connectServer(server, server.models[1])
-    await connectServer(server, server.models[1])
+    const server = await findServer(null, forHermes)
+    await connectServer(null, server, server.models[1])
+    await connectServer(null, server, server.models[1])
     const { endpoints, current } = await api.get('/api/providers/custom-endpoints')
     expect(endpoints.filter((e: { base_url: string }) => e.base_url === forHermes)).toHaveLength(1)
     expect(endpoints[0]).toMatchObject({ id: expect.any(String), name: expect.any(String), base_url: forHermes, model: expect.any(String) })
@@ -62,20 +63,20 @@ describe('a model server that wants a key', () => {
   // Back to the fake model the way the tests before left it.
   afterAll(async () => {
     for (const e of await saved()) if (e.base_url.includes('/keyed') || e.name === 'Moved') await api.delete(`/api/providers/custom-endpoints/${e.id}`)
-    await setMainModel((await saved()).find((e) => e.base_url === forHermes)!.id, MODELS[1])
+    await setMainModel(null, (await saved()).find((e) => e.base_url === forHermes)!.id, MODELS[1])
   })
 
   it('asks for one, turns a wrong one down, and lists its models for the right one', async () => {
-    await expect(findServer(keyed)).rejects.toMatchObject({ kind: 'needs-key', field: 'key' })
-    await expect(findServer(keyed, 'not-the-key')).rejects.toMatchObject({ kind: 'bad-key' })
-    const server = await findServer(keyed, MODEL_KEY)
+    await expect(findServer(null, keyed)).rejects.toMatchObject({ kind: 'needs-key', field: 'key' })
+    await expect(findServer(null, keyed, 'not-the-key')).rejects.toMatchObject({ kind: 'bad-key' })
+    const server = await findServer(null, keyed, MODEL_KEY)
     expect(server).toMatchObject({ baseUrl: keyed, apiKey: MODEL_KEY })
     expect(server.models.map((m) => m.id)).toEqual(MODELS)
   })
 
   it('is saved with its key, which chats carry and Hermes never hands back', async () => {
-    const server = await findServer(keyed, MODEL_KEY)
-    await connectServer(server, server.models[0])
+    const server = await findServer(null, keyed, MODEL_KEY)
+    await connectServer(null, server, server.models[0])
     const endpoints = await saved()
     expect(endpoints.find((e) => e.base_url === keyed)).toMatchObject({ has_api_key: true, model: MODELS[0] })
     expect(JSON.stringify(endpoints)).not.toContain(MODEL_KEY)
@@ -88,14 +89,14 @@ describe('a model server that wants a key', () => {
   })
 
   it('takes a new key, and lets one go only where it isn’t needed', async () => {
-    await expect(updateServer(await service(), { address: keyed, apiKey: 'not-the-key' })).rejects.toMatchObject({ kind: 'bad-key' })
-    await expect(updateServer(await service(), { address: keyed, apiKey: '' })).rejects.toMatchObject({ kind: 'needs-key' })
-    await updateServer(await service(), { address: keyed, apiKey: MODEL_KEY })
+    await expect(updateServer(null, await service(), { address: keyed, apiKey: 'not-the-key' })).rejects.toMatchObject({ kind: 'bad-key' })
+    await expect(updateServer(null, await service(), { address: keyed, apiKey: '' })).rejects.toMatchObject({ kind: 'needs-key' })
+    await updateServer(null, await service(), { address: keyed, apiKey: MODEL_KEY })
     expect((await saved()).find((e) => e.base_url === keyed)).toMatchObject({ has_api_key: true })
 
     // Moved somewhere that wants no key, it keeps its name and the main agent follows it.
     const before = await service()
-    await updateServer({ ...before, name: 'Moved' }, { address: forHermes, apiKey: '' }, MODELS[1])
+    await updateServer(null, { ...before, name: 'Moved' }, { address: forHermes, apiKey: '' }, MODELS[1])
     const moved = (await saved()).find((e) => e.id === before.slug)
     expect(moved).toMatchObject({ name: 'Moved', base_url: forHermes, has_api_key: false })
     expect(await api.get('/api/model/options')).toMatchObject({ provider: before.slug, model: MODELS[1] })
@@ -131,7 +132,7 @@ describe('the model list', () => {
   it('switches the main model, and recommends one for a service', async () => {
     const options = await api.get('/api/model/options')
     const slug = options.provider
-    expect(await setMainModel(slug, MODELS[0])).toBe(true)
+    expect(await setMainModel(null, slug, MODELS[0])).toBe(true)
     expect(await api.get('/api/model/info')).toMatchObject({ model: MODELS[0] })
     expect(await api.get(`/api/model/recommended-default?provider=${slug}`)).toMatchObject({ model: expect.any(String) })
   })
@@ -161,6 +162,6 @@ describe('models on this machine', () => {
   })
 
   it('says whether it starts them at the memory free now, as only Umbrel’s image does', async () => {
-    expect(await narrowsWindows()).toBe(/hermes-agent-umbrel/.test(inject('hermes').image))
+    expect(await narrowsWindows(at(null))).toBe(/hermes-agent-umbrel/.test(inject('hermes').image))
   })
 })

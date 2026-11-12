@@ -8,8 +8,8 @@
 
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { api } from '@/hermes/rest'
-import { useEffect } from 'react'
-import { gateway, rpc } from '@/hermes/gateway'
+import { useEffect, useMemo } from 'react'
+import { gateway, openSoon, rpc } from '@/hermes/gateway'
 import { ensureAgentTimezone } from '@/state/timezone'
 import { forgetInheritedMail } from '@/state/mail'
 import { hideDesktopToolsets } from '@/state/toolsets'
@@ -19,7 +19,8 @@ import { hexHue, hueFor } from '@/lib/hues'
 import { personalityPrompt, type Personality } from '@/features/agents/agent-editor'
 import { parseUserMessage, splitQuote } from '@/features/media/parse'
 import type { Speaker } from '@/features/chat/types'
-import { scoped } from '@/hermes/instance'
+import { agentIdOn, firstHermes, hermesIds, hermesOf, profileOf } from '@/hermes/instance'
+import { everyHermes, keepOn, keptByAgent, keptOn } from '@/hermes/kept'
 import { listProfiles } from '@/hermes/compat'
 import { isQuietExcerpt, isRunBrief, resultLine, runTitle } from '@shared/routines.ts'
 import { agentName, botTitle } from '@shared/agents.ts'
@@ -65,11 +66,15 @@ export type Profile = {
 }
 
 export type Agent = {
-  /** Hermes profile name, e.g. "default" or "atlas". */
+  /**
+   * Its Hermes profile's name on the first Hermes ("default", "atlas"); on any
+   * other, that Hermes's id too ("k3f9~atlas"). `hermesOf(id)` is where it lives.
+   */
   id: string
   name: string
   hue: number
   role: string
+  /** Its Hermes's main agent. With several Hermes there are several; the first Hermes's leads the roster. */
   isDefault: boolean
   model?: string
   provider?: string
@@ -105,48 +110,21 @@ export type Agent = {
 
 // ── Hues ────────────────────────────────────────────────────────────────────
 
-const HUE_KEY = scoped('murmur:hues')
+const hues = keptByAgent<number>('murmur:hues')
 
-function storedHues(): Record<string, number> {
-  try {
-    return JSON.parse(localStorage.getItem(HUE_KEY) ?? '{}')
-  } catch {
-    return {}
-  }
-}
+const storedHues = () => hues.all()
 
-export function rememberHue(id: string, hue: number) {
-  try {
-    localStorage.setItem(HUE_KEY, JSON.stringify({ ...storedHues(), [id]: hue }))
-  } catch {
-    // Private mode: hues fall back to what Hermes stores.
-  }
-}
+export const rememberHue = (id: string, hue: number) => hues.set(id, hue)
 
 // What Murmur means to write to a new agent's ui_meta, kept until Hermes has
 // it. Profiles can't carry ui_meta at birth, so a list read mid-create (or
 // after the tab closed mid-create) would otherwise show a slug and a stranger's
 // colour. The next list read finishes the job.
-const LOOK_KEY = scoped('murmur:pending-look')
+const looks = keptByAgent<Record<string, unknown>>('murmur:pending-look')
 
-function pendingLooks(): Record<string, Record<string, unknown>> {
-  try {
-    return JSON.parse(localStorage.getItem(LOOK_KEY) ?? '{}')
-  } catch {
-    return {}
-  }
-}
+const pendingLooks = () => looks.all()
 
-function setPendingLook(id: string, meta?: Record<string, unknown>) {
-  const all = pendingLooks()
-  if (meta) all[id] = meta
-  else delete all[id]
-  try {
-    localStorage.setItem(LOOK_KEY, JSON.stringify(all))
-  } catch {
-    // Private mode: the agent shows its slug until it's edited.
-  }
-}
+const setPendingLook = (id: string, meta?: Record<string, unknown>) => looks.set(id, meta)
 
 /** The orb's own colour (oklch 0.66 0.17 h) as hex, for Bot Mode's `color`. */
 function hueHex(hue: number): string {
@@ -196,19 +174,22 @@ export function readable(raw: string | null | undefined, { files = true } = {}) 
 
 const fileName = (path: string) => path.replace(/^[`"']|[`"']$/g, '').split(/[\\/]/).pop() || path
 
+/** An agent from a profile as `listProfiles` gives it: its `name` is the agent's id. */
 export function toAgent(p: Profile, hues = storedHues(), pending = pendingLooks()): Agent {
   const meta = { ...pending[p.name], ...p.ui_meta }
   const bots = record(meta['hermes-bots'])
   const murmur = record(meta.murmur)
-  const title = botTitle({ ...p, ui_meta: meta })
-  const name = agentName({ ...p, ui_meta: meta })
+  // What Hermes calls it: its name and default colour come from that, wherever it lives.
+  const plain = profileOf(p.name)
+  const title = botTitle({ ...p, name: plain, ui_meta: meta })
+  const name = agentName({ ...p, name: plain, ui_meta: meta })
   // Bot Mode writes "Title — description"; the role is what follows.
   const description = text(p.description)
   const role = title && description.startsWith(`${title} — `) ? description.slice(title.length + 3) : description
   return {
     id: p.name,
     name,
-    hue: (typeof murmur?.hue === 'number' ? murmur.hue : undefined) ?? hexHue(bots?.color) ?? hues[p.name] ?? (p.is_default ? 278 : hueFor(p.name)),
+    hue: (typeof murmur?.hue === 'number' ? murmur.hue : undefined) ?? hexHue(bots?.color) ?? hues[p.name] ?? (p.is_default ? 278 : hueFor(plain)),
     role,
     isDefault: p.is_default,
     model: p.model ?? undefined,
@@ -321,8 +302,21 @@ function devPrefix(): string {
 
 export const agentsKey = ['agents'] as const
 
-/** The roster's order: the main agent first, then everyone else alphabetically. */
-const byRank = (a: Agent, b: Agent) => Number(b.isDefault) - Number(a.isDefault) || a.name.localeCompare(b.name)
+const place = (a: Agent) => Math.max(0, hermesIds().indexOf(hermesOf(a.id) ?? ''))
+
+/**
+ * The roster's order: main agents first (the first Hermes's leading, so "the
+ * main agent" is always the first in the list), then everyone else alphabetically.
+ */
+const byRank = (a: Agent, b: Agent) =>
+  Number(b.isDefault) - Number(a.isDefault) || (a.isDefault ? place(a) - place(b) : 0) || a.name.localeCompare(b.name) || place(a) - place(b)
+
+/** The main agent: the first Hermes's (the one whose records hold what Murmur keeps for the whole roster). */
+export const mainAgent = (agents: Agent[] | undefined) => agents?.find((a) => a.isDefault && hermesOf(a.id) === firstHermes())
+
+/** The main agent of the Hermes `agentId` lives on. */
+export const mainAgentFor = (agents: Agent[] | undefined, agentId: string) =>
+  agents?.find((a) => a.isDefault && hermesOf(a.id) === hermesOf(agentId))
 
 /** Agents still being made here, as they'll look: they join the roster when their creator says so. */
 const hatching = new Map<string, Agent>()
@@ -339,50 +333,84 @@ const hatching = new Map<string, Agent>()
 // (asTheyAre). Kept with the version that wrote it, as an Agent from an older
 // Murmur may lack what this one needs. Signing out forgets it
 // (state/connection.ts): it has names and chat titles in it.
-const ROSTER_KEY = scoped('murmur:roster')
+const ROSTER_KEY = 'murmur:roster'
 
 type Kept = { version: string; agents: Agent[] }
 /** The Murmur keeping it (vite.config.ts; the contract suite builds without one). */
 const VERSION = typeof __MURMUR_VERSION__ === 'string' ? __MURMUR_VERSION__ : ''
 
-function keptRoster() {
-  try {
-    const kept = JSON.parse(localStorage.getItem(ROSTER_KEY) ?? 'null') as Partial<Kept> | null
-    return kept?.version === VERSION && Array.isArray(kept.agents) && kept.agents.length ? kept.agents : undefined
-  } catch {
-    return undefined
-  }
+/** One Hermes's agents as last kept. Each Hermes keeps its own, under its plain profile names. */
+function keptOf(hermes: string | null): Agent[] | undefined {
+  const kept = keptOn<Partial<Kept>>(ROSTER_KEY, hermes)
+  if (kept?.version !== VERSION || !Array.isArray(kept.agents) || !kept.agents.length) return undefined
+  return kept.agents.map((a) => ({ ...a, id: agentIdOn(hermes, a.id) }))
 }
 
-function keepRoster(agents: Agent[]) {
-  try {
-    localStorage.setItem(ROSTER_KEY, JSON.stringify({ version: VERSION, agents } satisfies Kept))
-  } catch {
-    // No storage here: the next open waits for Hermes.
-  }
+function keptRoster() {
+  const all = everyHermes().flatMap((hermes) => keptOf(hermes) ?? [])
+  return all.length ? all.sort(byRank) : undefined
+}
+
+function keepRoster(hermes: string | null, agents: Agent[]) {
+  keepOn(ROSTER_KEY, hermes, { version: VERSION, agents: agents.map((a) => ({ ...a, id: profileOf(a.id) })) } satisfies Kept)
   return agents
 }
+
+/** Forget one Hermes's kept agents (its agent was deleted here and mustn't come back from the kept list). */
+const onHermes = (hermes: string | null) => (a: Agent) => hermesOf(a.id) === hermes
+
+/** How long a Hermes gets to answer before the roster goes on without it (its agents as last kept). */
+const AWAY_MS = 3500
+
+/** One Hermes's agents, as it has them now. */
+async function readRoster(hermes: string | null): Promise<Agent[]> {
+  const profiles = await placeLastChats(await listProfiles<Profile & { [key: string]: unknown }>({ include_sessions: true }, hermes))
+  const hues = storedHues()
+  const pending = pendingLooks()
+  const prefix = devPrefix()
+  for (const p of profiles) if (pending[p.name] && !hatching.has(p.name)) void finishLook(p, pending[p.name])
+  return keepRoster(
+    hermes,
+    profiles
+      .filter((p) => !import.meta.env.DEV || !profileOf(p.name).startsWith(TEST_PREFIX) || (prefix && profileOf(p.name).startsWith(prefix)))
+      .filter((p) => !hatching.has(p.name))
+      .map((p) => toAgent(p, hues, pending)),
+  )
+}
+
+// A Hermes that couldn't be read keeps its place in the roster with the
+// agents it last had, and is read again the moment it's back (useFreshAgents).
+const unread = new Set<string | null>()
 
 export const rosterQuery = {
   queryKey: agentsKey,
   initialData: keptRoster,
   // Stale from the start: shown now, and asked for now. Timeless till Hermes answers (above).
   initialDataUpdatedAt: 0,
-  queryFn: async () => {
-    const res = {
-      profiles: await placeLastChats(await listProfiles<Profile & { [key: string]: unknown }>({ include_sessions: true })),
-    }
-    const hues = storedHues()
-    const pending = pendingLooks()
-    const prefix = devPrefix()
-    for (const p of res.profiles) if (pending[p.name] && !hatching.has(p.name)) void finishLook(p, pending[p.name])
-    return keepRoster(
-      res.profiles
-        .filter((p) => !import.meta.env.DEV || !p.name.startsWith(TEST_PREFIX) || (prefix && p.name.startsWith(prefix)))
-        .filter((p) => !hatching.has(p.name))
-        .map((p) => toAgent(p, hues, pending))
-        .sort(byRank),
+  queryFn: async ({ client }: { client: QueryClient }) => {
+    const all = everyHermes()
+    // One Hermes: its answer, however long it takes, as it always was.
+    if (all.length === 1) return (await readRoster(all[0])).sort(byRank)
+    // Several: each in its own time. One that's away doesn't hold up the rest.
+    const before = client.getQueryData<Agent[]>(agentsKey)
+    let failure: unknown
+    const parts = await Promise.all(
+      all.map(async (hermes) => {
+        try {
+          if (!(await openSoon(hermes, AWAY_MS))) throw new Error('Not connected to Hermes')
+          const agents = await readRoster(hermes)
+          unread.delete(hermes)
+          return agents
+        } catch (error) {
+          failure = error
+          unread.add(hermes)
+          return before?.filter(onHermes(hermes)) ?? keptOf(hermes) ?? []
+        }
+      }),
     )
+    // None of them answered: that's "can't reach Hermes", as with one.
+    if (unread.size === all.length && failure) throw failure
+    return parts.flat().sort(byRank)
   },
   staleTime: 30_000,
 }
@@ -393,15 +421,22 @@ export function useAgents() {
 
 type Roster = { isSuccess: boolean; dataUpdatedAt: number; data: Agent[] | undefined }
 
-/** The roster once Hermes has answered, for anything that writes to each agent: undefined while it's only the kept one. */
-export const asTheyAre = (roster: Roster) => (roster.dataUpdatedAt > 0 ? roster.data : undefined)
+/**
+ * The roster once Hermes has answered, for anything that writes to each agent: undefined while it's only
+ * the kept one. Of several Hermes, only the agents of those that answered.
+ */
+export const asTheyAre = (roster: Roster) => {
+  if (roster.dataUpdatedAt <= 0) return undefined
+  return unread.size ? roster.data?.filter((a) => !unread.has(hermesOf(a.id))) : roster.data
+}
 
-/** Whether Hermes has said `agentId` isn't among its agents (the kept roster can't: see above). */
+/** Whether Hermes has said `agentId` isn't among its agents (the kept roster can't: see above; nor can a Hermes that didn't answer). */
 export const saysGone = (roster: Roster, agentId: string) =>
-  roster.isSuccess && roster.dataUpdatedAt > 0 && !roster.data?.some((a) => a.id === agentId)
+  roster.isSuccess && roster.dataUpdatedAt > 0 && !unread.has(hermesOf(agentId)) && !roster.data?.some((a) => a.id === agentId)
 
 export function useAgentsAsTheyAre() {
-  return asTheyAre(useAgents())
+  const roster = useAgents()
+  return useMemo(() => asTheyAre(roster), [roster.data, roster.dataUpdatedAt])
 }
 
 /** For an agent's pages: it's been deleted, Hermes says. */
@@ -430,8 +465,13 @@ export function useFreshAgents() {
       // After hearing who's mid-turn, so the roster holds a busy agent in place (state/status.ts).
       timer = setTimeout(() => refreshActivity().then(() => qc.invalidateQueries({ queryKey: agentsKey })), 700)
     })
+    // A Hermes the roster went on without is read the moment it's back.
+    const offState = gateway.onState((state, hermes) => {
+      if (state === 'open' && unread.has(hermes)) void qc.invalidateQueries({ queryKey: agentsKey })
+    })
     return () => {
       off()
+      offState()
       clearTimeout(timer)
     }
   }, [qc])
@@ -523,9 +563,10 @@ async function finishLook(p: Profile, meta: Record<string, unknown>) {
  * It stays out of the roster until `revealAgent(qc, id)`, so its arrival can be
  * staged; call that even if the caller doesn't stage anything.
  */
-export async function createAgent(input: AgentInput) {
-  const profiles = await listProfiles<Profile>()
-  const id = slugFor(input.name, profiles.map((p) => p.name))
+export async function createAgent(input: AgentInput, hermes: string | null = firstHermes()) {
+  const profiles = await listProfiles<Profile>({}, hermes)
+  // Its name on that Hermes, and so its id here.
+  const id = agentIdOn(hermes, slugFor(input.name, profiles.map((p) => profileOf(p.name))))
   const meta = look(input)
   // Its look is known before Hermes knows the agent, so no read ever shows a slug.
   rememberHue(id, input.hue)
@@ -536,7 +577,7 @@ export async function createAgent(input: AgentInput) {
   try {
     // The socket twin of POST /api/profiles: unlike REST it also carries over
     // API keys, so the new agent can think straight away.
-    await rpc('profiles.create', { name: id, description: input.role, soul: input.soul, share_auth: true }, 120_000)
+    await rpc('profiles.create', { name: id, description: input.role, soul: input.soul, share_auth: true }, 120_000, hermes)
   } catch (e) {
     hatching.delete(id)
     setPendingLook(id)
@@ -585,7 +626,7 @@ export async function updateAgent(agent: Agent, input: AgentInput) {
 
 /** An agent as Hermes holds it now (without its chats, which take longer to read). */
 export async function readAgent(id: string) {
-  const p = (await listProfiles<Profile>({ include_sessions: false })).find((x) => x.name === id)
+  const p = (await listProfiles<Profile>({ include_sessions: false }, hermesOf(id))).find((x) => x.name === id)
   return p && toAgent(p)
 }
 

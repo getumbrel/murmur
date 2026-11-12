@@ -14,8 +14,8 @@
 // Either way no key or token ever reaches the browser.
 
 import type { LiveMessage } from './live-history'
-import { api, HermesError } from '@/hermes/rest'
-import { HERMES_PARAM, tabHermes } from '@/hermes/instance'
+import { api, HermesError, hermesSocket } from '@/hermes/rest'
+import { hermesOf } from '@/hermes/instance'
 import { SILENCE } from './voice'
 import { isIOS } from './ios'
 
@@ -100,11 +100,6 @@ function gathered(pc: RTCPeerConnection, ms: number) {
       done()
     })
   })
-}
-
-const socketUrl = (path: string) => {
-  const id = tabHermes()
-  return `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/hermes${path}${id ? `?${HERMES_PARAM}=${id}` : ''}`
 }
 
 export class LiveCall {
@@ -211,7 +206,7 @@ export class LiveCall {
     const [answer] = await Promise.all([call, mic])
     if (this.closed) return this.release()
     await pc.setRemoteDescription({ type: 'answer', sdp: answer.sdp })
-    const ws = (this.ws = new WebSocket(socketUrl(`${PLUGIN}/call/${encodeURIComponent(answer.call)}`)))
+    const ws = (this.ws = new WebSocket(hermesSocket(`${PLUGIN}/call/${encodeURIComponent(answer.call)}`, hermesOf(this.profile))))
     ws.onmessage = (m) => {
       try {
         this.event(JSON.parse(String(m.data)) as Event)

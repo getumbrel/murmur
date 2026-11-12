@@ -1,3 +1,4 @@
+import { useServerTag } from '@/features/connection/tag'
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react'
 import { Link } from 'wouter'
 import { Search, SearchX } from 'lucide-react'
@@ -108,6 +109,8 @@ function ResultRow({
   onOpen?: (r: SearchResult) => void
 }) {
   const roomy = density === 'roomy'
+  // Its server, where another agent goes by the same name.
+  const tag = useServerTag(r.agent.id)
   const ref = useRef<HTMLAnchorElement>(null)
   useEffect(() => {
     if (active) ref.current?.scrollIntoView({ block: 'nearest' })
@@ -137,7 +140,7 @@ function ResultRow({
           hue={r.agent.hue}
           size={roomy ? 44 : 32}
           seed={r.agent.id}
-          label={roomy ? undefined : r.agent.name}
+          label={roomy ? undefined : tag ? `${r.agent.name}, ${tag}` : r.agent.name}
           className={cn(roomy ? 'mt-3' : 'mt-0.5')}
         />
         <span className={cn('min-w-0 flex-1', roomy && 'py-2.5 pr-5', roomy && !last && 'hairline-b')}>
@@ -151,7 +154,12 @@ function ResultRow({
             {/* Whose chat it is, in words (two agents can share a colour). A long name gives way; the time never
                 does. The narrow sidebar keeps just the time and lets the snippet name the speaker instead. */}
             <span className={cn('flex max-w-[50%] min-w-0 flex-none items-baseline text-ink-3', roomy ? 'text-footnote' : 'text-caption')}>
-              {roomy && <span className="min-w-0 truncate font-medium text-ink-2">{r.agent.name}</span>}
+              {roomy && (
+                <span className="min-w-0 truncate">
+                  <span className="font-medium text-ink-2">{r.agent.name}</span>
+                  {tag && ` ${tag}`}
+                </span>
+              )}
               <span className="flex-none whitespace-nowrap tabular-nums">{roomy ? `\u00a0·\u00a0${shortTime(r.at)}` : shortTime(r.at)}</span>
             </span>
           </span>

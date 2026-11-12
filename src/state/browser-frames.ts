@@ -6,6 +6,7 @@
 // has none.
 
 import { useEffect, useSyncExternalStore } from 'react'
+import { firstHermes, homeOf } from '@/hermes/instance'
 import { hermesHeaders } from '@/hermes/rest'
 import { pageCut } from '@/features/screen/frame'
 import { PAGE } from '@/state/screen'
@@ -34,6 +35,9 @@ const put = (key: string, picture: Kept | null) => {
   kept.set(key, picture)
   for (const listener of listeners) listener()
 }
+
+// Murmur's server keeps each Hermes's pictures apart, so every request names the chat's own.
+const headersFor = (chat: string, headers?: Record<string, string>) => hermesHeaders(headers, homeOf(chat) ?? firstHermes())
 
 const route = (chat: string, frame?: string) =>
   `/murmur/browser-frames/${encodeURIComponent(chat)}${frame ? `/${encodeURIComponent(frame)}` : ''}`
@@ -78,7 +82,7 @@ export async function keepFrame(chat: string, frame: string, picture: Blob) {
   await show(`${chat}/${frame}`, picture).catch(() => {})
   await fetch(route(chat, frame), {
     method: 'PUT',
-    headers: hermesHeaders({ 'content-type': 'image/jpeg' }),
+    headers: headersFor(chat, { 'content-type': 'image/jpeg' }),
     body: picture,
   }).catch(() => {})
 }
@@ -89,7 +93,7 @@ const lists = new Map<string, { at: number; frames: Promise<Set<string>> }>()
 function listOf(chat: string) {
   const had = lists.get(chat)
   if (had && Date.now() - had.at < FRESH) return had.frames
-  const frames = fetch(route(chat), { headers: hermesHeaders(), cache: 'no-store' })
+  const frames = fetch(route(chat), { headers: headersFor(chat), cache: 'no-store' })
     .then((res): Promise<{ frames?: string[] }> | { frames?: string[] } => (res.ok ? res.json() : {}))
     .then(
       (body) => new Set<string>(body.frames ?? []),
@@ -107,7 +111,7 @@ async function load(chat: string, frame: string) {
   loading.add(key)
   try {
     if (!(await listOf(chat)).has(frame)) return put(key, null)
-    const res = await fetch(route(chat, frame), { headers: hermesHeaders(), cache: 'no-store' })
+    const res = await fetch(route(chat, frame), { headers: headersFor(chat), cache: 'no-store' })
     if (!res.ok) return put(key, null)
     await show(key, await res.blob())
   } catch {
@@ -137,5 +141,5 @@ export async function forgetFrames(chat: string) {
     if (picture) URL.revokeObjectURL(picture.src)
     kept.delete(key)
   }
-  await fetch(route(chat), { method: 'DELETE', headers: hermesHeaders() }).catch(() => {})
+  await fetch(route(chat), { method: 'DELETE', headers: headersFor(chat) }).catch(() => {})
 }

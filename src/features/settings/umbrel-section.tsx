@@ -1,3 +1,4 @@
+import { hermesOf } from '@/hermes/instance'
 import { useEffect, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
@@ -31,6 +32,7 @@ import {
   openUmbrelPage,
   UmbrelKeyError,
   useUmbrel,
+  useUmbrelHermes,
   useUmbrelMcp,
 } from '@/state/umbrel-mcp'
 import { ask } from './ask'
@@ -47,7 +49,9 @@ export function UmbrelSection() {
   const qc = useQueryClient()
   const umbrel = useUmbrel()
   const openUmbrelOS = () => openUmbrelPage(umbrel.settingsUrl)
-  const agents = useAgents().data ?? []
+  // The agents on the Hermes that runs on the Umbrel: the ones its key is for.
+  const onUmbrel = useUmbrelHermes()
+  const agents = (useAgents().data ?? []).filter((a) => !onUmbrel || hermesOf(a.id) === onUmbrel)
   const ids = agents.map((a) => a.id)
   const status = useUmbrelMcp(ids)
   const connected = status.data?.connected ?? []

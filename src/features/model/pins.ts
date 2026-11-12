@@ -1,15 +1,15 @@
 import { useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { agentsKey, useAgents, type Agent } from '@/state/agents'
+import { agentsKey, mainAgentFor, useAgents, type Agent } from '@/state/agents'
 import { agentsIn, settle, writeRecord } from '@/state/records'
 import { prettyModel } from './names'
 import type { ModelGroup, ModelPick } from './use-models'
 
 // Pinned models: the few you switch between, on top of every model list.
 //
-// One list for the whole Hermes, kept on the main agent
+// One list for the whole Hermes, kept on its main agent
 // (ui_meta['murmur-pinned-models']) so every device and browser shows the same
-// pins, and every agent: a model one agent can't use just isn't there for it.
+// pins, and every agent there: a model one agent can't use just isn't there for it.
 // Each pin is `provider::model`, in the order they were pinned, as Hermes
 // Desktop writes its favourites. A pin whose service isn't connected right now
 // is kept for when it is.
@@ -25,23 +25,24 @@ export function pinsOf(main: Agent | undefined): string[] {
     : []
 }
 
-export function usePins() {
-  return pinsOf(useAgents().data?.find((a) => a.isDefault))
+/** The pins `agent` sees: its Hermes's. */
+export function usePins(agent: string) {
+  return pinsOf(mainAgentFor(useAgents().data, agent))
 }
 
-export async function setPinned(qc: QueryClient, pick: ModelPick, on: boolean) {
+export async function setPinned(qc: QueryClient, agent: string, pick: ModelPick, on: boolean) {
   await qc.cancelQueries({ queryKey: agentsKey })
-  const main = agentsIn(qc).find((a) => a.isDefault)
+  const main = mainAgentFor(agentsIn(qc), agent)
   if (!main) return
   const key = pinKey(pick)
   await writeRecord(qc, main.id, PINS, (a) => [...pinsOf(a).filter((k) => k !== key), ...(on ? [key] : [])])
 }
 
-export function useSetPinned() {
+export function useSetPinned(agent: string) {
   const qc = useQueryClient()
   return async (pick: ModelPick, on: boolean) => {
     try {
-      await setPinned(qc, pick, on)
+      await setPinned(qc, agent, pick, on)
     } catch {
       toast.error(`Couldn’t ${on ? 'pin' : 'unpin'} ${prettyModel(pick.model)}. Try again.`)
     } finally {

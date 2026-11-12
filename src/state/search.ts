@@ -6,6 +6,8 @@ import { create } from 'zustand'
 import { keepPreviousData, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { api } from '@/hermes/rest'
+import { isOpen } from '@/hermes/gateway'
+import { hermesIds, hermesOf, noteHome } from '@/hermes/instance'
 import { fetchChatRows, readable, useAgents, type Agent } from '@/state/agents'
 import { plainLine } from '@shared/message.ts'
 import type { Found } from '@/state/seek'
@@ -114,6 +116,8 @@ async function searchAgent(agent: Agent, q: string, signal?: AbortSignal): Promi
   return (res.results ?? []).flatMap<SearchResult>((h) => {
     const chatId = h.session_id || h.id || ''
     if (!chatId || hidden(h.source, h.title)) return []
+    // Found on its agent's Hermes: where the chat's own calls go once it's opened.
+    noteHome(chatId, hermesOf(agent.id))
     const title = readable(h.title, { files: false }) || readable(h.preview) || 'Chat'
     const base = { agent, chatId, title, at: (h.last_active || h.session_started || h.started_at || 0) * 1000 }
     if (!behindTheScenes(h)) {
@@ -201,9 +205,11 @@ export function useChatSearch(input: string, delay = 220): ChatSearch {
     placeholderData: keepPreviousData,
     staleTime: 15_000,
     queryFn: async ({ signal }) => {
+      // With several Hermes, one that's away is left out: the others' chats are found without waiting for it.
+      const asked = hermesIds().length > 1 ? agents.filter((a) => isOpen(hermesOf(a.id))) : agents
       const [settled, titled] = await Promise.all([
-        Promise.allSettled(agents.map((a) => searchAgent(a, query, signal))),
-        Promise.allSettled(agents.map((a) => searchTitles(qc, a, query))),
+        Promise.allSettled(asked.map((a) => searchAgent(a, query, signal))),
+        Promise.allSettled(asked.map((a) => searchTitles(qc, a, query))),
       ])
       const ok = settled.flatMap((s) => (s.status === 'fulfilled' ? [s.value] : []))
       if (!ok.length && settled.length) throw (settled[0] as PromiseRejectedResult).reason

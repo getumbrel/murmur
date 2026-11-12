@@ -1,17 +1,13 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { followSwitches, liftCurtain, needsConnectionSetup, useHermesConnection, useMurmurSession } from '@/state/connection'
+import { needsConnectionSetup, takeListed, useHermesConnection, useMurmurSession, useSeveral } from '@/state/connection'
 import { useSetup } from '@/state/setup'
 import { useAway } from '@/state/reach'
 import { restartBoot } from '@/state/readiness'
-import { adoptHermes, browserHermes, tabHermes } from '@/hermes/instance'
 import { SetupFlow } from '@/features/onboarding/setup-flow'
 import { GettingReady } from '@/features/onboarding/getting-ready'
 import { HermesConnectionForm, isBuiltinHermes } from './hermes-connection-form'
 import { LoginScreen } from './login'
-import { CurtainLift, SwitchCurtain } from './curtain'
 import { UpdateHermes } from './update-hermes'
-
-let following = false
 
 /**
  * Murmur's own sign-in. Wrap the whole app *outside* its QueryClientProvider
@@ -19,33 +15,15 @@ let following = false
  * Renders children straight away when the server has no MURMUR_PASSWORD.
  */
 export function AccessGate({ children }: { children: ReactNode }) {
-  return (
-    <>
-      <Access>{children}</Access>
-      {/* Switching Hermes: over everything, from before the app loads until it's drawn. */}
-      <SwitchCurtain />
-    </>
-  )
-}
-
-function Access({ children }: { children: ReactNode }) {
   const { session, error, signIn, clearError } = useMurmurSession()
   // Signed in from this screen: keep it up for its success beat, then hand over.
   const [welcoming, setWelcoming] = useState(false)
   useEffect(() => {
-    if (following) return
-    following = true
-    followSwitches()
-  }, [])
-  useEffect(() => {
     if (!session) return
-    // A first visit can load before the server has named this browser's Hermes
+    // A first visit can load before the server has said which Hermes there are
     // (the page came from elsewhere, as in development). It has by now: carry
-    // on with it, or start over when its things are kept apart.
-    const named = browserHermes()
-    if (named && !tabHermes() && !adoptHermes(named)) location.reload()
-    // Signed out on the far side of a switch: the sign-in screen is what's drawn.
-    if (session.required && !session.signedIn) liftCurtain()
+    // on with them, or start over when the first one's things are kept apart.
+    if (!takeListed()) location.reload()
   }, [session])
   if (!session) return <div className="min-h-dvh bg-bg" />
   if ((session.required && !session.signedIn) || welcoming) {
@@ -78,6 +56,8 @@ function Access({ children }: { children: ReactNode }) {
 export function HermesGate({ children }: { children: ReactNode }) {
   const { connection, isLoading, refetch } = useHermesConnection()
   const away = useAway()
+  // With several Hermes the app is never held for one of them: the others carry on, and its agents wait in the list.
+  const several = useSeveral()
   const [done, setDone] = useState(false)
   // Backed out of a slow first start to choose something else.
   const [rechoosing, setRechoosing] = useState(false)
@@ -116,6 +96,7 @@ export function HermesGate({ children }: { children: ReactNode }) {
 
   // Murmur's server can't be reached (the app came from this device): there's no answer to wait for.
   if (isLoading && !away) return <div className="min-h-dvh bg-bg" />
+  if (several && !inFlow && !rechoosing) return <>{children}</>
   if (choosing || inFlow) {
     return (
       <SetupFlow
@@ -129,7 +110,7 @@ export function HermesGate({ children }: { children: ReactNode }) {
   }
   if (readying === 'yes' || seenStarting) {
     return (
-      <Ready
+      <GettingReady
         state={builtin?.state}
         connected={connection?.status === 'connected'}
         onDone={() => {
@@ -144,7 +125,7 @@ export function HermesGate({ children }: { children: ReactNode }) {
   if (starting && setup.isPending && readying === 'no') return <div className="min-h-dvh bg-bg" />
   if (!done && needsConnectionSetup(connection))
     return (
-      <SetUp
+      <HermesConnectionForm
         onConnected={() => {
           restartBoot()
           setDone(true)
@@ -153,22 +134,5 @@ export function HermesGate({ children }: { children: ReactNode }) {
     )
   // Too old for what Murmur needs: say so, rather than load an app that half works.
   if (connection?.outdated) return <UpdateHermes connection={connection} onCheck={refetch} />
-  return (
-    <>
-      {children}
-      <CurtainLift />
-    </>
-  )
-}
-
-function Ready(props: Parameters<typeof GettingReady>[0]) {
-  // Nothing else will draw, so a switch curtain lifts onto this.
-  useEffect(liftCurtain, [])
-  return <GettingReady {...props} />
-}
-
-function SetUp({ onConnected }: { onConnected: () => void }) {
-  // Nothing else will draw, so the curtain (if a switch landed here) lifts onto the form.
-  useEffect(liftCurtain, [])
-  return <HermesConnectionForm onConnected={onConnected} />
+  return <>{children}</>
 }
