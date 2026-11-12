@@ -7,6 +7,11 @@ const REPO = 'https://github.com/getumbrel/murmur'
 
 const isMac = process.platform === 'darwin'
 
+// Another window onto Murmur (main.ts sets what it does).
+let openWindow: (() => void) | undefined
+export const onNewWindow = (open: () => void) => (openWindow = open)
+const newWindow: Item = { label: 'New Window', accelerator: 'CmdOrCtrl+N', click: () => openWindow?.() }
+
 export type Updates = {
   /** Shown only when this build updates itself. */
   check?: () => void
@@ -45,7 +50,11 @@ export function setMenu(updates: Updates = {}) {
       : []),
     {
       label: 'File',
-      submenu: [isMac ? { role: 'close', label: 'Close Window' } : { role: 'quit', label: 'Quit Murmur' }],
+      submenu: [
+        newWindow,
+        { type: 'separator' },
+        isMac ? { role: 'close', label: 'Close Window' } : { role: 'quit', label: 'Quit Murmur' },
+      ],
     },
     {
       label: 'Edit',
@@ -82,6 +91,8 @@ export function setMenu(updates: Updates = {}) {
     },
     {
       label: 'Window',
+      // On a Mac, the menu that lists Murmur's windows.
+      ...(isMac && { role: 'window' as const }),
       submenu: [
         { role: 'minimize' },
         { role: 'zoom' },
@@ -101,6 +112,8 @@ export function setMenu(updates: Updates = {}) {
     },
   ]
   Menu.setApplicationMenu(Menu.buildFromTemplate(template))
+  // A Mac's Dock offers it too.
+  if (isMac) app.dock?.setMenu(Menu.buildFromTemplate([{ label: 'New Window', click: () => openWindow?.() }]))
 }
 
 /** Electron shows no menu on right-click by itself: spelling, the clipboard, links and images. */

@@ -2,7 +2,7 @@
 
 Murmur also ships as a desktop app for macOS, Windows and Linux, built with Electron. It's the same web app and the same server as the umbrelOS app, packaged together:
 
-- The app starts Murmur's server inside itself on `127.0.0.1`, reusing the last port when it's free, and opens one window onto it. Every request except `/healthz` must carry a header that's new each launch, which the app adds to its own pages' requests to that port only, so nothing else on the computer can use it.
+- The app starts Murmur's server inside itself on `127.0.0.1`, reusing the last port when it's free, and opens a window onto it. File → New Window (⌘N, or Ctrl+N) opens another beside it, for two agents side by side: every window has every agent, on every server. The first window's place is remembered; on a Mac, closing the last window only hides it. Every request except `/healthz` must carry a header that's new each launch, which the app adds to its own pages' requests to that port only, so nothing else on the computer can use it.
 - You pick a Hermes in the app ("Connect to Hermes"). Murmur keeps it in `murmur.json` in the app's data folder, the way the server keeps `DATA_DIR/murmur.json` elsewhere. The server ignores the shell's environment, so a `HERMES_URL` or `MURMUR_PASSWORD` you have set doesn't leak in.
 - The data folder is `~/Library/Application Support/Murmur` on macOS, `%APPDATA%\Murmur` on Windows and `~/.config/Murmur` on Linux. Development builds use `Murmur Dev` instead.
 

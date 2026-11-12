@@ -29,7 +29,7 @@ import { randomBytes } from 'node:crypto'
 import { join, resolve } from 'node:path'
 import { startServer, type RunningServer, type ServerOptions } from '../server/app.ts'
 import type { NativeNote } from '../server/notifications.ts'
-import { contextMenu } from './menu.ts'
+import { contextMenu, onNewWindow } from './menu.ts'
 import { readState, saveState, type Bounds } from './state.ts'
 import { startUpdates } from './updates.ts'
 
@@ -63,8 +63,11 @@ const theme = () =>
 
 let server: RunningServer | null = null
 let origin = ''
+// The window Murmur opens with, and comes back to (a notification, the Dock).
+// Others can be opened beside it (File → New Window), for two agents side by
+// side: every window has every agent, on every server.
 let main: BrowserWindow | null = null
-// Set once Murmur is really quitting: until then, closing the window on a Mac only hides it.
+// Set once Murmur is really quitting: until then, closing the last window on a Mac only hides it.
 let quitting = false
 
 type ThemeMode = 'system' | 'light' | 'dark'
@@ -119,7 +122,8 @@ function savedBounds() {
 function rememberBounds(window: BrowserWindow) {
   let timer: NodeJS.Timeout | undefined
   const save = () => {
-    if (window.isDestroyed() || window.isFullScreen() || window.isMinimized()) return
+    // The main window's place is the one kept: another opened beside it goes where it's put, for now.
+    if (window !== main || window.isDestroyed() || window.isFullScreen() || window.isMinimized()) return
     const bounds: Bounds = window.getNormalBounds()
     saveState({ window: { ...bounds, maximized: window.isMaximized() } })
   }
@@ -135,15 +139,15 @@ function rememberBounds(window: BrowserWindow) {
   })
 }
 
-/** The window, opened at `path` (a clicked notification's chat, say). */
-function createWindow(path = '/') {
-  const saved = savedBounds()
+/** A window, opened at `path` (a clicked notification's chat, say), where it was last, or at `at`. */
+function createWindow(path = '/', at?: Bounds) {
+  const saved = at ? null : savedBounds()
   const colors = theme()
   const chrome: BrowserWindowConstructorOptions = isMac
     ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 16, y: 18 } }
     : { titleBarStyle: 'hidden', titleBarOverlay: { ...colors, height: TITLE_BAR_HEIGHT } }
   const window = new BrowserWindow({
-    ...(saved ?? DEFAULT_SIZE),
+    ...(at ?? saved ?? DEFAULT_SIZE),
     minWidth: 380,
     minHeight: 560,
     show: false,
@@ -169,12 +173,15 @@ function createWindow(path = '/') {
   rememberBounds(window)
   window.webContents.on('context-menu', (_event, params) => contextMenu(window, params))
   window.on('closed', () => {
-    if (main === window) main = null
+    // Another window still open carries on as the main one.
+    if (main === window) main = BrowserWindow.getAllWindows().find((w) => w !== window && !w.isDestroyed()) ?? null
   })
   // A Mac app keeps running with its window closed: the server goes on telling
-  // the person what agents do, and the page keeps the Dock badge. Closing only hides it.
+  // the person what agents do, and the page keeps the Dock badge. Closing the
+  // last window only hides it; one of several closes.
   window.on('close', (event) => {
     if (!isMac || quitting) return
+    if (BrowserWindow.getAllWindows().some((w) => w !== window && !w.isDestroyed())) return
     event.preventDefault()
     if (!window.isFullScreen()) return window.hide()
     window.once('leave-full-screen', () => window.hide())
@@ -185,6 +192,21 @@ function createWindow(path = '/') {
   window.on('leave-full-screen', fullScreen(false))
   void window.loadURL(new URL(path, DEV_URL ?? server!.url).href)
   return window
+}
+
+/** Another window, a step down and to the right of the one in front, at home. */
+function newWindow() {
+  if (!server) return
+  const from = BrowserWindow.getFocusedWindow() ?? main
+  const visible = from && !from.isDestroyed() && from.isVisible() && !from.isFullScreen()
+  if (!visible) return bringForward(main ?? (main = createWindow()))
+  const { x, y, width, height } = from.getNormalBounds()
+  const area = screen.getDisplayMatching({ x, y, width, height }).workArea
+  const step = 28
+  // Back to the top-left of the screen once a step would leave it.
+  const fits = x + step + width <= area.x + area.width && y + step + height <= area.y + area.height
+  const window = createWindow('/', fits ? { x: x + step, y: y + step, width, height } : { x: area.x, y: area.y, width, height })
+  main ??= window
 }
 
 function bringForward(window: BrowserWindow | null) {
@@ -401,6 +423,8 @@ if (!app.requestSingleInstanceLock()) {
     website: 'https://umbrel.com/murmur',
     ...(!isMac && { iconPath: join(__dirname, 'icon.png') }),
   })
+
+  onNewWindow(newWindow)
 
   // The theme Murmur was last set to, so the window opens in it with no flash.
   const theme = readState().theme
