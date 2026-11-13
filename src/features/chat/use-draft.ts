@@ -78,40 +78,49 @@ export function useDraft(key?: string) {
   return [text, change, clear] as const
 }
 
-// The passage a message answers (features/chat/quote.tsx) waits with the words typed under it.
+// The passages a message answers (features/chat/quote.tsx) wait with the words typed under them.
+const QUOTES = 'murmur:draft-quotes:'
+/** Where the one passage a message could answer was kept, before it could answer several. */
 const QUOTE = 'murmur:draft-quote:'
 
-function readQuote(key?: string) {
-  if (!key) return ''
+function readQuotes(key?: string): string[] {
+  if (!key) return []
   try {
-    return localStorage.getItem(stored(key, QUOTE)) ?? ''
+    const kept = localStorage.getItem(stored(key, QUOTES))
+    if (kept) {
+      const list: unknown = JSON.parse(kept)
+      return Array.isArray(list) ? list.filter((q): q is string => typeof q === 'string' && !!q) : []
+    }
+    const one = localStorage.getItem(stored(key, QUOTE))
+    return one ? [one] : []
   } catch {
-    return ''
+    return []
   }
 }
 
-/** The passage being answered, kept per key like the text under it. One at a time: a new one takes its place. */
-export function useDraftQuote(key?: string) {
-  const [quote, setQuote] = useState(() => readQuote(key))
+/** The passages being answered, in the order they were picked, kept per key like the text under them. */
+export function useDraftQuotes(key?: string) {
+  const [quotes, setQuotes] = useState(() => readQuotes(key))
   const [shown, setShown] = useState(key)
   if (shown !== key) {
     setShown(key)
-    setQuote(readQuote(key))
+    setQuotes(readQuotes(key))
   }
   const change = useCallback(
-    (next: string) => {
-      setQuote(next)
+    (next: string[]) => {
+      setQuotes(next)
       if (!key) return
       try {
-        if (next) localStorage.setItem(stored(key, QUOTE), next)
-        else localStorage.removeItem(stored(key, QUOTE))
+        if (next.length) localStorage.setItem(stored(key, QUOTES), JSON.stringify(next))
+        else localStorage.removeItem(stored(key, QUOTES))
+        localStorage.removeItem(stored(key, QUOTE))
       } catch {
-        /* storage unavailable: it just doesn't outlast a reload */
+        /* storage unavailable: they just don't outlast a reload */
       }
     },
     [key],
   )
-  return [quote, change] as const
+  return [quotes, change] as const
 }
 
 const MAX_LINES = 8

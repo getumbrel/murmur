@@ -137,9 +137,10 @@ export function parseUserMessage(
 }
 
 // ── Replying to a part of what the agent said ───────────────────────────────
-// The passage goes to Hermes as plain Markdown, a blockquote above your words,
+// A passage goes to Hermes as plain Markdown, a blockquote above your words,
 // so the agent (and any other app reading the chat) sees which part you mean.
-// Read back, a blockquote that opens your message is that passage again.
+// Several go one under another, each a blockquote of its own. Read back, the
+// blockquotes that open your message are those passages again.
 
 /** A passage as it's quoted: no trailing spaces, no more than one blank line in a row, none at either end. */
 export function tidyQuote(passage: string) {
@@ -152,33 +153,52 @@ export function tidyQuote(passage: string) {
     .trim()
 }
 
-/** Your words under the passage they answer, as they're sent: "> " on each of its lines, a blank line, then the words. */
-export function withQuote(quote: string | undefined, text: string) {
-  const passage = tidyQuote(quote ?? '')
-  if (!passage) return text
-  const block = passage
+/** A passage as it's sent: "> " on each of its lines. */
+const quoted = (passage: string) =>
+  passage
     .split('\n')
     .map((line) => (line ? `> ${line}` : '>'))
     .join('\n')
-  return text ? `${block}\n\n${text}` : block
-}
 
 /**
- * The passage a message opens with, and the words under it. Only a blockquote
- * at the very top counts, and only one that ends there: a ">" line with more
- * typed straight under it is just what someone wrote.
+ * Your words under the passages they answer, as they're sent: each passage a
+ * blockquote of its own, in the order they were picked, a blank line between
+ * them, then a blank line and the words.
  */
-export function splitQuote(message: string): { quote?: string; text: string } {
+export function withQuotes(quotes: readonly string[], text: string) {
+  const blocks = quotes.map(tidyQuote).filter(Boolean).map(quoted)
+  if (!blocks.length) return text
+  return [...blocks, ...(text ? [text] : [])].join('\n\n')
+}
+
+const QUOTED = /^>(?: |$)/
+
+/**
+ * The passages a message opens with, and the words under them. Only
+ * blockquotes at the very top count, each ended by a blank line (or the end
+ * of the message): a ">" line with more typed straight under it is just what
+ * someone wrote, and so is everything after it.
+ */
+export function splitQuotes(message: string): { quotes: string[]; text: string } {
   const lines = message.split('\n')
-  let end = 0
-  while (end < lines.length && /^>(?: |$)/.test(lines[end])) end++
-  if (!end || (end < lines.length && lines[end].trim())) return { text: message }
-  const quote = tidyQuote(
-    lines
-      .slice(0, end)
-      .map((line) => line.replace(/^> ?/, ''))
-      .join('\n'),
-  )
-  if (!quote) return { text: message }
-  return { quote, text: lines.slice(end).join('\n').replace(/^(?:[^\S\n]*\n)+/, '').trimEnd() }
+  const quotes: string[] = []
+  // Where the words begin: after the last passage read, and the blank lines under it.
+  let rest = 0
+  for (let at = 0; at < lines.length; ) {
+    let end = at
+    while (end < lines.length && QUOTED.test(lines[end])) end++
+    if (end === at || (end < lines.length && lines[end].trim())) break
+    const quote = tidyQuote(
+      lines
+        .slice(at, end)
+        .map((line) => line.replace(/^> ?/, ''))
+        .join('\n'),
+    )
+    if (!quote) break
+    quotes.push(quote)
+    while (end < lines.length && !lines[end].trim()) end++
+    at = rest = end
+  }
+  if (!quotes.length) return { quotes, text: message }
+  return { quotes, text: lines.slice(rest).join('\n').trimEnd() }
 }

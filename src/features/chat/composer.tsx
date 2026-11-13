@@ -21,9 +21,9 @@ import { formatSize } from '@/features/media/files'
 import { MAX_UPLOAD, isPhoto } from '@/features/media/upload'
 import { CommandPalette, useCommandPalette } from '@/features/commands/command-palette'
 import { parseCommand, type Command } from '@/features/commands/commands'
-import { useAutoGrow, useDraft, useDraftQuote } from './use-draft'
-import { ComposerQuote } from './quote'
-import { withQuote } from '@/features/media/parse'
+import { useAutoGrow, useDraft, useDraftQuotes } from './use-draft'
+import { ComposerQuotes, addQuote } from './quote'
+import { withQuotes } from '@/features/media/parse'
 import { useKeyboardInset } from './use-keyboard-inset'
 import { DictationNote, DictationPanel, MicButton, canDictate, useDictation } from '@/features/voice/dictation'
 import { IconChip, PicturesIcon } from '@/ui/icons'
@@ -37,8 +37,10 @@ export type { PlusItem } from './plus-menu'
 export type ComposerHandle = {
   addFiles: (files: File[]) => void
   setText: (text: string) => void
-  /** The passage the next message answers, above what's typed (one at a time; '' drops it). */
-  setQuote: (quote: string) => void
+  /** One more passage for the next message to answer, under those already above what's typed. */
+  addQuote: (passage: string) => void
+  /** The passages the next message answers, in order (none drops them). */
+  setQuotes: (quotes: string[]) => void
   /** What's in the box now. */
   text: () => string
   focus: () => void
@@ -123,8 +125,10 @@ export function Composer({
   more,
 }: Props) {
   const [text, setText, clearDraft] = useDraft(draftKey)
-  // The part of a reply this message answers: it goes above your words, as a quote.
-  const [quote, setQuote] = useDraftQuote(draftKey)
+  // The parts of a reply this message answers: they go above your words, as quotes.
+  const [quotes, setQuotes] = useDraftQuotes(draftKey)
+  // One picked a second time: its card lights instead.
+  const [again, setAgain] = useState<{ quote: string; at: number }>()
 
   const [images, setImages] = useState<Attachment[]>([])
   const [dragging, setDragging] = useState(false)
@@ -183,7 +187,12 @@ export function Composer({
   useImperativeHandle(handle, () => ({
     addFiles: (files) => addImages(files),
     setText: (next) => setText(next),
-    setQuote: (next) => setQuote(next),
+    addQuote: (passage) => {
+      const next = addQuote(quotes, passage)
+      if (next === quotes) setAgain({ quote: passage, at: Date.now() })
+      else (setAgain(undefined), setQuotes(next))
+    },
+    setQuotes: (next) => setQuotes(next),
     text: () => text,
     focus,
   }))
@@ -241,7 +250,7 @@ export function Composer({
   }, [disabled, dictation.active, closePlus])
 
   // (A passage can go by itself: "this", with nothing to add.)
-  const hasContent = text.trim().length > 0 || images.length > 0 || !!quote
+  const hasContent = text.trim().length > 0 || images.length > 0 || quotes.length > 0
   const mode: 'send' | 'stop' | 'mic' =
     busy && !hasContent ? 'stop' : !hasContent && voice !== undefined && micOk && !editing ? 'mic' : 'send'
 
@@ -256,10 +265,10 @@ export function Composer({
     }
     haptic()
     onSend(
-      withQuote(quote, text.trim()),
+      withQuotes(quotes, text.trim()),
       images.map((a) => a.file),
     )
-    setQuote('')
+    setQuotes([])
     // (The thread keeps its own previews; ours can go.)
     images.forEach((a) => a.url && URL.revokeObjectURL(a.url))
     setImages([])
@@ -456,7 +465,7 @@ export function Composer({
               )}
             </AnimatePresence>
 
-            <ComposerQuote quote={quote} onRemove={() => (setQuote(''), focus())} />
+            <ComposerQuotes quotes={quotes} again={again} onRemove={(index) => (setQuotes(quotes.filter((_, n) => n !== index)), focus())} />
 
             <DictationNote dictation={dictation} />
 

@@ -52,7 +52,7 @@ import { FailedLine, FindingLine } from '@/features/routines/finding-line'
 import { RoutineCard } from '@/features/routines/routine-card'
 import { ReactionBadge, ReactionPills, Tapback } from './reactions'
 import { BubbleQuote, REPLY_SURFACE, ReplyFace, ReplyPill, passageRange, sourceOf, usePassage, washPassage } from './quote'
-import { splitQuote } from '@/features/media/parse'
+import { splitQuotes } from '@/features/media/parse'
 import { useMedia } from '@/lib/use-media'
 import { BrowserCard, browserKey, foldedIn, HandCard, placeBrowsers } from '@/features/screen'
 import { ASK_TOOL, OPENS_PAGES } from '@/state/screen'
@@ -1104,10 +1104,10 @@ const UserMessage = memo(function UserMessage({
   const [held, setHeld] = useState<HTMLElement | null>(null)
   const close = useCallback(() => setHeld(null), [])
   const press = useLongPress(setHeld)
-  // The part of a reply it answers, when it opens with one, and the words under it.
-  const { quote, text } = useMemo(() => splitQuote(item.text), [item.text])
-  // (What you wrote is what's copied; a passage sent by itself, that.)
-  const mine = text || quote || ''
+  // The parts of a reply it answers, when it opens with any, and the words under them.
+  const { quotes, text } = useMemo(() => splitQuotes(item.text), [item.text])
+  // (What you wrote is what's copied; passages sent by themselves, those.)
+  const mine = text || quotes.join('\n\n')
   const actions: MenuAction[] = [
     ...(onEdit ? [{ label: 'Edit', icon: PencilLine, onSelect: () => onEdit(item) }] : []),
     { label: 'Copy', icon: Copy, onSelect: () => void copy(mine) },
@@ -1164,9 +1164,11 @@ const UserMessage = memo(function UserMessage({
               )}
               {/* An edit swaps the words in place. */}
               <span key={item.text} className={cn(item.was && 'animate-fade')}>
-                {quote && (
-                  <span className={cn('block', text ? 'mb-1.5' : '-mb-0.5')}>
-                    <BubbleQuote quote={quote} onOpen={onQuote && (() => onQuote(item.id, quote))} />
+                {quotes.length > 0 && (
+                  <span className={cn('flex flex-col gap-1.5', text ? 'mb-1.5' : '-mb-0.5')}>
+                    {quotes.map((quote, n) => (
+                      <BubbleQuote key={n} quote={quote} onOpen={onQuote && (() => onQuote(item.id, quote))} />
+                    ))}
                   </span>
                 )}
                 <MentionText text={text} />
@@ -1222,9 +1224,11 @@ const UserMessage = memo(function UserMessage({
             }
             bubble={
               <div className={cn(BUBBLE, 'w-full shadow-float')}>
-                {quote && (
-                  <span className={cn('block', text ? 'mb-1.5' : '-mb-0.5')}>
-                    <BubbleQuote quote={quote} still />
+                {quotes.length > 0 && (
+                  <span className={cn('flex flex-col gap-1.5', text ? 'mb-1.5' : '-mb-0.5')}>
+                    {quotes.map((quote, n) => (
+                      <BubbleQuote key={n} quote={quote} still />
+                    ))}
                   </span>
                 )}
                 <MentionText text={text} still />

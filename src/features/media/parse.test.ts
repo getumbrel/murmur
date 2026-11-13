@@ -93,21 +93,21 @@ describe('a message Hermes saved in parts', () => {
   })
 })
 
-const { splitQuote, tidyQuote, withQuote } = await import('./parse')
+const { splitQuotes, tidyQuote, withQuotes } = await import('./parse')
 
 describe('replying to a part of a reply', () => {
   it('sends the passage as a blockquote, a blank line, then your words', () => {
-    expect(withQuote('The 28 tram is the scenic one.', 'Is it crowded?')).toBe('> The 28 tram is the scenic one.\n\nIs it crowded?')
+    expect(withQuotes(['The 28 tram is the scenic one.'], 'Is it crowded?')).toBe('> The 28 tram is the scenic one.\n\nIs it crowded?')
   })
 
   it('quotes every line of a passage, blank ones too', () => {
-    expect(withQuote('Day one\n\nDay two', 'Swap these')).toBe('> Day one\n>\n> Day two\n\nSwap these')
+    expect(withQuotes(['Day one\n\nDay two'], 'Swap these')).toBe('> Day one\n>\n> Day two\n\nSwap these')
   })
 
   it('sends a passage with nothing under it, and words with no passage as they are', () => {
-    expect(withQuote('Just this', '')).toBe('> Just this')
-    expect(withQuote(undefined, 'Hello')).toBe('Hello')
-    expect(withQuote('  \n ', 'Hello')).toBe('Hello')
+    expect(withQuotes(['Just this'], '')).toBe('> Just this')
+    expect(withQuotes([], 'Hello')).toBe('Hello')
+    expect(withQuotes(['  \n '], 'Hello')).toBe('Hello')
   })
 
   it('tidies what was selected: line ends, runs of blank lines, the ends', () => {
@@ -115,18 +115,18 @@ describe('replying to a part of a reply', () => {
   })
 
   it('reads the passage back out of a message', () => {
-    expect(splitQuote('> The 28 tram is the scenic one.\n\nIs it crowded?')).toEqual({
-      quote: 'The 28 tram is the scenic one.',
+    expect(splitQuotes('> The 28 tram is the scenic one.\n\nIs it crowded?')).toEqual({
+      quotes: ['The 28 tram is the scenic one.'],
       text: 'Is it crowded?',
     })
-    expect(splitQuote('> Day one\n>\n> Day two\n\nSwap these\n\nPlease')).toEqual({
-      quote: 'Day one\n\nDay two',
+    expect(splitQuotes('> Day one\n>\n> Day two\n\nSwap these\n\nPlease')).toEqual({
+      quotes: ['Day one\n\nDay two'],
       text: 'Swap these\n\nPlease',
     })
   })
 
   it('reads a message that is only a passage', () => {
-    expect(splitQuote('> Just this')).toEqual({ quote: 'Just this', text: '' })
+    expect(splitQuotes('> Just this')).toEqual({ quotes: ['Just this'], text: '' })
   })
 
   it('round-trips whatever was quoted', () => {
@@ -136,23 +136,67 @@ describe('replying to a part of a reply', () => {
       ['> already quoted\nand more', 'Why?'],
       ['const a = 1\n\n  indented()', ''],
     ]) {
-      expect(splitQuote(withQuote(quote, text))).toEqual({ quote, text })
+      expect(splitQuotes(withQuotes([quote], text))).toEqual({ quotes: [quote], text })
     }
   })
 
   it('leaves a message alone when it doesn’t open with a passage', () => {
-    expect(splitQuote('Hello\n\n> not at the top')).toEqual({ text: 'Hello\n\n> not at the top' })
+    expect(splitQuotes('Hello\n\n> not at the top')).toEqual({ quotes: [], text: 'Hello\n\n> not at the top' })
     // More typed straight under it: that's the person's own ">".
-    expect(splitQuote('> 5 is what I meant\nand < 9')).toEqual({ text: '> 5 is what I meant\nand < 9' })
-    expect(splitQuote('>no space')).toEqual({ text: '>no space' })
-    expect(splitQuote('>\n\nHello')).toEqual({ text: '>\n\nHello' })
-    expect(splitQuote('')).toEqual({ text: '' })
+    expect(splitQuotes('> 5 is what I meant\nand < 9')).toEqual({ quotes: [], text: '> 5 is what I meant\nand < 9' })
+    expect(splitQuotes('>no space')).toEqual({ quotes: [], text: '>no space' })
+    expect(splitQuotes('>\n\nHello')).toEqual({ quotes: [], text: '>\n\nHello' })
+    expect(splitQuotes('')).toEqual({ quotes: [], text: '' })
   })
 
   it('reads the passage from a message as Hermes stored it, files and all', () => {
     const stored = `> The 28 tram\n\nIs it crowded?\n\n${fileRef('attachments/map.pdf')}`
     const { text, attachments } = parseUserMessage(stored)
     expect(attachments).toEqual([{ kind: 'file', name: 'map.pdf', path: 'attachments/map.pdf' }])
-    expect(splitQuote(text)).toEqual({ quote: 'The 28 tram', text: 'Is it crowded?' })
+    expect(splitQuotes(text)).toEqual({ quotes: ['The 28 tram'], text: 'Is it crowded?' })
+  })
+})
+
+describe('replying to several parts at once', () => {
+  it('sends each passage as a blockquote of its own, in the order picked, then your words', () => {
+    expect(withQuotes(['Chiado is the easy choice.', 'Pack a light jacket.'], 'Both sound right')).toBe(
+      '> Chiado is the easy choice.\n\n> Pack a light jacket.\n\nBoth sound right',
+    )
+  })
+
+  it('leaves out a passage with nothing in it', () => {
+    expect(withQuotes(['One', ' \n', 'Two'], '')).toBe('> One\n\n> Two')
+  })
+
+  it('reads them back in order, with the words under them', () => {
+    expect(splitQuotes('> Chiado is the easy choice.\n\n> Pack a light jacket.\n\nBoth sound right')).toEqual({
+      quotes: ['Chiado is the easy choice.', 'Pack a light jacket.'],
+      text: 'Both sound right',
+    })
+    expect(splitQuotes('> One\n\n> Two\n\n> Three')).toEqual({ quotes: ['One', 'Two', 'Three'], text: '' })
+  })
+
+  it('keeps a blank line inside a passage in that passage', () => {
+    expect(splitQuotes('> Day one\n>\n> Day two\n\n> Day three\n\nSwap')).toEqual({
+      quotes: ['Day one\n\nDay two', 'Day three'],
+      text: 'Swap',
+    })
+  })
+
+  it('round-trips any number of them', () => {
+    for (const [quotes, text] of [
+      [['A', 'B'], 'Words'],
+      [['Two\nlines', 'One', 'Para one\n\nPara two'], 'Words\n\nover two paragraphs'],
+      [['> already quoted', 'plain'], ''],
+    ] as [string[], string][]) {
+      expect(splitQuotes(withQuotes(quotes, text))).toEqual({ quotes, text })
+    }
+  })
+
+  it('stops at a ">" with more typed straight under it: that and the rest are your words', () => {
+    expect(splitQuotes('> A passage\n\n> 5 is what I meant\nand < 9')).toEqual({
+      quotes: ['A passage'],
+      text: '> 5 is what I meant\nand < 9',
+    })
   })
 })

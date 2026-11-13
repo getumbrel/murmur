@@ -17,7 +17,7 @@ import type { ChatItem } from '@/features/chat/types'
 import { ChatHeader } from '@/features/chat-screen/chat-header'
 import { EmptyState } from '@/features/chat-screen/empty-state'
 import { ContinuedFrom } from '@/features/chat-screen/continued'
-import { splitQuote } from '@/features/media/parse'
+import { splitQuotes } from '@/features/media/parse'
 import { takeOpeningLine } from '@/features/chat-screen/opening-line'
 import { CantOpen, LastSeen, NotFound } from '@/features/chat-screen/not-found'
 import { ThreadSkeleton } from '@/features/chat-screen/thread-skeleton'
@@ -349,28 +349,28 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
   )
   const [rewrite, setRewrite] = useState<string | null>(null)
   if (rewrite && editable?.id !== rewrite) setRewrite(null)
-  /** A message back in the box: the passage it answers above, its words under it. */
+  /** A message back in the box: the passages it answers above, its words under them. */
   const refill = (message: string) => {
-    const { quote, text } = splitQuote(message)
-    composer.current?.setQuote(quote ?? '')
+    const { quotes, text } = splitQuotes(message)
+    composer.current?.setQuotes(quotes)
     composer.current?.setText(text)
     composer.current?.focus()
   }
   const onEditMessage = useCallback((item: { id: string; text: string }) => {
     setRewrite(item.id)
-    const { quote, text } = splitQuote(item.text)
-    composer.current?.setQuote(quote ?? '')
+    const { quotes, text } = splitQuotes(item.text)
+    composer.current?.setQuotes(quotes)
     composer.current?.setText(text)
     composer.current?.focus()
   }, [])
   const cancelRewrite = () => {
     setRewrite(null)
-    composer.current?.setQuote('')
+    composer.current?.setQuotes([])
     composer.current?.setText('')
   }
-  // Reply to a part of what the agent said: the passage waits above the box for your words.
+  // Reply to a part of what the agent said: the passage waits above the box for your words, under any picked before it.
   const onQuote = useCallback((passage: string) => {
-    composer.current?.setQuote(passage)
+    composer.current?.addQuote(passage)
     composer.current?.focus()
   }, [])
 

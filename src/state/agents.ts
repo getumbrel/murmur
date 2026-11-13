@@ -17,7 +17,7 @@ import { ensureUmbrelContext } from '@/state/umbrel-context'
 import { ensureUmbrelMcp } from '@/state/umbrel-mcp'
 import { hexHue, hueFor } from '@/lib/hues'
 import { personalityPrompt, type Personality } from '@/features/agents/agent-editor'
-import { parseUserMessage, splitQuote } from '@/features/media/parse'
+import { parseUserMessage, splitQuotes } from '@/features/media/parse'
 import type { Speaker } from '@/features/chat/types'
 import { agentIdOn, firstHermes, hermesIds, hermesOf, profileOf } from '@/hermes/instance'
 import { everyHermes, keepOn, keptByAgent, keptOn } from '@/hermes/kept'
@@ -162,9 +162,9 @@ export function readable(raw: string | null | undefined, { files = true } = {}) 
   // the model to name it properly. That's nobody's title: the chat goes by your words instead.
   if (!raw || raw.startsWith(VOICE_NOTE)) return ''
   const { text: whole, attachments } = parseUserMessage(raw)
-  // A message that answers a part of a reply goes by what was written under it (or the passage, sent by itself).
-  const { quote, text: under } = splitQuote(whole)
-  const text = under || quote || ''
+  // A message that answers parts of a reply goes by what was written under them (or the first passage, sent by itself).
+  const { quotes, text: under } = splitQuotes(whole)
+  const text = under || quotes[0] || ''
   const line = text
     .replace(/MEDIA:\s*(`[^`\n]+`|"[^"\n]+"|\S+)/g, (_, path: string) => fileName(path))
     .split('\n')

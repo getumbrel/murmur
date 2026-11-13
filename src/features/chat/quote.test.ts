@@ -3,7 +3,7 @@ import type { ChatItem } from './types'
 
 vi.mock('@/hermes/instance', () => ({ scoped: (key: string) => key }))
 
-const { sourceOf } = await import('./quote')
+const { addQuote, quotedAlready, sourceOf } = await import('./quote')
 
 const you = (id: string, text: string): ChatItem => ({ kind: 'user', id, text, at: 0 })
 const agent = (id: string, text: string): ChatItem => ({ kind: 'assistant', id, text, streaming: false, at: 0 })
@@ -42,5 +42,23 @@ describe('finding the reply a quoted passage came from', () => {
     expect(sourceOf(chat, 'u3', '…')).toBeUndefined()
     // Your own words aren't a reply.
     expect(sourceOf(chat, 'u3', 'And the weather?')).toBeUndefined()
+  })
+})
+
+describe('picking several passages for one reply', () => {
+  it('adds each to the end, in the order picked', () => {
+    expect(addQuote(addQuote([], 'First'), 'Second')).toEqual(['First', 'Second'])
+  })
+
+  it('doesn’t add the same passage twice, however its spacing came through', () => {
+    const picked = ['Pack a light jacket\nfor evenings']
+    expect(addQuote(picked, 'Pack a light  jacket for evenings')).toBe(picked)
+    expect(quotedAlready(picked, ' Pack a light jacket for evenings ')).toBe(0)
+    expect(quotedAlready(picked, 'Pack a light jacket')).toBe(-1)
+  })
+
+  it('leaves the list alone when nothing was selected', () => {
+    const picked = ['First']
+    expect(addQuote(picked, '  \n ')).toBe(picked)
   })
 })

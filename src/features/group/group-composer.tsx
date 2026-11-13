@@ -18,9 +18,9 @@ import { useMedia } from '@/lib/use-media'
 import { cn } from '@/lib/cn'
 import type { GroupMember } from '@/state/groups'
 import { activeQuery, mentionRanges, mentionedIds, unmention } from '@shared/mentions.ts'
-import { useAutoGrow, useDraft, useDraftQuote } from '@/features/chat/use-draft'
-import { ComposerQuote } from '@/features/chat/quote'
-import { withQuote } from '@/features/media/parse'
+import { useAutoGrow, useDraft, useDraftQuotes } from '@/features/chat/use-draft'
+import { ComposerQuotes, addQuote } from '@/features/chat/quote'
+import { withQuotes } from '@/features/media/parse'
 import { useKeyboardInset } from '@/features/chat/use-keyboard-inset'
 import { haptic } from '@/lib/haptics'
 import '@/features/chat/composer.css'
@@ -47,7 +47,7 @@ type Props = {
   handle?: Ref<GroupComposerHandle>
 }
 
-export type GroupComposerHandle = { setQuote: (quote: string) => void; focus: () => void }
+export type GroupComposerHandle = { addQuote: (passage: string) => void; focus: () => void }
 
 type Option = { id: string; name: string; hue?: number; everyone?: boolean }
 
@@ -66,8 +66,10 @@ export function GroupComposer({
   handle,
 }: Props) {
   const [text, setText, clearDraft] = useDraft(draftKey)
-  // The part of a reply this message answers: it goes above your words, as a quote.
-  const [quote, setQuote] = useDraftQuote(draftKey)
+  // The parts of a reply this message answers: they go above your words, as quotes.
+  const [quotes, setQuotes] = useDraftQuotes(draftKey)
+  // One picked a second time: its card lights instead.
+  const [again, setAgain] = useState<{ quote: string; at: number }>()
   const [caret, setCaret] = useState(0)
   const [focused, setFocused] = useState(false)
   const [highlight, setHighlight] = useState(0)
@@ -101,7 +103,12 @@ export function GroupComposer({
 
   useImperativeHandle(handle, () => ({
     // (A name in the passage asks no one: only the ones in your own words do.)
-    setQuote: (next) => setQuote(unmention(next, roster)),
+    addQuote: (passage) => {
+      const plain = unmention(passage, roster)
+      const next = addQuote(quotes, plain)
+      if (next === quotes) setAgain({ quote: plain, at: Date.now() })
+      else (setAgain(undefined), setQuotes(next))
+    },
     focus: () => area.current?.focus({ preventScroll: true }),
   }))
 
@@ -171,14 +178,14 @@ export function GroupComposer({
   }
 
   // ── Sending ───────────────────────────────────────────────────────────────
-  const hasContent = text.trim().length > 0 || !!quote
+  const hasContent = text.trim().length > 0 || quotes.length > 0
   const mode: 'send' | 'stop' = busy && !hasContent ? 'stop' : 'send'
 
   const send = () => {
     if (disabled || !hasContent) return
     haptic()
-    onSend(withQuote(quote, text.trim()))
-    setQuote('')
+    onSend(withQuotes(quotes, text.trim()))
+    setQuotes([])
     clearDraft()
     setCaret(0)
   }
@@ -230,7 +237,11 @@ export function GroupComposer({
 
           <div className="composer glass relative rounded-[26px] shadow-float" data-busy={busy || undefined}>
             <span aria-hidden className="composer-rim" />
-            <ComposerQuote quote={quote} onRemove={() => (setQuote(''), area.current?.focus({ preventScroll: true }))} />
+            <ComposerQuotes
+              quotes={quotes}
+              again={again}
+              onRemove={(index) => (setQuotes(quotes.filter((_, n) => n !== index)), area.current?.focus({ preventScroll: true }))}
+            />
             {/* The same card as a one-to-one chat's: what you write on top, the
                 controls in a row beneath (features/chat/composer.tsx). */}
             <div className="relative">

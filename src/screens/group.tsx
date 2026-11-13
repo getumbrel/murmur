@@ -47,7 +47,7 @@ export function GroupScreen({ groupId }: { groupId: string }) {
   // Reply to a part of what someone said: the passage waits above the box for your words.
   const composer = useRef<GroupComposerHandle>(null)
   const onQuote = useCallback((passage: string) => {
-    composer.current?.setQuote(passage)
+    composer.current?.addQuote(passage)
     composer.current?.focus()
   }, [])
   // Opened before the conversation arrived: it fades in over the placeholder.

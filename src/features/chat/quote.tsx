@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type RefObject } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { Reply, X } from 'lucide-react'
@@ -9,7 +9,8 @@ import type { ChatItem } from './types'
 // Replying to a part of what the agent said. Select some of a reply and one
 // small pill offers Reply; the passage then waits above the message box, goes
 // with your message as a quote, and sits at the top of your bubble, where a
-// tap goes back to the place it came from.
+// tap goes back to the place it came from. Reply again and the next passage
+// waits under the first: a message can answer several, from one reply or many.
 
 /** Letters and digits only: how a passage is matched, whatever became of its spaces, marks and line breaks. */
 const squeeze = (text: string) => text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '')
@@ -192,37 +193,160 @@ export function ReplyPill({
 
 // ── Above the message box ───────────────────────────────────────────────────
 
+/** Whether a passage is one of those already picked, whatever became of its spaces and marks. */
+export const quotedAlready = (quotes: readonly string[], passage: string) => {
+  const needle = squeeze(passage)
+  return quotes.findIndex((q) => squeeze(q) === needle)
+}
+
+/** `quotes` with `passage` after them, unless it's there already: then they come back as they were. */
+export function addQuote(quotes: readonly string[], passage: string): string[] {
+  const next = tidyQuote(passage)
+  if (!next || quotedAlready(quotes, next) >= 0) return quotes as string[]
+  return [...quotes, next]
+}
+
+const OPEN = { type: 'spring', duration: 0.32, bounce: 0 } as const
+
 /**
- * The passage being answered, in the message box above what's typed: a quiet
- * card with a bar in the agent's colour, two lines of it at most, and an × to
- * drop it. It opens and closes the way "Editing message" does.
+ * The passages being answered, in the message box above what's typed, in the
+ * order they were picked: quiet cards, each with a bar in the agent's colour
+ * and an × of its own. One has two lines; with more, each keeps to one, so a
+ * few take the room one did. Past four the stack scrolls by itself. `again`
+ * is a passage picked a second time: its card lights for a moment instead of
+ * being there twice. They open and close the way "Editing message" does.
  */
-export function ComposerQuote({ quote, onRemove }: { quote: string; onRemove: () => void }) {
+export function ComposerQuotes({
+  quotes,
+  onRemove,
+  again,
+}: {
+  quotes: readonly string[]
+  onRemove: (index: number) => void
+  again?: { quote: string; at: number }
+}) {
+  const list = useRef<HTMLDivElement>(null)
+  const several = quotes.length > 1
+  // A card alone has two lines, in company one. Going to one, the second line
+  // is let go only once the card has closed over it: cut any sooner, the card
+  // would drop a line's height at once.
+  const [closed, setClosed] = useState(several)
+  // (Only a card that was alone has a second line to close over.)
+  const alone = useRef(quotes.length === 1)
+  useEffect(() => {
+    const was = alone.current
+    alone.current = quotes.length === 1
+    if (!several || !was) return setClosed(several)
+    const after = setTimeout(() => setClosed(true), 200)
+    return () => clearTimeout(after)
+  }, [several, quotes.length])
+  // Where the stack runs on past an edge, that edge fades: the cards under it
+  // are on their way somewhere, not cut off. As deep as it's scrolled, up to 12px.
+  const fade = useCallback(() => {
+    const el = list.current
+    if (!el) return
+    const below = el.scrollHeight - el.clientHeight - el.scrollTop
+    el.style.setProperty('--fade-top', `${Math.min(Math.max(el.scrollTop, 0), 12)}px`)
+    el.style.setProperty('--fade-bottom', `${Math.min(Math.max(below, 0), 12)}px`)
+  }, [])
+  // A card opening or closing moves the end of the stack for a moment: for that
+  // long the stack is held where it should be, frame by frame.
+  const count = useRef(quotes.length)
+  const top = useRef(0)
+  useLayoutEffect(() => {
+    const was = count.current
+    count.current = quotes.length
+    const el = list.current
+    if (!el || was === quotes.length) return
+    const grew = quotes.length > was
+    // (One dropped: the rest stay put, as far as there's still room to.)
+    const kept = top.current
+    let frame = 0
+    const until = performance.now() + 400
+    const hold = () => {
+      // The newest is the one just picked: it's brought into sight.
+      el.scrollTop = grew ? el.scrollHeight : Math.min(kept, el.scrollHeight - el.clientHeight)
+      fade()
+      if (performance.now() < until) frame = requestAnimationFrame(hold)
+    }
+    hold()
+    return () => cancelAnimationFrame(frame)
+  }, [quotes.length, fade])
+  // One picked again: into sight, and lit.
+  const lit = again ? quotedAlready(quotes, again.quote) : -1
+  useEffect(() => {
+    if (lit < 0) return
+    list.current?.children[lit]?.scrollIntoView({ block: 'nearest' })
+    fade()
+  }, [lit, again?.at, fade])
   return (
     <AnimatePresence initial={false}>
-      {quote && (
+      {quotes.length > 0 && (
         <motion.div
-          key="quote"
+          key="quotes"
           initial={{ height: 0, opacity: 0 }}
           animate={{ height: 'auto', opacity: 1 }}
           exit={{ height: 0, opacity: 0 }}
-          transition={{ type: 'spring', duration: 0.32, bounce: 0 }}
+          transition={OPEN}
           className="overflow-hidden"
         >
-          <div className="px-2 pt-2">
-            {/* Rounded to sit inside the box's own corners. */}
-            <div role="group" aria-label="Replying to" className="relative flex items-start gap-1 rounded-[18px] bg-fill-1 py-2 pr-1.5 pl-5">
-              <span aria-hidden className="absolute inset-y-2.5 left-2.5 w-[3px] rounded-full bg-accent" />
-              <p className="line-clamp-2 min-w-0 flex-1 text-footnote leading-[1.4] break-words text-ink-2">{flat(quote)}</p>
-              <button
-                type="button"
-                onClick={onRemove}
-                aria-label="Remove quote"
-                title="Remove quote"
-                className="pressable relative mt-px flex size-5 flex-none items-center justify-center rounded-full text-ink-3 hover:bg-fill-2 hover:text-ink-2 after:absolute after:-inset-2.5"
-              >
-                <X size={13} strokeWidth={2.5} />
-              </button>
+          {/* The inset is outside what scrolls: a card never runs into the box's edge. */}
+          <div className="-mb-1 px-2 pt-2">
+            <div
+              ref={list}
+              role="group"
+              aria-label={several ? `Replying to ${quotes.length} parts` : 'Replying to'}
+              onScroll={(e) => ((top.current = e.currentTarget.scrollTop), fade())}
+              // Four cards and most of a fifth, which says there's more. (Whatever's
+              // brought into sight, a card picked again or an × tabbed to, clears the fade.)
+              className="quote-stack max-h-[11rem] scroll-py-4 overflow-y-auto overscroll-contain [scrollbar-width:none]"
+            >
+              <AnimatePresence initial={false}>
+                {quotes.map((quote, index) => (
+                  <motion.div
+                    key={quote}
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: 'auto', opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={OPEN}
+                    className="overflow-hidden"
+                  >
+                    {/* Rounded to sit inside the box's own corners. (The gap under a
+                        card is the card's own, so it opens and closes with it.) */}
+                    <div className="pb-1">
+                      <div
+                        key={index === lit ? again?.at : undefined}
+                        className={cn(
+                          'relative flex items-start gap-1 rounded-[18px] bg-fill-1 pr-1.5 pl-5 transition-[padding] duration-200',
+                          several ? 'py-1.5' : 'py-2',
+                          index === lit && 'quote-again',
+                        )}
+                      >
+                        <span aria-hidden className={cn('absolute left-2.5 w-[3px] rounded-full bg-accent', several ? 'inset-y-2' : 'inset-y-2.5')} />
+                        <p
+                          className={cn(
+                            // (Its height eases between one line and two, as its padding does.)
+                            'min-w-0 flex-1 text-footnote leading-[1.4] break-words text-ink-2 transition-[max-height] duration-200',
+                            several ? 'max-h-[1lh]' : 'max-h-[2lh]',
+                            several && closed ? 'line-clamp-1' : 'line-clamp-2',
+                          )}
+                        >
+                          {flat(quote)}
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => onRemove(index)}
+                          aria-label={several ? `Remove quote: ${flat(quote)}` : 'Remove quote'}
+                          title="Remove quote"
+                          className="pressable relative mt-px flex size-5 flex-none items-center justify-center rounded-full text-ink-3 hover:bg-fill-2 hover:text-ink-2 after:absolute after:-inset-x-2.5 after:-inset-y-1.5"
+                        >
+                          <X size={13} strokeWidth={2.5} />
+                        </button>
+                      </div>
+                    </div>
+                  </motion.div>
+                ))}
+              </AnimatePresence>
             </div>
           </div>
         </motion.div>
