@@ -12,7 +12,7 @@ import {
   type RefObject,
 } from 'react'
 import { AnimatePresence, MotionConfig, motion, useReducedMotion } from 'motion/react'
-import { ArrowDown, Check, CircleAlert, Clock3, Copy, PencilLine } from 'lucide-react'
+import { ArrowDown, Check, CircleAlert, Clock3, Copy, Moon, PencilLine } from 'lucide-react'
 import { useStickToBottom } from 'use-stick-to-bottom'
 import { Orb } from '@/ui/orb'
 import { Button } from '@/ui/button'
@@ -42,6 +42,7 @@ import { useCopy } from './use-copy'
 import { AsideCard, CommandCard } from './side-cards'
 import { ERROR_ACTION_LABEL, errorActionOf, type ErrorAction } from './errors'
 import { Plan } from './plan'
+import { backText } from '@/state/limits'
 import { HelperPill, Helpers, HelpersBack, useCardInSight } from './helpers'
 import { WakeLine } from './wake-line'
 import { clock, dayName, timeHeaders, useToday } from './times'
@@ -1547,6 +1548,7 @@ export function ErrorNote({
   onAction?: (action: ErrorAction) => void
 }) {
   const action = onAction ? errorActionOf(item.message) : undefined
+  if (item.restingUntil) return <RestingNote until={item.restingUntil} onRetry={onRetry} onAction={onAction} />
   return (
     <div role="alert" className="rounded-lg bg-danger/8 px-4 py-3">
       <div className="flex items-start gap-3">
@@ -1564,6 +1566,82 @@ export function ErrorNote({
           <Button size="sm" variant="primary" onClick={() => onAction?.(action)}>
             {ERROR_ACTION_LABEL[action]}
           </Button>
+          {onRetry && (
+            <Button size="sm" variant="secondary" onClick={onRetry}>
+              Try again
+            </Button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** False until `at` (ms) has passed: checked then, each minute while it's close, and whenever the page comes back in front. */
+function usePassed(at: number) {
+  const [now, setNow] = useState(Date.now)
+  useEffect(() => {
+    const left = at - Date.now()
+    if (left <= 0) return
+    const tick = () => setNow(Date.now())
+    // Inside the hour the note counts down in minutes; a long timer can't be trusted across sleep anyway.
+    const timer = setTimeout(tick, Math.min(left, 60_000) + 50)
+    document.addEventListener('visibilitychange', tick)
+    return () => {
+      clearTimeout(timer)
+      document.removeEventListener('visibilitychange', tick)
+    }
+  }, [at, now])
+  return { passed: now >= at, now }
+}
+
+/**
+ * A reply that stopped at a limit. Nothing's broken, so it isn't an alert: the
+ * model is resting (the moon the model lists use), and the note says when it's
+ * back, on this device's clock. Once that time comes it says so, and trying
+ * again is the thing to do.
+ */
+function RestingNote({
+  until,
+  onRetry,
+  onAction,
+}: {
+  until: number
+  onRetry?: () => void
+  onAction?: (action: ErrorAction) => void
+}) {
+  const { passed, now } = usePassed(until)
+  return (
+    <div role="status" className="rounded-lg bg-fill-2 px-4 py-3">
+      <div className="flex items-start gap-3">
+        {passed ? (
+          <Check size={18} strokeWidth={2.25} aria-hidden className="mt-[3px] flex-none animate-fade text-ink-2" />
+        ) : (
+          <Moon size={18} strokeWidth={2} aria-hidden className="mt-[3px] flex-none text-ink-3" />
+        )}
+        <p className="min-w-0 flex-1 pt-px text-subhead leading-6 text-pretty text-ink">
+          {passed ? (
+            'This model’s limit has lifted.'
+          ) : (
+            <>
+              This model has reached its limit for now. It’s back{' '}
+              <span className="font-medium whitespace-nowrap tabular-nums">{backText(new Date(until), new Date(now))}</span>.
+            </>
+          )}
+        </p>
+        {passed && onRetry && (
+          <Button size="sm" variant="primary" onClick={onRetry} className="-my-0.5 -mr-1.5 flex-none">
+            Try again
+          </Button>
+        )}
+      </div>
+      {!passed && (onRetry || onAction) && (
+        <div className="mt-2.5 flex flex-wrap gap-2 pl-[30px]">
+          {onAction && (
+            <Button size="sm" variant="secondary" onClick={() => onAction('models')}>
+              Use another model
+            </Button>
+          )}
           {onRetry && (
             <Button size="sm" variant="secondary" onClick={onRetry}>
               Try again

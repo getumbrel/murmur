@@ -8,8 +8,9 @@ import { Orb, OrbStack } from '@/ui/orb'
 import { Segmented } from '@/ui/segmented'
 import type { ApprovalChoice, ChatItem, Speaker } from './types'
 import { ErrorNote, Thread } from './thread'
+import { Work } from './work'
 import { Toaster, toast } from 'sonner'
-import { ERROR_ACTION_LABEL, explainError } from './errors'
+import { ERROR_ACTION_LABEL, LIMIT_WAIT, RESTING, WAITING_ON_LIMIT, explainError } from './errors'
 import { Composer, useKeyboardInset, type PlusItem } from './composer'
 import { AppStack } from '@/features/apps/apps-glyph'
 import { CardFace } from '@/features/vault/card-face'
@@ -969,6 +970,36 @@ function ErrorsGallery() {
     <div className="hue-scope min-h-dvh bg-bg" style={{ '--hue': ATLAS.hue } as CSSProperties}>
       <div className="mx-auto max-w-[736px] space-y-6 px-4 pt-[calc(env(safe-area-inset-top)+24px)] pb-16 sm:px-6">
         <h1 className="text-title font-semibold tracking-[-0.02em]">Errors</h1>
+        {[
+          { label: 'A limit, with when it lifts', until: Date.now() + 65 * 60_000 },
+          { label: 'A limit that lifts tomorrow', until: Date.now() + 20 * 3_600_000 },
+          { label: 'A limit about to lift', until: Date.now() + 12 * 60_000 },
+          { label: 'A limit that has lifted', until: Date.now() - 1000 },
+        ].map(({ label, until }) => (
+          <section key={label} className="space-y-2">
+            <p className="font-mono text-caption text-ink-3">{label}</p>
+            <ErrorNote
+              item={{ kind: 'error', id: label, message: RESTING, retryable: true, restingUntil: until }}
+              onRetry={() => toast('Trying again')}
+              onAction={(a) => toast(ERROR_ACTION_LABEL[a])}
+            />
+          </section>
+        ))}
+        <section className="space-y-2">
+          <p className="font-mono text-caption text-ink-3">Hermes holding the reply to try again by itself</p>
+          <Work
+            live
+            hue={ATLAS.hue}
+            seed={ATLAS.id}
+            items={[{ kind: 'tool', id: 'wait', name: LIMIT_WAIT, label: WAITING_ON_LIMIT, detail: 'until 9:52 PM', status: 'running', startedAt: Date.now() }]}
+          />
+          <Work
+            live={false}
+            hue={ATLAS.hue}
+            seed={ATLAS.id}
+            items={[{ kind: 'tool', id: 'waited', name: LIMIT_WAIT, label: WAITING_ON_LIMIT, status: 'done', startedAt: Date.now() - 1_207_000, endedAt: Date.now() }]}
+          />
+        </section>
         {RAW_ERRORS.map((raw) => {
           const { text, action } = explainError(raw)
           return (

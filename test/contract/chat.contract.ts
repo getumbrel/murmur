@@ -6,7 +6,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { canContinue, clearUnread, ContinueError, copyChat, nameCopy, titleTaken, updateChat } from '@/state/chats'
 import { errandsOf, isYours, sentItems, wakeItems, type SavedRow } from '@/features/chat/wake'
 import { holdsSummary } from '@/features/chat/compaction'
+import { limitLiftsAt, limitWait } from '@/features/chat/errors'
 import { api, connect, modelRequests, MURMUR, newChat, q, sleep, turn, whenIdle, type Socket } from './client'
+import type { GatewayEvent } from '@/hermes/gateway'
 import { toolsTag } from './fake-model'
 
 let socket: Socket
@@ -100,6 +102,35 @@ describe('a turn', () => {
     expect(done.payload).toMatchObject({ status: 'error', text: expect.stringContaining('refused this request') })
     expect((await history(stored)).at(-1)).toMatchObject({ role: 'assistant', display_kind: 'failed_turn' })
   })
+
+  // Hermes holds a reply that hits a limit and tries again by itself (the service's Retry-After,
+  // ten minutes at most, three tries) before giving up, so this takes two waits of about a minute.
+  it('waits out a limit saying so, then says when it lifts, live and with the saved turn', async () => {
+    const { runtime, stored } = await newChat(socket)
+    const before = socket.events.length
+    const sent = Date.now()
+    await socket.request('prompt.submit', { session_id: runtime, text: 'Hello? [[limit: 61]]', profile: 'default' })
+    const mine = () => socket.events.slice(before).filter((e) => e.session_id === runtime)
+    // The line the app reads the wait from (src/features/chat/errors.ts): no event carries it as data.
+    const waiting = await socket.until('Hermes to say it is waiting', () =>
+      mine().find((e) => e.type === 'thinking.delta' && limitWait(String((e.payload as { text?: unknown })?.text ?? ''), sent)),
+    )
+    expect(limitWait(String((waiting.payload as { text?: unknown }).text), sent)).toBe(sent + 61_000)
+    const done = await socket.until(
+      'Hermes to give up',
+      () => mine().find((e): e is GatewayEvent<'message.complete'> => e.type === 'message.complete'),
+      240_000,
+    )
+    expect(done.payload).toMatchObject({ status: 'error', recoverable: true })
+    // The app's own reading of when it lifts: a minute after the last try.
+    const live = limitLiftsAt(done.payload?.error_surface, sent)
+    expect(live).toBeGreaterThan(sent + 61_000)
+    expect(live).toBeLessThan(Date.now() + 62_000)
+    // Read back later, the saved turn still says when.
+    const row = (await history(stored)).at(-1)
+    expect(row).toMatchObject({ role: 'assistant', display_kind: 'failed_turn' })
+    expect(limitLiftsAt((row?.display_metadata as { error_surface?: unknown } | null)?.error_surface, sent)).toBe(live)
+  }, 300_000)
 })
 
 describe('around a turn', () => {

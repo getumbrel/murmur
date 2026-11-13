@@ -480,6 +480,8 @@ cycle per model call.
 
 `prompt.submit` still returned `{"status":"streaming"}`. The failure arrives only as events.
 
+A reply turned away at a limit carries when it lifts, if the service said: `error_surface.resets_at` (epoch seconds, from Retry-After and the like), or `error_surface.usage_limit.resets_at_ms` on a plan's own window. The saved `failed_turn` row keeps the same `error_surface` in its `display_metadata`. Murmur reads both (`limitLiftsAt`); the "Limit resets at HH:mm" line Hermes adds to the text is in the server's timezone, so Murmur never shows it. Before that, Hermes holds the turn and retries by itself: it waits the service's Retry-After, capped at 600 s, up to three tries (`agent/turn_recovery.py`), so a limit an hour away takes about 20 minutes to fail. While it waits it sends one `thinking.delta` a try, e.g. `⏳ rate limited — resets in ~1h 4m, retrying in 600s (attempt 1/3)`, and nothing structured; Murmur reads the wait from that line (`limitWait`) and shows it as a step. [live, 0.23.1]
+
 **RPC error codes seen:**
 
 | code | meaning |

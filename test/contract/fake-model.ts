@@ -11,6 +11,9 @@
 //                          then answer "[[tools done]]"
 //   [[slow: ms]]           stream the answer a word at a time, `ms` apart
 //   [[fail]]               refuse the request (400), an error Hermes won't retry
+//   [[limit: s]]           turn the request away at a usage limit (429) that
+//                          lifts in `s` seconds, named the way services name it
+//                          (Retry-After)
 //   [[tokens: n]]          say the request took `n` tokens, as a chat that has
 //                          filled the model's context would (Hermes summarizes
 //                          the chat's earlier messages before the next turn)
@@ -42,6 +45,7 @@ export type Reply =
   | { kind: 'text'; text: string; delayMs?: number; waitMs?: number }
   | { kind: 'tool'; name: string; args: string }
   | { kind: 'fail' }
+  | { kind: 'limit'; seconds: number }
 
 const textOf = (content: unknown): string =>
   typeof content === 'string'
@@ -86,6 +90,8 @@ export function decide(body: Body): Reply {
 
   const lastUser = textOf([...messages].reverse().find((m) => m.role === 'user')?.content)
   if (/\[\[fail\]\]/.test(lastUser)) return { kind: 'fail' }
+  const limit = lastUser.match(/\[\[limit:\s*(\d+)\s*\]\]/)
+  if (limit) return { kind: 'limit', seconds: Number(limit[1]) }
   const tool = lastUser.match(/\[\[tool:\s*([\w.-]+)\s*(\{[\s\S]*?\})\s*\]\]/)
   if (tool) return { kind: 'tool', name: tool[1], args: tool[2] }
   const delayMs = Number(lastUser.match(/\[\[slow:\s*(\d+)\s*\]\]/)?.[1] ?? 0) || undefined
@@ -220,6 +226,11 @@ export async function startFakeModel(port = 0) {
       requests.push({ path, body, ...(auth && { auth }) })
       const reply = decide(body)
       if (reply.kind === 'fail') return send(400, { error: { message: 'The fake model refused this request', type: 'invalid_request_error' } })
+
+      if (reply.kind === 'limit') {
+        res.writeHead(429, { 'content-type': 'application/json', 'retry-after': String(reply.seconds) })
+        return void res.end(JSON.stringify({ error: { message: 'Usage limit reached for this plan.', type: 'rate_limit_error', code: 'rate_limit_exceeded' } }))
+      }
 
       const model = body.model ?? MODELS[0]
       const id = `fake-${++calls}`

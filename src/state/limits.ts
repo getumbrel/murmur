@@ -87,6 +87,13 @@ export function untilText(at: Date, now = new Date()) {
   return at.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
+/** "in 12 min", "at 5 PM", "at 9 AM tomorrow", "on Tue": when something is back, to end a sentence. */
+export function backText(at: Date, now = new Date()) {
+  const ms = at.getTime() - now.getTime()
+  if (ms < 60 * 60_000) return `in ${Math.max(1, Math.round(ms / 60_000))} min`
+  return `${Math.round((day(at) - day(now)) / 86_400_000) <= 1 ? 'at' : 'on'} ${untilText(at, now)}`
+}
+
 /**
  * "Plenty left this week · resets Tue", "12% left · resets 5 PM" (the gauge turns warm).
  * Also in parts, so a narrow row can drop the scope ("this week").

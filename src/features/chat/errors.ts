@@ -82,3 +82,41 @@ export function explainError(raw: string): { text: string; action?: ErrorAction 
 export function errorActionOf(message: string): ErrorAction | undefined {
   return RULES.find((r) => r.text === message)?.action
 }
+
+/** What a reply that stopped at a limit says; when it's back follows, from the time itself. */
+export const RESTING = 'This model has reached its limit for now.'
+
+/**
+ * When the limit that stopped a reply lifts (ms), from Hermes's error surface
+ * (0.22: `resets_at`, epoch seconds, set only when the service named the time;
+ * `usage_limit.resets_at_ms` on a plan's own window). Undefined when there's
+ * none, or it's under a minute away: "try again in a moment" is true then.
+ */
+export function limitLiftsAt(surface: unknown, now = Date.now()): number | undefined {
+  if (!surface || typeof surface !== 'object') return undefined
+  const s = surface as { resets_at?: unknown; usage_limit?: { resets_at_ms?: unknown } | null }
+  const ms =
+    typeof s.resets_at === 'number'
+      ? s.resets_at * 1000
+      : typeof s.usage_limit?.resets_at_ms === 'number'
+        ? s.usage_limit.resets_at_ms
+        : NaN
+  return Number.isFinite(ms) && ms - now >= 60_000 ? ms : undefined
+}
+
+/** The step a reply shows while Hermes waits out a limit before trying again by itself, and the name it goes by. */
+export const LIMIT_WAIT = 'limit_wait'
+export const WAITING_ON_LIMIT = 'Waiting for the model’s limit'
+
+/**
+ * When Hermes will try again (ms), from the status line it sends while it
+ * waits out a limit ("⏳ rate limited — resets in ~1h 4m, retrying in 600s
+ * (attempt 1/3)", agent/turn_recovery.py): it holds the reply for up to ten
+ * minutes a try, three tries. Undefined for anything else, and for a wait
+ * under a minute, which "Thinking" covers.
+ */
+export function limitWait(status: string, now = Date.now()): number | undefined {
+  if (!/rate limited|model is busy|overloaded/i.test(status)) return undefined
+  const seconds = Number(/retrying in (\d+(?:\.\d+)?)\s*s\b/i.exec(status)?.[1])
+  return seconds >= 60 ? now + seconds * 1000 : undefined
+}

@@ -175,7 +175,14 @@ export type ChatItem =
       endedAt?: number
       speaker?: Speaker
     }
-  | { kind: 'error'; id: string; message: string; retryable?: boolean }
+  | {
+      kind: 'error'
+      id: string
+      message: string
+      retryable?: boolean
+      /** The reply stopped at a limit, and the service named when it lifts (ms): nothing's broken, it's resting. */
+      restingUntil?: number
+    }
   | { kind: 'notice'; id: string; text: string }
   /**
    * Hermes woke the agent itself: helpers it sent off are back, a command it

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { planFromAccountLines, planUsage, planUsageLine, reportsPlanAsText, restingUntil, untilText } from './limits'
+import { backText, planFromAccountLines, planUsage, planUsageLine, reportsPlanAsText, restingUntil, untilText } from './limits'
 
 // Provider rows as /api/model/options sends them (hermes_cli/inventory.py _apply_usage/_apply_limits).
 const codex = {
@@ -161,5 +161,15 @@ describe('the plan on Hermes before 0.22', () => {
     expect(reportsPlanAsText('0.22.0')).toBe(false)
     expect(reportsPlanAsText('1.0.0')).toBe(false)
     expect(reportsPlanAsText(undefined)).toBe(false)
+  })
+})
+
+describe('backText', () => {
+  const now = new Date(2026, 9, 15, 15, 39)
+  it('counts minutes inside the hour, then names the time or the day', () => {
+    expect(backText(new Date(2026, 9, 15, 15, 51), now)).toBe('in 12 min')
+    expect(backText(new Date(2026, 9, 15, 16, 44), now)).toMatch(/^at 4:44\s?pm$/i)
+    expect(backText(new Date(2026, 9, 16, 9, 0), now)).toMatch(/^at 9\s?am tomorrow$/i)
+    expect(backText(new Date(2026, 9, 19, 9, 0), now)).toMatch(/^on \w+$/)
   })
 })

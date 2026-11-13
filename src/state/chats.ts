@@ -15,7 +15,8 @@ import { restoreChatConnect } from '@/state/hosted-apps-chat'
 import type { ConnectionRequestPayload } from '@/hermes/vendor/gateway-contract.generated'
 import { foundSubjects, readingLabel, resultLabel, toolLabel, tookFor } from '@/features/chat/tool-labels'
 import { approvalText, detailOf, isCallTo, toolAsked, type ToolCall } from '@/features/chat/approval-text'
-import { explainError } from '@/features/chat/errors'
+import { LIMIT_WAIT, RESTING, WAITING_ON_LIMIT, explainError, limitLiftsAt, limitWait } from '@/features/chat/errors'
+import { untilText } from '@/state/limits'
 import { holdsSummary } from '@/features/chat/compaction'
 import type { ApprovalChoice, ChatItem, ChatStatus, ClarifyQuestion, Reaction, SecretAsk, Speaker } from '@/features/chat/types'
 import { fileRef, parseUserMessage, picturesIn, rememberUpload, type UserAttachment } from '@/features/media/parse'
@@ -193,7 +194,7 @@ export type Row = {
   reasoning?: string | null
   display_kind?: string | null
   /** `submission_id`: what the request was sent as (a group's turn names its room task there). */
-  display_metadata?: { reactions?: unknown; submission_id?: unknown } | null
+  display_metadata?: { reactions?: unknown; submission_id?: unknown; error_surface?: unknown } | null
   /** What Hermes shows for your message when that isn't its content: a request carried inside a chat's summary, say. */
   display_content?: string | null
   timestamp?: number
@@ -283,7 +284,13 @@ function rowsToItems(rows: Row[], speaker?: Speaker, errands: Map<string, Errand
       if (summary) items.push({ kind: 'compaction', id: `${key}-sum`, status: 'done', speaker })
     } else if (row.role === 'assistant') {
       if (row.display_kind === 'failed_turn') {
-        items.push({ kind: 'notice', id: key, text: 'This reply was stopped before it finished.' })
+        // Hermes keeps why with the row: a limit still to lift says when, as it did live.
+        const restingUntil = limitLiftsAt(row.display_metadata?.error_surface)
+        items.push(
+          restingUntil
+            ? { kind: 'error', id: key, message: RESTING, retryable: true, restingUntil }
+            : { kind: 'notice', id: key, text: 'This reply was stopped before it finished.' },
+        )
         continue
       }
       // Stop pressed mid-reply: Hermes saves its own note as the reply. Say what it said live.
@@ -2287,6 +2294,11 @@ function callFor(id: string, tool: string): ToolCall | undefined {
 
 type P = Record<string, unknown>
 
+const waitingOnLimit = (i: ChatItem): i is Extract<ChatItem, { kind: 'tool' }> =>
+  i.kind === 'tool' && i.name === LIMIT_WAIT && i.status === 'running'
+/** What says the reply is moving again, or has stopped. */
+const ENDS_LIMIT_WAIT = new Set<string>(['message.delta', 'message.complete', 'reasoning.delta', 'reasoning.available', 'tool.generating', 'tool.start', 'error'])
+
 function onEvent(ev: GatewayEvent) {
   const runtimeId = (ev as { session_id?: string }).session_id ?? ''
   // Most events name the live session; the agent's own tapback names the stored chat.
@@ -2295,6 +2307,34 @@ function onEvent(ev: GatewayEvent) {
   if (!id) return
   const payload = ((ev as { payload?: P }).payload ?? {}) as P
   const text = typeof payload.text === 'string' ? payload.text : ''
+
+  // Hermes holding the reply while a limit lifts, before it tries again by itself: said as a
+  // step, so the wait isn't minutes of "Thinking". Over when the reply moves on, or gives up.
+  const retryAt = ev.type === 'thinking.delta' ? limitWait(text) : undefined
+  if (retryAt) {
+    return patch(id, (c) => {
+      if (!isBusy(c)) return
+      const detail = `until ${untilText(new Date(retryAt))}`
+      const at = c.items.findLastIndex(waitingOnLimit)
+      if (at >= 0) return { items: replaceAt(c.items, at, { ...(c.items[at] as Extract<ChatItem, { kind: 'tool' }>), detail }) }
+      const step: ChatItem = {
+        kind: 'tool',
+        id: uid('w'),
+        name: LIMIT_WAIT,
+        label: WAITING_ON_LIMIT,
+        detail,
+        status: 'running',
+        startedAt: Date.now(),
+        speaker: c.speaker,
+      }
+      return { items: [...closeThinking(sealAssistant(c.items)), step] }
+    })
+  }
+  if (ENDS_LIMIT_WAIT.has(ev.type) && getChat(id)?.items.some(waitingOnLimit)) {
+    patch(id, (c) => ({
+      items: c.items.map((i): ChatItem => (waitingOnLimit(i) ? { ...i, status: 'done', detail: undefined, endedAt: Date.now() } : i)),
+    }))
+  }
 
   switch (ev.type) {
     case 'message.start': {
@@ -2524,10 +2564,19 @@ function onEvent(ev: GatewayEvent) {
             speaker: c.speaker,
           })
         }
-        if (status === 'error' && flowTail(items).item?.kind !== 'error') {
-          const message =
-            typeof payload.error === 'string' ? friendlyError(payload.error) : 'Something went wrong with that reply.'
-          items = [...items, { kind: 'error', id: uid('e'), message, retryable: payload.recoverable !== false }]
+        if (status === 'error') {
+          // A limit with a time on it isn't a fault: the note says when it's back.
+          const restingUntil = limitLiftsAt(payload.error_surface)
+          const message = restingUntil
+            ? RESTING
+            : typeof payload.error === 'string'
+              ? friendlyError(payload.error)
+              : 'Something went wrong with that reply.'
+          const { item: tail, at: tailAt } = flowTail(items)
+          if (tail?.kind !== 'error')
+            items = [...items, { kind: 'error', id: uid('e'), message, retryable: payload.recoverable !== false, restingUntil }]
+          // (Hermes can say it failed before it says why: the note it left learns when.)
+          else if (restingUntil) items = replaceAt(items, tailAt, { ...tail, message, restingUntil })
         } else if (status === 'interrupted' && !replying.has(id)) {
           items = [...items, { kind: 'notice', id: uid('n'), text: 'Stopped' }]
         }
