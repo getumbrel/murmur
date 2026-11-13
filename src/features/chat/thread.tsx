@@ -1,7 +1,9 @@
 import {
   Fragment,
+  createContext,
   memo,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -1596,10 +1598,19 @@ function usePassed(at: number) {
 }
 
 /**
+ * Asking again when the model is back, for the chat on screen: whether Murmur
+ * is keeping its last question, and how to ask it to or not to. Without one
+ * (a group, the playground) the resting note doesn't offer it.
+ */
+export type AskAgain = { held: boolean; onHold: (at: number) => void; onLetGo: () => void }
+export const AskAgainContext = createContext<AskAgain | undefined>(undefined)
+
+/**
  * A reply that stopped at a limit. Nothing's broken, so it isn't an alert: the
  * model is resting (the moon the model lists use), and the note says when it's
- * back, on this device's clock. Once that time comes it says so, and trying
- * again is the thing to do.
+ * back, on this device's clock. Murmur can keep the question and ask it again
+ * then, by itself. Once that time comes the note says so, and trying again is
+ * the thing to do.
  */
 function RestingNote({
   until,
@@ -1611,25 +1622,43 @@ function RestingNote({
   onAction?: (action: ErrorAction) => void
 }) {
   const { passed, now } = usePassed(until)
+  // (Only the newest note can be tried again, so only it can be kept.)
+  const ask = useContext(AskAgainContext)
+  const offer = onRetry ? ask : undefined
+  const held = !!offer?.held
+  const back = (
+    <span className="font-medium whitespace-nowrap tabular-nums">{backText(new Date(until), new Date(now))}</span>
+  )
   return (
     <div role="status" className="rounded-lg bg-fill-2 px-4 py-3">
       <div className="flex items-start gap-3">
         {passed ? (
           <Check size={18} strokeWidth={2.25} aria-hidden className="mt-[3px] flex-none animate-fade text-ink-2" />
+        ) : held ? (
+          <Clock3
+            key="held"
+            size={18}
+            strokeWidth={2}
+            aria-hidden
+            className="mt-[3px] flex-none animate-fade text-ink-2"
+          />
         ) : (
           <Moon size={18} strokeWidth={2} aria-hidden className="mt-[3px] flex-none text-ink-3" />
         )}
         <p className="min-w-0 flex-1 pt-px text-subhead leading-6 text-pretty text-ink">
           {passed ? (
-            'This model’s limit has lifted.'
+            held ? (
+              'This model’s limit has lifted. Murmur is asking again.'
+            ) : (
+              'This model’s limit has lifted.'
+            )
+          ) : held ? (
+            <>This model has reached its limit for now. Murmur will ask again {back}, when it’s back.</>
           ) : (
-            <>
-              This model has reached its limit for now. It’s back{' '}
-              <span className="font-medium whitespace-nowrap tabular-nums">{backText(new Date(until), new Date(now))}</span>.
-            </>
+            <>This model has reached its limit for now. It’s back {back}.</>
           )}
         </p>
-        {passed && onRetry && (
+        {passed && onRetry && !held && (
           <Button size="sm" variant="primary" onClick={onRetry} className="-my-0.5 -mr-1.5 flex-none">
             Try again
           </Button>
@@ -1637,14 +1666,25 @@ function RestingNote({
       </div>
       {!passed && (onRetry || onAction) && (
         <div className="mt-2.5 flex flex-wrap gap-2 pl-[30px]">
-          {onAction && (
+          {held ? (
+            <Button size="sm" variant="secondary" onClick={offer!.onLetGo}>
+              Cancel
+            </Button>
+          ) : (
+            offer && (
+              <Button size="sm" variant="primary" onClick={() => offer.onHold(until)}>
+                Ask again then
+              </Button>
+            )
+          )}
+          {onAction && !held && (
             <Button size="sm" variant="secondary" onClick={() => onAction('models')}>
               Use another model
             </Button>
           )}
           {onRetry && (
             <Button size="sm" variant="secondary" onClick={onRetry}>
-              Try again
+              {offer ? 'Try now' : 'Try again'}
             </Button>
           )}
         </div>

@@ -6,7 +6,7 @@ import { MotionConfig } from 'motion/react'
 import { Info } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { Thread } from '@/features/chat/thread'
+import { AskAgainContext, Thread, type AskAgain } from '@/features/chat/thread'
 import { RunHeader, useRunItems } from '@/features/routines/run-view'
 import { useChatName } from '@/features/chat-screen/chat-name'
 import { Composer, type ComposerHandle } from '@/features/chat/composer'
@@ -65,6 +65,7 @@ import {
   type Voice,
 } from '@/features/talk/voice-setup'
 import { useConnection } from '@/hermes/gateway'
+import { askAgainAt, dontAskAgain, isKept, refreshAskAgain, useAskAgain } from '@/state/ask-again'
 import { useAwayOn } from '@/state/reach'
 import { useChatUsage } from '@/state/insights'
 import { useRunOf } from '@/state/routines'
@@ -310,6 +311,42 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
 
   // Edit and resend: your last message goes back in the composer.
   const editable = useChats((s) => (id ? editableMessage(s.chats[id]) : undefined))
+
+  // A reply that stopped at a limit: Murmur's server can keep the question and
+  // ask it again when the model is back. (Words only: that's what it can send.)
+  const restingUntil = useChats((s) => {
+    const last = id ? s.chats[id]?.items.at(-1) : undefined
+    return last?.kind === 'error' ? last.restingUntil : undefined
+  })
+  const askRow = editable?.rowId
+  const isHeld = useAskAgain((s) => !!id && isKept(s.held[id], askRow))
+  useEffect(() => {
+    if (!id || !agentId || (!restingUntil && !isHeld)) return
+    const look = () => document.visibilityState === 'visible' && void refreshAskAgain(agentId, [id])
+    look()
+    document.addEventListener('visibilitychange', look)
+    // While one's kept, the server may ask it or let it go at any time: the note shouldn't say otherwise for long.
+    const again = isHeld ? setInterval(look, 60_000) : undefined
+    return () => {
+      document.removeEventListener('visibilitychange', look)
+      clearInterval(again)
+    }
+    // (Busy: the question being asked, by Murmur or by you, is when it stops being kept.)
+  }, [id, agentId, restingUntil, isHeld, busy])
+  const canAskAgain = !!editable
+  const whenBack = useMemo<AskAgain | undefined>(
+    () =>
+      id && agentId && canAskAgain
+        ? {
+            held: isHeld,
+            onHold: (at) =>
+              void askAgainAt(agentId, id, at, askRow).catch(() => toast.error('Couldn’t set that up. Try once more in a moment.')),
+            onLetGo: () =>
+              void dontAskAgain(agentId, id).catch(() => toast.error('Couldn’t cancel that. Try once more in a moment.')),
+          }
+        : undefined,
+    [id, agentId, canAskAgain, isHeld, askRow],
+  )
   const [rewrite, setRewrite] = useState<string | null>(null)
   if (rewrite && editable?.id !== rewrite) setRewrite(null)
   /** A message back in the box: the passage it answers above, its words under it. */
@@ -855,152 +892,162 @@ export function ChatScreen({ agentId, chatId }: { agentId: string; chatId?: stri
           find={find.open && <FindBar find={find} onDone={doneFinding} />}
         />
 
-        <Thread
-          // A fresh thread per chat, except the one just started here: it carries on in place.
-          key={id && id !== born.current ? id : 'new'}
-          items={reading ? NONE : items}
-          busy={busy && !reading}
-          focus={focus?.chat === id ? focus : undefined}
-          agent={speaker}
-          onOlder={id && chat?.older ? () => loadOlder(id) : undefined}
-          waiting={!connected}
-          lead={
-            id && agent && runOfChat ? (
-              <RunHeader
-                agent={agent}
-                chatId={id}
-                routineId={runOfChat.routineId}
-                title={chat?.title}
-                ranAt={run.ranAt}
-              />
-            ) : id && from && runOfChat === null ? (
-              <ContinuedFrom
-                name={from.title === BOT_CHAT ? MAIN_CHAT : readable(from.title, { files: false })}
-                fresh={id === continued}
-                onOpen={backToOrigin}
-              />
-            ) : undefined
-          }
-          media={media}
-          // The header floats over the messages; they scroll up beneath it.
-          // Room under the header for what hangs there: a goal, "Not asking first", or both.
-          className={
-            goal && unasked
-              ? 'flex-1 [&_[role=log]]:pt-[calc(8.375rem+env(safe-area-inset-top))]'
-              : goal || unasked
-                ? 'flex-1 [&_[role=log]]:pt-[calc(6rem+env(safe-area-inset-top))]'
-                : 'flex-1 [&_[role=log]]:pt-[calc(3.5rem+env(safe-area-inset-top))]'
-          }
-          emptyState={
-            reading ? (
-              <ThreadSkeleton />
-            ) : openError ? (
-              <NotFound
-                hue={agent?.hue}
-                title="This chat isn’t here anymore"
-                body="It may have been deleted. You can start a new one."
-                action="New chat"
-                onAction={newChat}
-              />
-            ) : shut ? (
-              <NotFound
-                hue={agent?.hue}
-                title="Can’t open this chat right now"
-                body="Something got in the way. Try again in a moment."
-                action="Try again"
-                onAction={readUnread}
-              />
-            ) : agent && (isDraft || (chat?.ready && !busy)) ? (
-              <EmptyState agent={agent} orb={!online ? 'offline' : typing ? 'listening' : 'idle'} onStart={(prompt) => post(prompt)} />
-            ) : id && away && chat?.unkept && !chat.ready ? (
-              // Out of reach, and not one this device kept: nothing to try, it comes by itself.
-              <NotFound
-                hue={agent?.hue}
-                title="This chat isn’t on this device"
-                body={`It’ll be here as soon as ${agent ? clip(agent.name) : 'your agent'} is back in reach.`}
-              />
-            ) : id && !chat?.ready ? (
-              <ThreadSkeleton stalled={chat?.stalled} onRetry={readUnread} />
-            ) : null
-          }
-          onApprove={(requestId, choice) => id && answerApproval(id, requestId, choice)}
-          onStopAsking={unasked === false ? (requestId) => setStopAsking({ requestId }) : undefined}
-          onAnswer={(requestId, answers) => id && answerQuestion(id, requestId, answers)}
-          onSecret={(requestId, value) => id && answerSecret(id, requestId, value)}
-          // A fresh reply to the message Hermes already saved, rather than a second copy of it.
-          onRetry={id ? () => void regenerate(id).catch(() => toast.error('Couldn’t try again. Try once more in a moment.')) : undefined}
-          onErrorAction={(action) => {
-            if (action === 'models') {
-              // The models of the server this agent lives on.
-              chooseSettingsHermes(hermesOf(agentId))
-              return navigate('/settings/models')
+        <AskAgainContext.Provider value={whenBack}>
+          <Thread
+            // A fresh thread per chat, except the one just started here: it carries on in place.
+            key={id && id !== born.current ? id : 'new'}
+            items={reading ? NONE : items}
+            busy={busy && !reading}
+            focus={focus?.chat === id ? focus : undefined}
+            agent={speaker}
+            onOlder={id && chat?.older ? () => loadOlder(id) : undefined}
+            waiting={!connected}
+            lead={
+              id && agent && runOfChat ? (
+                <RunHeader
+                  agent={agent}
+                  chatId={id}
+                  routineId={runOfChat.routineId}
+                  title={chat?.title}
+                  ranAt={run.ranAt}
+                />
+              ) : id && from && runOfChat === null ? (
+                <ContinuedFrom
+                  name={from.title === BOT_CHAT ? MAIN_CHAT : readable(from.title, { files: false })}
+                  fresh={id === continued}
+                  onOpen={backToOrigin}
+                />
+              ) : undefined
             }
-            if (action === 'continue-here' && id) {
-              return void continueHere(id)
-                .then((copy) => copy && navigate(`/chat/${agentId}/${copy}`, { replace: true }))
-                .catch(() => toast.error('Couldn’t copy this chat. Try again.'))
+            media={media}
+            // The header floats over the messages; they scroll up beneath it.
+            // Room under the header for what hangs there: a goal, "Not asking first", or both.
+            className={
+              goal && unasked
+                ? 'flex-1 [&_[role=log]]:pt-[calc(8.375rem+env(safe-area-inset-top))]'
+                : goal || unasked
+                  ? 'flex-1 [&_[role=log]]:pt-[calc(6rem+env(safe-area-inset-top))]'
+                  : 'flex-1 [&_[role=log]]:pt-[calc(3.5rem+env(safe-area-inset-top))]'
             }
-            newChat()
-          }}
-          editableId={editable?.id}
-          editingId={rewrite ?? undefined}
-          onEdit={onEditMessage}
-          onDismiss={id ? (itemId) => dismissItem(id, itemId) : undefined}
-          onReact={id ? (itemId, emoji) => void react(id, itemId, emoji).catch(() => toast.error('Couldn’t react to that. Try again.')) : undefined}
-          onStopHelper={id ? (helper) => void stopHelper(id, helper).catch(() => toast.error('Couldn’t stop that helper. Try again.')) : undefined}
-          onContinue={id && canCarryOn && runOfChat === null ? carryOn : undefined}
-          cut={cut && cut.chat === id ? cut.item : undefined}
-          onQuote={typable ? onQuote : undefined}
-          footer={
-            <Composer
-              handle={composer}
-              files
-              onSend={onSend}
-              onStop={id ? () => void stop(id) : starting ? () => (stopEarly.current = true) : undefined}
-              busy={busy}
-              disabled={!typable}
-              placeholder={agent ? `Message ${clip(agent.name)}` : 'Message'}
-              draftKey={id ?? newChatDraft(agentId)}
-              commands={commands}
-              extraCommands={id ? catalog.data?.commands : undefined}
-              onCommand={onCommand}
-              commandCurrent={{ think: thinking }}
-              editing={!!rewrite}
-              onCancelEdit={cancelRewrite}
-              onTypingChange={setTyping}
-              voice={agentId}
-              above={(text) => (
-                <>
-                  {shut && !!chat?.items.length && <CantOpen onRetry={readUnread} />}
-                  <StillRunning
-                    // While it's replying the agent is plainly at work; this is for after. Out of reach, it can't be told or stopped.
-                    running={busy || away ? undefined : chat?.running}
-                    stopping={chat?.stopping}
-                    onStop={() => id && void stopRunning(id).catch(() => toast.error('Couldn’t stop that. Try again.'))}
-                  />
-                  {!!chat?.asOf && <LastSeen at={chat.asOf} />}
-                  {agent && <ChatConnectCard runtimeId={chat?.runtimeId} agent={agent} />}
-                  {umbrelKey.above(text)}
-                </>
-              )}
-              onBeforeSend={umbrelKey.beforeSend}
-              more={appsItem && [appsItem, ...vaultItems]}
-              accessory={
-                agent && (
-                  <ModelChip
-                    agent={agent}
-                    pick={pick}
-                    effort={effort}
-                    onPick={onPick}
-                    onThinking={onThinking}
-                    open={modelSheet}
-                    onOpenChange={setModelSheet}
-                  />
-                )
+            emptyState={
+              reading ? (
+                <ThreadSkeleton />
+              ) : openError ? (
+                <NotFound
+                  hue={agent?.hue}
+                  title="This chat isn’t here anymore"
+                  body="It may have been deleted. You can start a new one."
+                  action="New chat"
+                  onAction={newChat}
+                />
+              ) : shut ? (
+                <NotFound
+                  hue={agent?.hue}
+                  title="Can’t open this chat right now"
+                  body="Something got in the way. Try again in a moment."
+                  action="Try again"
+                  onAction={readUnread}
+                />
+              ) : agent && (isDraft || (chat?.ready && !busy)) ? (
+                <EmptyState agent={agent} orb={!online ? 'offline' : typing ? 'listening' : 'idle'} onStart={(prompt) => post(prompt)} />
+              ) : id && away && chat?.unkept && !chat.ready ? (
+                // Out of reach, and not one this device kept: nothing to try, it comes by itself.
+                <NotFound
+                  hue={agent?.hue}
+                  title="This chat isn’t on this device"
+                  body={`It’ll be here as soon as ${agent ? clip(agent.name) : 'your agent'} is back in reach.`}
+                />
+              ) : id && !chat?.ready ? (
+                <ThreadSkeleton stalled={chat?.stalled} onRetry={readUnread} />
+              ) : null
+            }
+            onApprove={(requestId, choice) => id && answerApproval(id, requestId, choice)}
+            onStopAsking={unasked === false ? (requestId) => setStopAsking({ requestId }) : undefined}
+            onAnswer={(requestId, answers) => id && answerQuestion(id, requestId, answers)}
+            onSecret={(requestId, value) => id && answerSecret(id, requestId, value)}
+            // A fresh reply to the message Hermes already saved, rather than a second copy of it.
+            onRetry={
+              id
+                ? () => {
+                    // Trying now is instead of Murmur asking later.
+                    if (agentId) void dontAskAgain(agentId, id).catch(() => {})
+                    void regenerate(id).catch(() => toast.error('Couldn’t try again. Try once more in a moment.'))
+                  }
+                : undefined
+            }
+            onErrorAction={(action) => {
+              if (action === 'models') {
+                // The models of the server this agent lives on.
+                chooseSettingsHermes(hermesOf(agentId))
+                return navigate('/settings/models')
               }
-            />
-          }
-        />
+              if (action === 'continue-here' && id) {
+                return void continueHere(id)
+                  .then((copy) => copy && navigate(`/chat/${agentId}/${copy}`, { replace: true }))
+                  .catch(() => toast.error('Couldn’t copy this chat. Try again.'))
+              }
+              newChat()
+            }}
+            editableId={editable?.id}
+            editingId={rewrite ?? undefined}
+            onEdit={onEditMessage}
+            onDismiss={id ? (itemId) => dismissItem(id, itemId) : undefined}
+            onReact={id ? (itemId, emoji) => void react(id, itemId, emoji).catch(() => toast.error('Couldn’t react to that. Try again.')) : undefined}
+            onStopHelper={id ? (helper) => void stopHelper(id, helper).catch(() => toast.error('Couldn’t stop that helper. Try again.')) : undefined}
+            onContinue={id && canCarryOn && runOfChat === null ? carryOn : undefined}
+            cut={cut && cut.chat === id ? cut.item : undefined}
+            onQuote={typable ? onQuote : undefined}
+            footer={
+              <Composer
+                handle={composer}
+                files
+                onSend={onSend}
+                onStop={id ? () => void stop(id) : starting ? () => (stopEarly.current = true) : undefined}
+                busy={busy}
+                disabled={!typable}
+                placeholder={agent ? `Message ${clip(agent.name)}` : 'Message'}
+                draftKey={id ?? newChatDraft(agentId)}
+                commands={commands}
+                extraCommands={id ? catalog.data?.commands : undefined}
+                onCommand={onCommand}
+                commandCurrent={{ think: thinking }}
+                editing={!!rewrite}
+                onCancelEdit={cancelRewrite}
+                onTypingChange={setTyping}
+                voice={agentId}
+                above={(text) => (
+                  <>
+                    {shut && !!chat?.items.length && <CantOpen onRetry={readUnread} />}
+                    <StillRunning
+                      // While it's replying the agent is plainly at work; this is for after. Out of reach, it can't be told or stopped.
+                      running={busy || away ? undefined : chat?.running}
+                      stopping={chat?.stopping}
+                      onStop={() => id && void stopRunning(id).catch(() => toast.error('Couldn’t stop that. Try again.'))}
+                    />
+                    {!!chat?.asOf && <LastSeen at={chat.asOf} />}
+                    {agent && <ChatConnectCard runtimeId={chat?.runtimeId} agent={agent} />}
+                    {umbrelKey.above(text)}
+                  </>
+                )}
+                onBeforeSend={umbrelKey.beforeSend}
+                more={appsItem && [appsItem, ...vaultItems]}
+                accessory={
+                  agent && (
+                    <ModelChip
+                      agent={agent}
+                      pick={pick}
+                      effort={effort}
+                      onPick={onPick}
+                      onThinking={onThinking}
+                      open={modelSheet}
+                      onOpenChange={setModelSheet}
+                    />
+                  )
+                }
+              />
+            }
+          />
+        </AskAgainContext.Provider>
 
         <ChatMenu menu={menu} />
         <StopAskingSheet

@@ -143,6 +143,8 @@ For access from outside your home network, put Murmur behind HTTPS (Caddy, Tails
 
 Beside it, `DATA_DIR/browser-frames/` holds the last picture of an agent's browser from each reply that browsed (one small JPEG, filed by Hermes and chat, readable by Murmur alone), so a chat still shows the page after a reload and on another device. A picture goes when its chat is deleted in Murmur or its Hermes is removed, and the oldest go first once they pass 100 MB.
 
+`DATA_DIR/ask-again.json` (mode 0600) holds the questions Murmur is keeping to ask again when a model that reached its limit is back: for each, the Hermes, the agent, the chat, the message's row and the time. A question leaves the file when it's asked, cancelled, or let go because the chat moved on.
+
 Keep the data volume private. If you'd rather not keep the Hermes password on disk, pass it as `HERMES_PASSWORD` from your secret manager instead. Settings that come from the environment are never written to the file.
 
 ## Environment
@@ -191,6 +193,9 @@ Every response is JSON with `cache-control: no-store`. Changes need a same-origi
 | `GET /murmur/session` | | `{required, signedIn}` |
 | `POST /murmur/login` | `{password}` | `200 {ok}` and sets the cookie, `401 {error}`, or `429 {error}` with `Retry-After` |
 | `POST /murmur/logout` | | Clears the cookie and closes the live connections it opened. |
+| `GET /murmur/ask-again` | | `{held: [{profile, chat, at}]}`: the questions kept on this request's Hermes, each to be asked again a minute after `at` (ms), when its model's limit has lifted. |
+| `POST /murmur/ask-again` | `{profile, chat, at}` | Keeps that chat's last message, to ask again in its place once the limit lifts at `at`: `{ok}`. `422 {error}` when the chat doesn't end on a message whose reply stopped (or the message has a picture or a file), or `at` isn't ahead. The server asks it even with no browser open, and the usual notification says when the reply is in. It lets go without asking if the chat has moved on, and after one more try that meets the limit again. |
+| `POST /murmur/ask-again/cancel` | `{chat}` | Lets that chat's question go: `{ok}`. |
 
 ```ts
 type Connection = {

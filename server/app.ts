@@ -9,6 +9,7 @@ import { extname, join, normalize, resolve, sep } from 'node:path'
 import { cookieValue, handleAccess, isSignedIn, onSignOut } from './access.ts'
 import { memo, setting, useEnv, type Env } from './config.ts'
 import { handleBrowserFrames } from './browser-frames.ts'
+import { handleAskAgain, startAskAgain, stopAskAgain } from './ask-again.ts'
 import { handleConnection, hermesFor, onDrop, requestTarget, syncHermesCookie } from './connection.ts'
 import { accepted, hostAllowed, originAllowed, requestUrl, sendJson } from './http.ts'
 import { handleNotifications, startNotifications, stopNotifications, type NativeNote } from './notifications.ts'
@@ -213,6 +214,8 @@ export function startServer(options: ServerOptions = {}): Promise<RunningServer>
   void setupSettled().then(startTelegram)
   // Notifications, for the devices that asked, from every Hermes Murmur knows.
   void setupSettled().then(() => startNotifications({ notify: options.notify }))
+  // Questions kept for when a model is back, which a restart mustn't lose.
+  void setupSettled().then(startAskAgain)
   const staticDir = resolve(env.STATIC_DIR ?? 'dist')
   const carriesHeader = headerCheck(options.requireHeader)
 
@@ -254,6 +257,7 @@ export function startServer(options: ServerOptions = {}): Promise<RunningServer>
       if (await handleConnection(req, res, path)) return
       if (await handleTelegram(req, res, path)) return
       if (await handleNotifications(req, res, path)) return
+      if (await handleAskAgain(req, res, path)) return
       if (await handleUmbrel(req, res, url)) return
       if (await handleVoiceKey(req, res, url)) return
       if (await handleSiteIcon(req, res, url)) return
@@ -293,6 +297,7 @@ export function startServer(options: ServerOptions = {}): Promise<RunningServer>
       for (const fn of unsubscribe) fn()
       stopTelegram()
       stopNotifications()
+      stopAskAgain()
       proxy.closeWhere(() => true)
       server.close(() => done())
       server.closeAllConnections()

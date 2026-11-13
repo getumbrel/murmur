@@ -14,6 +14,9 @@
 //   [[limit: s]]           turn the request away at a usage limit (429) that
 //                          lifts in `s` seconds, named the way services name it
 //                          (Retry-After)
+//   [[limit: s x3 name]]   the same, for the first three requests that carry
+//                          the tag (told apart by `name`); after that it
+//                          answers (the limit has lifted)
 //   [[tokens: n]]          say the request took `n` tokens, as a chat that has
 //                          filled the model's context would (Hermes summarizes
 //                          the chat's earlier messages before the next turn)
@@ -45,7 +48,7 @@ export type Reply =
   | { kind: 'text'; text: string; delayMs?: number; waitMs?: number }
   | { kind: 'tool'; name: string; args: string }
   | { kind: 'fail' }
-  | { kind: 'limit'; seconds: number }
+  | { kind: 'limit'; seconds: number; times?: number; key: string }
 
 const textOf = (content: unknown): string =>
   typeof content === 'string'
@@ -90,8 +93,8 @@ export function decide(body: Body): Reply {
 
   const lastUser = textOf([...messages].reverse().find((m) => m.role === 'user')?.content)
   if (/\[\[fail\]\]/.test(lastUser)) return { kind: 'fail' }
-  const limit = lastUser.match(/\[\[limit:\s*(\d+)\s*\]\]/)
-  if (limit) return { kind: 'limit', seconds: Number(limit[1]) }
+  const limit = lastUser.match(/\[\[limit:\s*(\d+)(?:\s*x(\d+)\s+([\w-]+))?\s*\]\]/)
+  if (limit) return { kind: 'limit', seconds: Number(limit[1]), ...(limit[2] && { times: Number(limit[2]) }), key: limit[3] ?? '' }
   const tool = lastUser.match(/\[\[tool:\s*([\w.-]+)\s*(\{[\s\S]*?\})\s*\]\]/)
   if (tool) return { kind: 'tool', name: tool[1], args: tool[2] }
   const delayMs = Number(lastUser.match(/\[\[slow:\s*(\d+)\s*\]\]/)?.[1] ?? 0) || undefined
@@ -186,6 +189,8 @@ function umbrel(message: Rpc): unknown {
 
 export async function startFakeModel(port = 0) {
   const requests: { path: string; body: Body; auth?: string }[] = []
+  /** How often each `[[limit: s xN name]]` has been turned away, by name. */
+  const turnedAway = new Map<string, number>()
   let calls = 0
 
   const server = http.createServer((req, res) => {
@@ -224,7 +229,12 @@ export async function startFakeModel(port = 0) {
       if (req.method !== 'POST' || path !== '/v1/chat/completions') return send(404, { error: { message: `No route ${req.method} ${path}` } })
 
       requests.push({ path, body, ...(auth && { auth }) })
-      const reply = decide(body)
+      let reply = decide(body)
+      if (reply.kind === 'limit' && reply.times != null) {
+        const met = turnedAway.get(reply.key) ?? 0
+        if (met >= reply.times) reply = { kind: 'text', text: 'The limit has lifted.' }
+        else turnedAway.set(reply.key, met + 1)
+      }
       if (reply.kind === 'fail') return send(400, { error: { message: 'The fake model refused this request', type: 'invalid_request_error' } })
 
       if (reply.kind === 'limit') {

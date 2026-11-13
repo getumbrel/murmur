@@ -7,7 +7,7 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties } from 're
 import { Orb, OrbStack } from '@/ui/orb'
 import { Segmented } from '@/ui/segmented'
 import type { ApprovalChoice, ChatItem, Speaker } from './types'
-import { ErrorNote, Thread } from './thread'
+import { AskAgainContext, ErrorNote, Thread } from './thread'
 import { Work } from './work'
 import { Toaster, toast } from 'sonner'
 import { ERROR_ACTION_LABEL, LIMIT_WAIT, RESTING, WAITING_ON_LIMIT, explainError } from './errors'
@@ -965,6 +965,21 @@ const RAW_ERRORS = [
   'Tool crashed: unexpected EOF while parsing\nTraceback (most recent call last): …',
 ]
 
+/** The resting note in a chat whose question Murmur's server can keep. */
+function HeldDemo({ held: start = false }: { held?: boolean }) {
+  const [held, setHeld] = useState(start)
+  const [until] = useState(() => Date.now() + 65 * 60_000)
+  return (
+    <AskAgainContext.Provider value={{ held, onHold: () => setHeld(true), onLetGo: () => setHeld(false) }}>
+      <ErrorNote
+        item={{ kind: 'error', id: 'held', message: RESTING, retryable: true, restingUntil: until }}
+        onRetry={() => toast('Trying now')}
+        onAction={(a) => toast(ERROR_ACTION_LABEL[a])}
+      />
+    </AskAgainContext.Provider>
+  )
+}
+
 function ErrorsGallery() {
   return (
     <div className="hue-scope min-h-dvh bg-bg" style={{ '--hue': ATLAS.hue } as CSSProperties}>
@@ -985,6 +1000,14 @@ function ErrorsGallery() {
             />
           </section>
         ))}
+        <section className="space-y-2">
+          <p className="font-mono text-caption text-ink-3">A limit, where Murmur can ask again by itself (tap to keep, cancel)</p>
+          <HeldDemo />
+        </section>
+        <section className="space-y-2">
+          <p className="font-mono text-caption text-ink-3">A limit Murmur is waiting out</p>
+          <HeldDemo held />
+        </section>
         <section className="space-y-2">
           <p className="font-mono text-caption text-ink-3">Hermes holding the reply to try again by itself</p>
           <Work

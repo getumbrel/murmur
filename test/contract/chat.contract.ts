@@ -2,7 +2,13 @@
 // as events, read back over REST, and stopped, edited, reacted to, renamed,
 // pinned, archived and deleted.
 
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { createAskAgain, liftsAt, MARGIN_MS } from '../../server/ask-again.ts'
+import { openSocket, type HermesSocket } from '../../server/socket.ts'
+import { createWatcher, type Moment } from '../../server/watch.ts'
 import { canContinue, clearUnread, ContinueError, copyChat, nameCopy, titleTaken, updateChat } from '@/state/chats'
 import { errandsOf, isYours, sentItems, wakeItems, type SavedRow } from '@/features/chat/wake'
 import { holdsSummary } from '@/features/chat/compaction'
@@ -131,6 +137,80 @@ describe('a turn', () => {
     expect(row).toMatchObject({ role: 'assistant', display_kind: 'failed_turn' })
     expect(limitLiftsAt((row?.display_metadata as { error_surface?: unknown } | null)?.error_surface, sent)).toBe(live)
   }, 300_000)
+
+  // "Ask again then" (server/ask-again.ts): Murmur's server keeps the question and asks it again
+  // by itself a minute after the limit lifts, with nobody on the chat. Its own store, on the
+  // server's own socket, against this Hermes: two waits of a minute before Hermes gives up, then
+  // the limit's minute and Murmur's.
+  it('has a question that stopped at a limit asked again by Murmur once it lifts, with the app gone', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'murmur-ask-'))
+    const asks = createAskAgain({
+      hermes: () => ({
+        read: <T>(path: string) => api.get<T>(path).catch(() => null),
+        open: (handlers) => openSocket({ socketUrl: async () => new URL('/hermes/api/ws', MURMUR.replace(/^http/, 'ws')) }, handlers),
+      }),
+      file: () => join(dir, 'ask-again.json'),
+    })
+    // What tells the person's devices (server/watch.ts), the way notifications.contract.ts runs it.
+    const moments: Moment[] = []
+    const serverSocket = await new Promise<HermesSocket>((open) => {
+      const s = openSocket({ socketUrl: async () => new URL('/hermes/api/ws', MURMUR.replace(/^http/, 'ws')) }, { onOpen: () => open(s) })
+    })
+    const watch = createWatcher({ call: serverSocket.call, get: (path) => api.get(path).catch(() => null), tell: (m) => void moments.push(m) })
+    const app = await connect()
+    try {
+      const { runtime, stored } = await newChat(app)
+      const text = `What should I cook this week? [[limit: 61 x3 ${stored}]]`
+      await app.request('prompt.submit', { session_id: runtime, text, profile: 'default' })
+      const done = await app.until(
+        'Hermes to give up',
+        () => app.events.find((e): e is GatewayEvent<'message.complete'> => e.type === 'message.complete' && e.session_id === runtime),
+        240_000,
+      )
+      expect(done.payload).toMatchObject({ status: 'error', recoverable: true })
+      const at = liftsAt(done.payload?.error_surface)
+      expect(at).toBeGreaterThan(Date.now())
+      const before = await history(stored)
+      expect(before.map((r) => r.role)).toEqual(['user', 'assistant'])
+
+      // The tap, then the person closes the app.
+      expect(await asks.hold('h', 'default', stored, at!)).toBe(true)
+      app.close()
+
+      const after = await (async () => {
+        for (const deadline = Date.now() + 330_000; ; await sleep(1000)) {
+          await watch.chats()
+          const rows = await history(stored)
+          if (rows.at(-1)?.role === 'assistant' && rows.at(-1)?.display_kind !== 'failed_turn') return rows
+          if (Date.now() > deadline) {
+            const reached = (await modelRequests()).filter((r) => JSON.stringify(r.body).includes(stored)).length
+            throw new Error(`Never asked again (the model heard it ${reached} times): ${JSON.stringify(rows)}`)
+          }
+        }
+      })()
+      // Not before its time: a minute after the limit lifted.
+      expect(Date.now()).toBeGreaterThan(at! + MARGIN_MS - 1000)
+      // Asked in its own place: the same question once, and its answer. No failed turn left behind.
+      expect(after.map((r) => [r.role, r.content])).toEqual([
+        ['user', text],
+        ['assistant', 'The limit has lifted.'],
+      ])
+      // The person hears of it like any reply that finishes with the app gone.
+      for (const deadline = Date.now() + 30_000; !moments.some((m) => m.kind === 'note' && m.note.tag === `murmur:chat:${stored}`); await sleep(300)) {
+        await watch.chats()
+        if (Date.now() > deadline) throw new Error(`Not told: ${JSON.stringify(moments)}`)
+      }
+      expect(moments.find((m) => m.kind === 'note' && m.note.tag === `murmur:chat:${stored}`)).toMatchObject({ note: { body: 'The limit has lifted.' } })
+      // And then it's forgotten.
+      for (const deadline = Date.now() + 30_000; asks.list('h').length; await sleep(500))
+        if (Date.now() > deadline) throw new Error('Still kept after it was asked')
+    } finally {
+      asks.stop()
+      app.close()
+      serverSocket.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }, 660_000)
 })
 
 describe('around a turn', () => {
