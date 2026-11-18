@@ -8,11 +8,18 @@
 // Results are delivered "locally" (saved only), which is what makes them show
 // up here; Telegram is offered only when that agent has Telegram connected.
 // One an agent set up in a chat reports in that chat (state/findings.ts).
+//
+// What Murmur notes on a routine (the template it came from, the chat it
+// reports to, what its runs found) is kept by the agent, not on the routine:
+// see shared/routines.ts.
 
 import { useQueries, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { useMemo, useRef } from 'react'
 import { create } from 'zustand'
 import { api, HermesError } from '@/hermes/rest'
+import { listProfiles } from '@/hermes/compat'
+import { rpc } from '@/hermes/gateway'
+import { hermesOf } from '@/hermes/instance'
 import { agentZone, ensureAgentTimezone } from '@/state/timezone'
 import {
   dayPreset,
@@ -31,13 +38,19 @@ import {
   findingsOf,
   isQuiet,
   isRunBrief,
+  noted,
   reportsTo,
+  ROUTINE_NOTES,
   routineIdOf,
+  routineNotes,
   runTitle,
   withFindings,
+  withNote,
   type Failing,
   type Finding,
   type Reporting,
+  type RoutineNote,
+  type RoutineNotes,
 } from '@shared/routines.ts'
 
 // ── Shapes ──────────────────────────────────────────────────────────────────
@@ -59,8 +72,8 @@ type RawJob = Reporting & {
   failure_streak?: number
   deliver?: string
   created_at?: string
-  /** Murmur's own note of the template a routine came from (Hermes keeps unknown fields). */
-  murmur_template?: string
+  /** The timezone Hermes works its schedule out in, when the routine has its own (0.23.2 on). */
+  timezone?: string | null
 }
 
 export type Routine = {
@@ -97,6 +110,8 @@ export type Routine = {
   findingsRead: number
   /** Its newest run failed. */
   failing?: Failing
+  /** The timezone of its own that Hermes keeps its schedule in, if any. */
+  zone?: string
 }
 
 export type BlueprintField = {
@@ -165,7 +180,7 @@ const ms = (iso?: string | null) => {
 
 function toRoutine(j: RawJob, agentId: string): Routine {
   const done = j.state === 'completed'
-  const template = j.murmur_template || undefined
+  const template = (typeof j.murmur_template === 'string' && j.murmur_template) || undefined
   return {
     id: j.id,
     agentId,
@@ -188,6 +203,48 @@ function toRoutine(j: RawJob, agentId: string): Routine {
     findings: findingsOf(j),
     findingsRead: typeof j.murmur_read === 'number' ? j.murmur_read : 0,
     failing: failingOf(j),
+    zone: j.timezone || undefined,
+  }
+}
+
+// ── Murmur's notes ──────────────────────────────────────────────────────────
+
+type Kept = { name: string; is_default: boolean; ui_meta?: Record<string, unknown> | null; ui_meta_revisions?: Record<string, number> | null }
+
+/** What the agent holds right now: Murmur's notes on its routines, and the record's revision (none on an older Hermes). */
+async function keptBy(agentId: string) {
+  const agent = (await listProfiles<Kept>({ include_sessions: false }, hermesOf(agentId))).find((x) => x.name === agentId)
+  return { notes: routineNotes(agent?.ui_meta?.[ROUTINE_NOTES]), revision: agent?.ui_meta_revisions?.[ROUTINE_NOTES] }
+}
+
+/** What Murmur has noted on an agent's routines; nothing when the agent can't be read. */
+const notesOf = async (agentId: string): Promise<RoutineNotes> => (await keptBy(agentId).catch(() => ({ notes: {} }))).notes
+
+/** One of an agent's routines as Hermes keeps it, with Murmur's notes on it. */
+const readJob = async (routineId: string, agentId: string) => {
+  const [j, notes] = await Promise.all([api.get<RawJob>(job(routineId, agentId)), notesOf(agentId)])
+  return noted(j, notes)
+}
+
+const TRIES = 3
+
+/**
+ * Change what's noted on one routine, on top of whatever the agent holds by
+ * then: Hermes takes the record only if nobody (Murmur's server, Murmur on
+ * another device) has written it since it was read, and when somebody has,
+ * it's read again and changed again. `live`, the agent's routines when
+ * they're known, lets go of notes on routines that are gone.
+ */
+async function note(agentId: string, routineId: string, change: (note: RoutineNote) => RoutineNote, live?: string[]) {
+  for (let tries = 1; ; tries++) {
+    const { notes, revision } = await keptBy(agentId)
+    const res = await rpc<{ applied?: { ui_meta?: boolean } }>('profiles.configure', {
+      name: agentId,
+      ui_meta: { [ROUTINE_NOTES]: withNote(notes, routineId, change, live) },
+      ...(revision !== undefined && { ui_meta_expected_revisions: { [ROUTINE_NOTES]: revision } }),
+    })
+    if (res.applied?.ui_meta !== false) return
+    if (tries === TRIES) throw new Error('Hermes didn’t save the change.')
   }
 }
 
@@ -199,10 +256,13 @@ export function useRoutines(agentId: string | undefined, { live = false } = {}) 
     queryKey: routinesKey(agentId ?? ''),
     enabled: Boolean(agentId),
     queryFn: async () => {
-      const rows = await api.get<RawJob[]>(`/api/cron/jobs?${p(agentId!)}`)
-      const list = (Array.isArray(rows) ? rows : [])
-        .map((j) => toRoutine(j, agentId!))
-        .sort((a, b) => a.createdAt - b.createdAt)
+      const [rows, notes] = await Promise.all([api.get<RawJob[]>(`/api/cron/jobs?${p(agentId!)}`), notesOf(agentId!)])
+      const jobs = Array.isArray(rows) ? rows : []
+      const list = jobs.map((j) => toRoutine(noted(j, notes), agentId!)).sort((a, b) => a.createdAt - b.createdAt)
+      // A routine removed elsewhere (by its agent, in Hermes) leaves its note behind.
+      const live = jobs.map((j) => j.id)
+      const left = Object.keys(notes).find((id) => !live.includes(id))
+      if (left) void note(agentId!, left, () => ({}), live).catch(() => {})
       return healNextRuns(agentId!, list)
     },
     staleTime: 15_000,
@@ -341,8 +401,7 @@ export async function chatOfRoutine(agentId: string, routineId: string | undefin
   const key = placedKey(agentId, routineId)
   const hit = reporting.get(key)
   if (hit && Date.now() - hit.at < 60_000) return hit.chat
-  const j = await api.get<RawJob>(job(routineId, agentId))
-  const chat = reportsTo(j)
+  const chat = reportsTo(await readJob(routineId, agentId))
   reporting.set(key, { chat, at: Date.now() })
   return chat
 }
@@ -575,8 +634,22 @@ function pinFor(when: When | null, theirs: string | null | undefined, zone: stri
 }
 
 async function pin(agentId: string, j: RawJob, when: When | null, zone: string) {
-  const updates = pinFor(when, j.next_run_at, zone)
-  if (Object.keys(updates).length) await api.put(job(j.id, agentId), { updates }).catch(() => {})
+  const { next_run_at } = pinFor(when, j.next_run_at, zone)
+  if (next_run_at) await setNextRun(agentId, j.id, next_run_at, zone).catch(() => {})
+}
+
+/**
+ * Puts a routine's next run where it belongs. Hermes up to 0.23.1 takes the
+ * time itself. From 0.23.2 that's Hermes's alone to set, and a routine has a
+ * timezone of its own instead, which Hermes works the time out in.
+ */
+async function setNextRun(agentId: string, routineId: string, at: string, zone: string) {
+  try {
+    await api.put(job(routineId, agentId), { updates: { next_run_at: at } })
+  } catch (err) {
+    if (!(err instanceof HermesError && err.status === 400)) throw err
+    await api.put(job(routineId, agentId), { updates: { timezone: zone } })
+  }
 }
 
 /** Quietly correct routines whose next run Hermes put on the wrong wall-clock time. */
@@ -593,11 +666,12 @@ async function healNextRuns(agentId: string, list: Routine[]): Promise<Routine[]
   await Promise.all(
     suspects.map(async (r) => {
       const when = r.when as Extract<When, { kind: 'time' }>
-      if (landsAt(r.nextAt!, when, zone)) return
+      // In this timezone already, by Hermes's own working out: its answer stands.
+      if (landsAt(r.nextAt!, when, zone) || r.zone === zone) return
       const next = nextOccurrence(when, zone, now)
       if (!next) return
       try {
-        await api.put(job(r.id, agentId), { updates: { next_run_at: isoInZone(next, zone) } })
+        await setNextRun(agentId, r.id, isoInZone(next, zone), zone)
         fixed.set(r.id, next)
       } catch {
         // Leave it; the next look tries again.
@@ -635,15 +709,15 @@ export async function createFromTemplate({ agentId, blueprint, values, when, nam
     values: filled,
   })
 
-  const updates: Record<string, unknown> = { murmur_template: blueprint.key }
+  const updates: Record<string, unknown> = {}
   if (name && name !== created.name) updates.name = name
   if (!has('deliver') || created.deliver !== deliver) updates.deliver = deliver
   // Days the blueprint can't say itself (Mon/Wed/Fri) go in as a schedule.
   if (when && created.schedule?.expr !== toSchedule(when)) updates.schedule = toSchedule(when)
-  else Object.assign(updates, pinFor(when ?? null, created.next_run_at, zone))
-  const saved = await api.put<RawJob>(job(created.id, agentId), { updates }).catch(() => created)
-  // A new schedule makes Hermes recompute "next", so check it once more.
-  if (updates.schedule) await pin(agentId, saved, when ?? null, zone)
+  const saved = Object.keys(updates).length ? await api.put<RawJob>(job(created.id, agentId), { updates }).catch(() => created) : created
+  // A new schedule makes Hermes work "next" out again, so it's checked last.
+  await pin(agentId, saved, when ?? null, zone)
+  await note(agentId, created.id, (n) => ({ ...n, template: blueprint.key })).catch(() => {})
   return created.id
 }
 
@@ -663,11 +737,8 @@ export async function createCustom({ agentId, prompt, when, name, deliver }: Cus
     schedule: toSchedule(when),
     deliver,
   })
-  const updates = {
-    murmur_template: when.kind === 'once' ? 'custom-once' : 'custom',
-    ...pinFor(when, created.next_run_at, zone),
-  }
-  await api.put(job(created.id, agentId), { updates }).catch(() => {})
+  await pin(agentId, created, when, zone)
+  await note(agentId, created.id, (n) => ({ ...n, template: when.kind === 'once' ? 'custom-once' : 'custom' })).catch(() => {})
   return created.id
 }
 
@@ -692,10 +763,14 @@ export async function renameRoutine(routine: Routine, name: string) {
  * already noted somewhere (Murmur's server may have got there first).
  */
 export async function reportHere(agentId: string, routineId: string, chatId: string) {
-  const j = await api.get<RawJob>(job(routineId, agentId)).catch(() => null)
+  const j = await readJob(routineId, agentId).catch(() => null)
   if (!j || j.murmur_chat) return false
-  await api.put(job(routineId, agentId), { updates: { murmur_chat: chatId } })
-  return true
+  let ours = false
+  await note(agentId, routineId, (n) => {
+    ours = !n.chat
+    return ours ? { ...n, chat: chatId } : n
+  })
+  return ours
 }
 
 /**
@@ -703,17 +778,23 @@ export async function reportHere(agentId: string, routineId: string, chatId: str
  * Read fresh first, so what Murmur's server kept meanwhile stays too.
  */
 export async function keepFindings(routine: Routine, found: Finding[], read: number) {
-  const j = await api.get<RawJob>(job(routine.id, routine.agentId))
+  const j = await readJob(routine.id, routine.agentId)
   const kept = findingsOf(j)
   const findings = withFindings(kept, found)
   const was = typeof j.murmur_read === 'number' ? j.murmur_read : 0
   const same = findings.length === kept.length && findings.every((f, i) => f.run === kept[i].run)
   if (same && read <= was) return
-  await api.put(job(routine.id, routine.agentId), { updates: { murmur_findings: findings, murmur_read: Math.max(read, was) } })
+  // On top of whatever is noted by then; what an older Murmur left on the routine comes along.
+  await note(routine.agentId, routine.id, (n) => ({
+    ...n,
+    findings: withFindings(withFindings(n.findings ?? [], kept), found),
+    read: Math.max(read, was, n.read ?? 0),
+  }))
 }
 
 export async function deleteRoutine(routine: Routine) {
   await api.delete(job(routine.id, routine.agentId))
+  await note(routine.agentId, routine.id, () => ({})).catch(() => {})
 }
 
 /** Run a routine right away. Resolves when the run has finished. */

@@ -133,10 +133,8 @@ describe('a chat', () => {
 describe('a routine', () => {
   const job = (id: string, action = '') => `/api/cron/jobs/${id}${action ? `/${action}` : ''}?${p}`
 
-  async function create(name: string, prompt: string) {
-    const made = await api.post<{ id: string }>(`/api/cron/jobs?${p}`, { name, prompt, schedule: 'every 1h', deliver: 'local' })
-    await api.put(job(made.id), { updates: { murmur_template: 'custom' } })
-    return made
+  function create(name: string, prompt: string) {
+    return api.post<{ id: string }>(`/api/cron/jobs?${p}`, { name, prompt, schedule: 'every 1h', deliver: 'local' })
   }
 
   it('is heard when a run finds something, and not when it’s quiet', async () => {

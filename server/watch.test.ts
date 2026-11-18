@@ -7,6 +7,11 @@ import { RpcError } from './socket.ts'
 // server_requests.py, hosted rooms).
 
 type Row = { id: string; session_key: string; status: string; title?: string; message_count?: number }
+type Kept = { name: string; ui_meta?: Record<string, unknown>; ui_meta_revisions?: Record<string, number> }
+
+/** What's noted on an agent's routines, as the agent keeps it. */
+const notes = (state: { profiles: Record<string, unknown>[] }, agent: string) =>
+  (state.profiles.find((p) => p.name === agent) as Kept | undefined)?.ui_meta?.['murmur-routines']
 
 function fakeHermes() {
   const state = {
@@ -23,8 +28,8 @@ function fakeHermes() {
       { id: string; title?: string; started_at: number; ended_at?: number; end_reason?: string | null; cron_job_id?: string }[]
     >,
     jobs: { atlas: [] } as Record<string, ({ id: string; name?: string; deliver?: unknown } & Record<string, unknown>)[]>,
-    /** What was written to Hermes: each PUT's path and body. */
-    writes: [] as { path: string; body: unknown }[],
+    /** What was written to Hermes: the records an agent was given to keep. */
+    writes: [] as { agent: string; records: Record<string, unknown> }[],
     rooms: [] as { room_id: string; name?: string; members: { member_id: string; profile: string; handle: string }[]; latest_seq: number }[],
     logs: {} as Record<string, { seq: number; event_id: string; kind: string; actor: { kind: string; id: string }; payload: Record<string, unknown>; created_at: number }[]>,
     pending: {} as Record<string, { kind: string; task_id: string; request_id?: string; member_id?: string }[]>,
@@ -38,6 +43,19 @@ function fakeHermes() {
     switch (method) {
       case 'profiles.list':
         return answer({ profiles: state.profiles })
+      case 'profiles.configure': {
+        // Hermes takes a record only on top of the revision it was read at (tui_gateway/methods_profiles.py).
+        const kept = state.profiles.find((p) => p.name === params.name) as Kept | undefined
+        if (!kept) throw new RpcError(4004, 'no such profile')
+        const records = params.ui_meta as Record<string, unknown>
+        const expected = (params.ui_meta_expected_revisions ?? {}) as Record<string, number>
+        const revisions = (kept.ui_meta_revisions ??= {})
+        if (Object.keys(expected).some((key) => expected[key] !== (revisions[key] ?? 0))) return answer({ ok: false, applied: { ui_meta: false } })
+        state.writes.push({ agent: kept.name, records })
+        kept.ui_meta = { ...kept.ui_meta, ...records }
+        for (const key of Object.keys(records)) revisions[key] = (revisions[key] ?? 0) + 1
+        return answer({ ok: true, applied: { ui_meta: true } })
+      }
       case 'session.active_list':
         return answer({ sessions: state.live })
       case 'session.events.since':
@@ -66,18 +84,8 @@ function fakeHermes() {
     if (url.pathname === '/api/cron/jobs') return (state.jobs[profile] ?? []) as T
     return null
   }
-  const put = async (path: string, body: unknown) => {
-    state.writes.push({ path, body })
-    // Hermes keeps the fields as given (cron/jobs.py update_job).
-    const url = new URL(path, 'http://hermes')
-    const id = decodeURIComponent(url.pathname.split('/').pop()!)
-    const job = (state.jobs[url.searchParams.get('profile') ?? ''] ?? []).find((j) => j.id === id)
-    if (!job) return false
-    Object.assign(job, (body as { updates: Record<string, unknown> }).updates)
-    return true
-  }
   const told: Moment[] = []
-  const watcher = createWatcher({ call, get, put, tell: (m) => told.push(m), pause: async () => {} })
+  const watcher = createWatcher({ call, get, tell: (m) => told.push(m), pause: async () => {} })
   return { state, told, watcher }
 }
 
@@ -283,11 +291,12 @@ describe('routines', () => {
     state.live = [{ id: 'rt9', session_key: 'c9', status: 'idle' }]
     await watcher.chats()
     // One Murmur noted already keeps its chat.
-    expect(state.writes).toEqual([{ path: '/api/cron/jobs/j9?profile=atlas', body: { updates: { murmur_chat: 'c9' } } }])
+    expect(state.writes).toEqual([{ agent: 'atlas', records: { 'murmur-routines': { j9: { chat: 'c9' } } } }])
   })
 
-  it('tells what a routine set up in a chat found as that chat’s, and keeps it on the routine', async () => {
+  it('tells what a routine set up in a chat found as that chat’s, and keeps it with the routine’s notes', async () => {
     const { state, told, watcher } = fakeHermes()
+    // Noted by an older Murmur on the routine itself, where Hermes 0.23.2 takes no more: still read, and brought along.
     state.jobs.atlas = [{ id: 'j9', name: 'Watch for AIS replies', deliver: 'local', murmur_chat: 'c9', murmur_findings: [{ run: 'r0', at: 1000 }] }]
     await watcher.runs()
     state.runs.atlas = [
@@ -304,10 +313,15 @@ describe('routines', () => {
         note: { title: 'Watch for AIS replies', body: 'AIS replied. Priya approved it.', tag: 'murmur:chat:c9', href: '/chat/atlas/c9' },
       },
     ])
-    expect(state.jobs.atlas[0].murmur_findings).toEqual([
-      { run: 'r2', at: 620_000 },
-      { run: 'r0', at: 1000 },
-    ])
+    expect(notes(state, 'atlas')).toEqual({
+      j9: {
+        findings: [
+          { run: 'r2', at: 620_000 },
+          { run: 'r0', at: 1000 },
+        ],
+      },
+    })
+    expect(state.jobs.atlas[0].murmur_findings).toEqual([{ run: 'r0', at: 1000 }])
   })
 
   it('tells once when a routine starts failing, and never as something it found', async () => {
@@ -345,7 +359,7 @@ describe('routines', () => {
     Object.assign(state.jobs.atlas[0], failing(2, 602))
     await watcher.runs()
     expect(told).toHaveLength(1)
-    expect(state.jobs.atlas[0].murmur_findings).toBeUndefined()
+    expect(notes(state, 'atlas')).toBeUndefined()
   })
 
   it('waits for Hermes to count a failed run on its routine before telling it', async () => {

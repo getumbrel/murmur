@@ -14,14 +14,17 @@ import {
   isRunBrief,
   look,
   madeRoutine,
+  noted,
   reportsTo,
   resultLine,
   routineIdOf,
+  routineNotes,
   runTitle,
   soundsScheduled,
   standingResults,
   toldIn,
   withFindings,
+  withNote,
   KEPT,
   type RunRow,
 } from './routines.ts'
@@ -232,6 +235,55 @@ describe('a routine set up in a chat', () => {
     // What Hermes kept is read warily: anything else is left out.
     expect(findingsOf({ murmur_findings: [{ run: 'a', at: 1 }, { run: 2 }, null, 'x'] })).toEqual([{ run: 'a', at: 1 }])
     expect(findingsOf({ murmur_findings: 'nope' })).toEqual([])
+  })
+})
+
+describe('what Murmur notes on a routine', () => {
+  const job = { id: 'j1', deliver: 'local' }
+
+  it('reads as nothing until there’s a record', () => {
+    for (const kept of [undefined, null, 'x', []]) expect(routineNotes(kept)).toEqual({})
+    expect(noted(job, {})).toBe(job)
+  })
+
+  it('reads onto the routine as the fields it used to be', () => {
+    const now = noted(job, { j1: { template: 'morning-brief', chat: 'c1', findings: [{ run: 'r1', at: 10 }], read: 5 } })
+    expect(now).toMatchObject({ murmur_template: 'morning-brief', murmur_read: 5 })
+    expect(reportsTo(now)).toBe('c1')
+    expect(findingsOf(now)).toEqual([{ run: 'r1', at: 10 }])
+  })
+
+  it('reads what an older Murmur left on the routine too, the record first', () => {
+    const old = { ...job, murmur_template: 'custom', murmur_chat: 'c0', murmur_findings: [{ run: 'r0', at: 1 }, { run: 'r1', at: 10 }], murmur_read: 9 }
+    expect(noted(old, {})).toBe(old)
+    const now = noted(old, { j1: { chat: 'c1', findings: [{ run: 'r2', at: 20 }], read: 4 } })
+    expect(now).toMatchObject({ murmur_template: 'custom', murmur_chat: 'c1', murmur_read: 9 })
+    expect(findingsOf(now).map((f) => f.run)).toEqual(['r2', 'r1', 'r0'])
+  })
+
+  it('changes one routine’s note and leaves the others', () => {
+    const notes = { j1: { chat: 'c1' }, j2: { template: 'custom' } }
+    expect(withNote(notes, 'j1', (n) => ({ ...n, read: 3 }))).toEqual({ j1: { chat: 'c1', read: 3 }, j2: { template: 'custom' } })
+    expect(withNote(notes, 'j3', () => ({ chat: 'c3' }))).toMatchObject({ j3: { chat: 'c3' } })
+  })
+
+  it('lets go of a note with nothing in it, and of routines that are gone', () => {
+    const notes = { j1: { chat: 'c1' }, j2: { template: 'custom' } }
+    expect(withNote(notes, 'j1', () => ({}))).toEqual({ j2: { template: 'custom' } })
+    expect(withNote(notes, 'j1', () => ({ findings: [], chat: undefined }))).toEqual({ j2: { template: 'custom' } })
+    expect(withNote(notes, 'j1', (n) => n, ['j1'])).toEqual({ j1: { chat: 'c1' } })
+  })
+
+  it('stays small enough for the agent to keep: the oldest findings go first, whoever’s they are', () => {
+    const findings = (routine: string, from: number) => Array.from({ length: KEPT }, (_, i) => ({ run: `local-${routine}-${'x'.repeat(40)}-${i}`, at: from + KEPT - i }))
+    let notes = {}
+    for (let i = 0; i < 12; i++) notes = withNote(notes, `j${i}`, () => ({ chat: `c${i}`, findings: findings(`j${i}`, i * 1000) }))
+    expect(JSON.stringify(notes).length).toBeLessThanOrEqual(24_000)
+    const kept = notes as Record<string, { chat?: string; findings?: { at: number }[] }>
+    // Every routine still reports to its chat; the newest routine's findings are all there.
+    expect(Object.keys(kept)).toHaveLength(12)
+    expect(kept.j11.findings).toHaveLength(KEPT)
+    expect(kept.j0.findings).toBeUndefined()
   })
 })
 

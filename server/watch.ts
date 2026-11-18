@@ -9,9 +9,9 @@
 //   and went between looks; waiting is a question, read from what Hermes is
 //   still waiting on (session.events.since).
 // Routines: each agent's newest runs (shared/routines.ts decides which landed).
-//   One set up in a chat here reports there: the chat is noted on the
-//   routine when it's made, and what each run finds is kept on it and told
-//   as that chat's news.
+//   One set up in a chat here reports there: the chat is noted when it's
+//   made, and what each run finds is kept with it and told as that chat's
+//   news. The notes are the agent's to keep (shared/routines.ts).
 // Groups: each room's log; a round that was running and isn't has ended, and
 //   while one runs, the OKs it waits on.
 //
@@ -32,13 +32,18 @@ import {
   isRunBrief,
   look,
   madeRoutine,
+  noted,
   reportsTo,
+  ROUTINE_NOTES,
   routineIdOf,
+  routineNotes,
   runTitle,
   withFindings,
+  withNote,
   type Finding,
   type Memory,
   type Reporting,
+  type RoutineNote,
   type RunRow,
 } from '../shared/routines.ts'
 import type { Hermes } from './hermes.ts'
@@ -51,8 +56,6 @@ export type WatchDeps = {
   call: <T>(method: string, params?: Record<string, unknown>) => Promise<T>
   /** A signed-in REST read; null when it didn't answer. */
   get: <T>(path: string) => Promise<T | null>
-  /** A signed-in JSON write: whether Hermes took it. */
-  put?: (path: string, body: unknown) => Promise<boolean>
   tell: (moment: Moment) => void
   now?: () => number
   /** Waits between looks at a chat that just finished, while Hermes saves it. */
@@ -89,9 +92,10 @@ const LATEST = Number.MAX_SAFE_INTEGER
 const q = encodeURIComponent
 
 const missing = (error: unknown) => error instanceof RpcError && error.code === -32601
-const jobPath = (id: string, agent: string) => `/api/cron/jobs/${q(id)}?profile=${q(agent)}`
+/** How often a note is written again on top of someone else's write (Murmur in a browser, Hermes Desktop). */
+const TRIES = 3
 
-export function createWatcher({ call, get, put = async () => false, tell, now = Date.now, pause = (ms) => new Promise((done) => setTimeout(done, ms)) }: WatchDeps) {
+export function createWatcher({ call, get, tell, now = Date.now, pause = (ms) => new Promise((done) => setTimeout(done, ms)) }: WatchDeps) {
   // ── Agents ────────────────────────────────────────────────────────────────
 
   let profiles: { list: NamedProfile[]; at: number } | null = null
@@ -113,6 +117,43 @@ export function createWatcher({ call, get, put = async () => false, tell, now = 
   async function nameOf(profile: string, given?: string) {
     const found = (await agents()).find((p) => p.name === profile)
     return found ? agentName(found) : given?.trim() || (profile === 'default' ? 'Hermes' : titleCase(profile))
+  }
+
+  // ── Notes on routines ─────────────────────────────────────────────────────
+  // Kept by the agent, where the app keeps them too (src/state/routines.ts).
+
+  type Kept = NamedProfile & { ui_meta_revisions?: Record<string, number> | null }
+
+  /**
+   * What's noted on an agent's routines right now, and the record's revision
+   * (none on an older Hermes). Nothing from a Hermes that can't say: a
+   * routine's runs are still told, as their own.
+   */
+  async function notesOf(agent: string) {
+    const list = await call<{ profiles: Kept[] }>('profiles.list').catch(() => null)
+    const kept = list?.profiles.find((p) => p.name === agent)
+    return { notes: routineNotes(kept?.ui_meta?.[ROUTINE_NOTES]), revision: kept?.ui_meta_revisions?.[ROUTINE_NOTES] }
+  }
+
+  /** An agent's routines as Hermes keeps them, with what's noted on each; null when Hermes didn't answer. */
+  async function jobsOf(agent: string): Promise<JobRow[] | null> {
+    const jobs = await get<JobRow[]>(`/api/cron/jobs?profile=${q(agent)}`)
+    if (!Array.isArray(jobs)) return null
+    const { notes } = await notesOf(agent)
+    return jobs.map((job) => noted(job, notes))
+  }
+
+  /** Change what's noted on one routine, on top of whatever the agent holds by then. A Hermes that won't take it is left be. */
+  async function note(agent: string, routineId: string, change: (note: RoutineNote) => RoutineNote) {
+    for (let tries = 1; tries <= TRIES; tries++) {
+      const { notes, revision } = await notesOf(agent)
+      const res = await call<{ applied?: { ui_meta?: boolean } }>('profiles.configure', {
+        name: agent,
+        ui_meta: { [ROUTINE_NOTES]: withNote(notes, routineId, change) },
+        ...(revision !== undefined && { ui_meta_expected_revisions: { [ROUTINE_NOTES]: revision } }),
+      }).catch(() => null)
+      if (res?.applied?.ui_meta !== false) return
+    }
   }
 
   // Live sessions know their stored id but not their agent: each agent's newest chats say.
@@ -227,9 +268,8 @@ export function createWatcher({ call, get, put = async () => false, tell, now = 
       return id ? [id] : []
     })
     if (!made.length) return
-    const jobs = await get<JobRow[]>(`/api/cron/jobs?profile=${q(agent)}`)
-    for (const job of Array.isArray(jobs) ? jobs : []) {
-      if (made.includes(job.id) && !job.murmur_chat) await put(jobPath(job.id, agent), { updates: { murmur_chat: chatId } })
+    for (const job of (await jobsOf(agent)) ?? []) {
+      if (made.includes(job.id) && !job.murmur_chat) await note(agent, job.id, (n) => (n.chat ? n : { ...n, chat: chatId }))
     }
   }
 
@@ -258,13 +298,13 @@ export function createWatcher({ call, get, put = async () => false, tell, now = 
     const { memory, landed } = look(rows, memories.get(agent))
     memories.set(agent, memory)
     if (!landed.length) return
-    const jobs = await get<JobRow[]>(`/api/cron/jobs?profile=${q(agent)}`)
+    const jobs = await jobsOf(agent)
     const found = new Map<JobRow, Finding[]>()
     for (const run of landed) {
       const routineId = run.routineId ?? (await get<SessionRow>(`/api/sessions/${q(run.id)}?profile=${q(agent)}`))?.cron_job_id
       const said = await get<{ messages?: MessageRow[] }>(`/api/sessions/${q(run.id)}/messages?profile=${q(agent)}&order=latest&limit=20`)
       // Hermes didn't answer: the next look tries this run again.
-      if (!Array.isArray(jobs) || !said) {
+      if (!jobs || !said) {
         memory.done.delete(run.id)
         memory.going.add(run.id)
         continue
@@ -296,9 +336,10 @@ export function createWatcher({ call, get, put = async () => false, tell, now = 
       const note = runNote({ agentId: agent, runId: run.id, routine, text, chat: chat || undefined })
       if (note) tell({ kind: 'note', note })
     }
-    // Kept on the routine, so the chat it reports to still has them when Hermes lists only its newest runs.
+    // Kept with the routine, so the chat it reports to still has them when Hermes lists only its newest runs.
     for (const [job, list] of found) {
-      await put(jobPath(job.id, agent), { updates: { murmur_findings: withFindings(findingsOf(job), list) } })
+      const kept = withFindings(findingsOf(job), list)
+      await note(agent, job.id, (n) => ({ ...n, findings: withFindings(n.findings ?? [], kept) }))
     }
   }
 
@@ -441,7 +482,6 @@ export function watchHermes(hermes: Hermes, tell: (moment: Moment) => void) {
   const watcher = createWatcher({
     call: socket.call,
     get: (path) => hermes.read(path, 10_000),
-    put: (path, body) => hermes.write('PUT', path, body),
     tell,
   })
   const chats = loop(watcher.chats, () => (watcher.busy() ? 2000 : 10_000))

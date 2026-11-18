@@ -176,14 +176,19 @@ export const deliversElsewhere = (deliver: unknown) => {
 // ── Reporting where it was set up ───────────────────────────────────────────
 // Hermes can't deliver to a chat in Murmur: it has no address there, so a
 // routine set up in one is only ever saved. Murmur notes that chat on the
-// routine's job (Hermes keeps fields it doesn't know) and shows each run that
-// found something there, as the agent speaking up.
+// routine and shows each run that found something there, as the agent
+// speaking up.
 
 /** A run that found something, by when it ran (ms). */
 export type Finding = { run: string; at: number }
 
-/** Murmur's own fields on a routine's job. */
+/**
+ * Murmur's own fields on a routine's job, where it kept its notes up to
+ * Hermes 0.23.1. They're still read (see `noted`), and no longer written.
+ */
 export type Reporting = {
+  /** The template it came from. */
+  murmur_template?: unknown
   /** The chat it was set up in. */
   murmur_chat?: unknown
   /**
@@ -215,6 +220,89 @@ export function withFindings(kept: Finding[], found: Finding[]): Finding[] {
   const byRun = new Map<string, Finding>()
   for (const f of [...found, ...kept]) if (!byRun.has(f.run)) byRun.set(f.run, f)
   return [...byRun.values()].sort((a, b) => b.at - a.at).slice(0, KEPT)
+}
+
+// ── Murmur's notes on a routine ─────────────────────────────────────────────
+// What Murmur notes on an agent's routines is one record the agent keeps (its
+// ui_meta, under ROUTINE_NOTES), by routine. From 0.23.2 a job takes only
+// Hermes's own fields, so the notes an older Murmur left on one are read
+// along with the record, and every new one goes in the record.
+
+/** The agent's record of them. */
+export const ROUTINE_NOTES = 'murmur-routines'
+
+/** What Murmur notes on one routine. */
+export type RoutineNote = {
+  /** The template it came from. */
+  template?: string
+  /** The chat it was set up in. */
+  chat?: string
+  /** Its runs that found something, newest first. */
+  findings?: Finding[]
+  /** When the newest run read for findings started (ms). */
+  read?: number
+}
+
+/** An agent's notes, by routine. */
+export type RoutineNotes = Record<string, RoutineNote>
+
+/**
+ * How much the record may hold, as JSON. Hermes caps everything an agent
+ * keeps at 64 KB and sends it with every list of agents, so findings past
+ * this go, oldest first.
+ */
+const NOTES_BUDGET = 24_000
+
+const sized = (notes: RoutineNotes) => JSON.stringify(notes).length
+
+/** An agent's notes on its routines, from the record as kept. */
+export function routineNotes(kept: unknown): RoutineNotes {
+  return kept && typeof kept === 'object' && !Array.isArray(kept) ? (kept as RoutineNotes) : {}
+}
+
+/**
+ * A job with Murmur's notes on it, as the fields they used to be. Where the
+ * job says too (an older Murmur's note), the record does, and the findings
+ * are both's.
+ */
+export function noted<J extends { id: string }>(job: J, notes: RoutineNotes): J & Reporting {
+  const note = notes[job.id]
+  if (!note) return job
+  const old = job as Reporting
+  const read = (value: unknown) => (typeof value === 'number' ? value : 0)
+  return {
+    ...job,
+    murmur_template: note.template ?? old.murmur_template,
+    murmur_chat: note.chat ?? old.murmur_chat,
+    murmur_findings: withFindings(findingsOf({ murmur_findings: note.findings }), findingsOf(old)),
+    murmur_read: Math.max(read(note.read), read(old.murmur_read)),
+  }
+}
+
+/**
+ * The notes with one routine's changed. A note left with nothing in it goes,
+ * and so do notes on routines that aren't among `live` (the agent's
+ * routines, when the caller knows them).
+ */
+export function withNote(notes: RoutineNotes, id: string, change: (note: RoutineNote) => RoutineNote, live?: string[]): RoutineNotes {
+  const next: RoutineNotes = {}
+  for (const [key, note] of Object.entries({ ...notes, [id]: change(notes[id] ?? {}) })) {
+    if (live && !live.includes(key)) continue
+    const kept = Object.fromEntries(Object.entries(note).filter(([, v]) => v !== undefined && !(Array.isArray(v) && !v.length)))
+    if (Object.keys(kept).length) next[key] = kept
+  }
+  // Over budget: the oldest finding of any routine goes, until it fits.
+  while (sized(next) > NOTES_BUDGET) {
+    const oldest = Object.entries(next)
+      .filter(([, note]) => note.findings?.length)
+      .sort(([, a], [, b]) => a.findings!.at(-1)!.at - b.findings!.at(-1)!.at)[0]
+    if (!oldest) break
+    const [key, note] = oldest
+    const { findings, ...rest } = note
+    next[key] = findings!.length > 1 ? { ...rest, findings: findings!.slice(0, -1) } : rest
+    if (!Object.keys(next[key]).length) delete next[key]
+  }
+  return next
 }
 
 /** Hermes's scheduler, by the names it's called by: its own, or through tool search's one "tool_call". */

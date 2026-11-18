@@ -15,13 +15,19 @@ import {
   isQuiet,
   isRunBrief,
   madeRoutine,
+  noted,
   reportsTo,
+  ROUTINE_NOTES,
+  routineNotes,
   runTitle,
   toldIn,
+  withNote,
+  type RoutineNote,
 } from '@shared/routines.ts'
 import { parseSchedule, toSchedule, WEEKDAYS, type When } from '@/features/routines/schedule'
+import { startGateway as openSocket, stopGateway as closeSocket } from '@/hermes/gateway'
 import { startGateway } from '@/state/hermes-gateway'
-import { fetchRoutineRuns, fetchRunResult, runOf } from '@/state/routines'
+import { chatOfRoutine, fetchRoutineRuns, fetchRunResult, reportHere, runOf } from '@/state/routines'
 import { placeLastChats, toAgent, type Profile } from '@/state/agents'
 import { parseUserMessage } from '@/features/media/parse'
 import { agentName, api, connect, modelRequests, newChat, q, removeAgent, sleep, turn, type Socket } from './client'
@@ -31,24 +37,45 @@ const agent = agentName('routines')
 const p = q(agent)
 const job = (id: string, action = '') => `/api/cron/jobs/${id}${action ? `/${action}` : ''}?${p}`
 
-type Job = { id: string; name: string; prompt: string; state: string; enabled: boolean; schedule: { kind: string; display: string }; next_run_at: string | null; last_status: string | null; deliver: string; murmur_template?: string }
+type Job = { id: string; name: string; prompt: string; state: string; enabled: boolean; schedule: { kind: string; display: string }; next_run_at: string | null; last_status: string | null; deliver: string; timezone?: string | null }
 type Run = { id: string; title: string; source: string; started_at: number; ended_at: number | null; end_reason: string | null; last_active: number; is_active: boolean; message_count: number }
 type Message = { id: number; role: string; content: string | null; timestamp: number }
 
 let socket: Socket
 beforeAll(async () => {
+  // The app's own socket: it reads and writes its notes on routines over it.
+  openSocket()
   socket = await connect()
   await socket.request('profiles.create', { name: agent, share_auth: true }, 120_000)
 })
 afterAll(async () => {
   await removeAgent(agent)
   socket?.close()
+  closeSocket()
 })
+
+type Kept = { name: string; ui_meta?: Record<string, unknown> | null; ui_meta_revisions?: Record<string, number> | null }
+
+/** The agent as Hermes lists it, with the records it keeps. */
+const kept = async () => (await socket.request<{ profiles: Kept[] }>('profiles.list')).profiles.find((x) => x.name === agent)
+/** What Murmur has noted on the agent's routines (shared/routines.ts). */
+const notes = async () => routineNotes((await kept())?.ui_meta?.[ROUTINE_NOTES])
+
+/** Notes something on a routine the way Murmur does: in the agent's record, on top of the revision it read. */
+async function note(id: string, change: (note: RoutineNote) => RoutineNote) {
+  const now = await kept()
+  const res = await socket.request<{ applied?: { ui_meta?: boolean } }>('profiles.configure', {
+    name: agent,
+    ui_meta: { [ROUTINE_NOTES]: withNote(routineNotes(now?.ui_meta?.[ROUTINE_NOTES]), id, change) },
+    ui_meta_expected_revisions: { [ROUTINE_NOTES]: now?.ui_meta_revisions?.[ROUTINE_NOTES] ?? 0 },
+  })
+  expect(res.applied?.ui_meta).toBe(true)
+}
 
 /** What Murmur sends for a routine made from a plain request (src/state/routines.ts). */
 async function create(name: string, prompt: string, schedule = 'every 1h') {
   const made = await api.post<Job>(`/api/cron/jobs?${p}`, { name, prompt, schedule, deliver: 'local' })
-  await api.put(job(made.id), { updates: { murmur_template: 'custom' } })
+  await note(made.id, (n) => ({ ...n, template: 'custom' }))
   return made
 }
 
@@ -107,14 +134,32 @@ describe('making routines', () => {
     }
   })
 
-  it('keeps Murmur’s own fields, and takes a pinned next run', async () => {
-    const made = await create('Pinned', 'x', '0 8 * * *')
+  it('takes only its own fields on a routine, and Murmur’s notes stay with the agent', async () => {
+    const made = await create('Noted', 'x', '0 8 * * *')
+    // From 0.23.2 a routine takes nothing Hermes doesn't know, and refuses the whole change with it.
+    const refused = await api.call('PUT', job(made.id), { updates: { murmur_template: 'custom', name: 'Lost' } })
+    expect(refused.status).toBe(400)
+    await api.put(job(made.id), { updates: { name: 'Renamed' } })
+    const listed = (await api.get<Job[]>(`/api/cron/jobs?${p}`)).find((j) => j.id === made.id)!
+    expect(listed).toMatchObject({ name: 'Renamed', deliver: 'local', enabled: true, state: 'scheduled' })
+    expect(noted(listed, await notes()).murmur_template).toBe('custom')
+    // A note goes with its routine.
+    await api.delete(job(made.id))
+    await note(made.id, () => ({}))
+    expect(await notes()).not.toHaveProperty(made.id)
+  })
+
+  it('works a routine’s next run out in the timezone Murmur gives it, and won’t take the time itself', async () => {
+    const made = await api.post<Job>(`/api/cron/jobs?${p}`, { name: 'Zoned', prompt: 'x', schedule: '0 8 * * *', deliver: 'local' })
     const next = new Date(Date.now() + 3 * 86_400_000)
     next.setUTCHours(8, 0, 0, 0)
-    await api.put(job(made.id), { updates: { next_run_at: next.toISOString(), name: 'Renamed' } })
-    const listed = (await api.get<Job[]>(`/api/cron/jobs?${p}`)).find((j) => j.id === made.id)!
-    expect(listed).toMatchObject({ name: 'Renamed', murmur_template: 'custom', deliver: 'local', enabled: true, state: 'scheduled' })
-    expect(Date.parse(listed.next_run_at!)).toBe(next.getTime())
+    // What setNextRun tries first, for a Hermes up to 0.23.1.
+    expect((await api.call('PUT', job(made.id), { updates: { next_run_at: next.toISOString() } })).status).toBe(400)
+    for (const [zone, offset] of [['Asia/Tokyo', '+09:00'], ['Asia/Kolkata', '+05:30']]) {
+      const zoned = await api.put<Job>(job(made.id), { updates: { timezone: zone } })
+      expect(zoned.timezone).toBe(zone)
+      expect(zoned.next_run_at).toMatch(new RegExp(`T08:00:00\\${offset}$`))
+    }
     await api.delete(job(made.id))
   })
 
@@ -308,27 +353,32 @@ describe('a routine an agent sets up in a chat', () => {
     expect(tools.map((r) => madeRoutine(r.tool_name || 'cronjob', r.content))).toContain(made)
   })
 
-  it('keeps the chat Murmur notes on it, through its runs, and its schedule with it', async () => {
+  it('reports to the chat Murmur notes for it, through its runs, and keeps its schedule', async () => {
     const was = await api.get<Job>(job(made))
     expect(was.deliver).toBe('local')
-    await api.put(job(made), { updates: { murmur_chat: chat.stored } })
-    const noted = await api.get<Job & { murmur_chat?: string }>(job(made))
-    expect(reportsTo(noted)).toBe(chat.stored)
-    expect(noted.schedule.display).toBe(was.schedule.display)
-    expect(noted.next_run_at).toBe(was.next_run_at)
+    // The app's own note of it, made once: a second chat doesn't take it over.
+    expect(await reportHere(agent, made, chat.stored)).toBe(true)
+    expect(await reportHere(agent, made, 'another-chat')).toBe(false)
+    expect(await chatOfRoutine(agent, made)).toBe(chat.stored)
+    const now = noted(await api.get<Job>(job(made)), await notes())
+    expect(reportsTo(now)).toBe(chat.stored)
+    expect(now.schedule.display).toBe(was.schedule.display)
+    expect(now.next_run_at).toBe(was.next_run_at)
     await trigger(made)
-    expect(reportsTo(await api.get<Job & { murmur_chat?: string }>(job(made)))).toBe(chat.stored)
+    expect(reportsTo(noted(await api.get<Job>(job(made)), await notes()))).toBe(chat.stored)
   })
 
   it('says what a run found, and keeps what Murmur writes down of it', async () => {
     const [run] = await runs(made)
     const read = await api.get<{ messages: Message[] }>(`/api/sessions/${run.id}/messages?${p}&order=oldest&limit=100&inline_images=false`)
     expect(findingIn(read.messages)).toBe('AIS replied. Thursday at 2 PM works.')
-    const kept = [{ run: run.id, at: run.ended_at! * 1000 }]
-    await api.put(job(made), { updates: { murmur_findings: kept, murmur_read: run.started_at * 1000 } })
-    const after = await api.get<Job & { murmur_findings?: unknown; murmur_read?: unknown }>(job(made))
-    expect(findingsOf(after)).toEqual(kept)
+    const found = [{ run: run.id, at: run.ended_at! * 1000 }]
+    await note(made, (n) => ({ ...n, findings: found, read: run.started_at * 1000 }))
+    const after = noted(await api.get<Job>(job(made)), await notes())
+    expect(findingsOf(after)).toEqual(found)
     expect(after.murmur_read).toBe(run.started_at * 1000)
+    // The chat it reports to is still noted beside them.
+    expect(reportsTo(after)).toBe(chat.stored)
   })
 
   it('goes to the agent with your next message, which reads back as just what you wrote', async () => {
