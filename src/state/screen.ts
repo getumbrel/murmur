@@ -335,8 +335,8 @@ async function showBrowser(profile: string, plugin: Plugin) {
 export const SCREEN_PLUGIN_SOURCE = {
   repo: 'getumbrel/hermes-agent-umbrel',
   path: 'umbrel-context/plugins/murmur-screen',
-  // v0.23.1 (Hermes's installer takes only a full commit)
-  ref: 'e8bf9aae3e390165b65bc1dcf63c7a03b79f9c34',
+  // v0.23.2 (Hermes's installer takes only a full commit)
+  ref: '780f65d0835843fc07c7f12e720ee5377a19669c',
 } as const
 
 const adding = new Map<string, Promise<void>>()

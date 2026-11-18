@@ -301,7 +301,7 @@ function HermesRow({ hermes: c, starting, onDetails }: { hermes: KnownHermes; st
       </span>
       <span className="min-w-0 flex-1">
         <span className="block truncate text-body">{c.name}</span>
-        {/* Two lines before it clips, so "Comes with Murmur · Hermes 0.23.1" keeps its version on a phone. */}
+        {/* Two lines before it clips, so "Comes with Murmur · Hermes 0.23.2" keeps its version on a phone. */}
         <span className="line-clamp-2 block text-footnote text-pretty text-ink-2">{hermesDetail(c, { starting })}</span>
       </span>
       {/* The glyph sits inside its box; nudge it so its stroke, not its box, meets the edge. */}

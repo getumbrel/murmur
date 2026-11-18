@@ -203,6 +203,9 @@ describe('agents and apps through Nous', () => {
     const tools = (last?.body.tools ?? []) as { function: { name: string; description: string } }[]
     return new Map(tools.map((t) => [t.function.name, t.function.description]))
   }
+  /** Whether an agent is offered manage_connections: among its tools up to 0.23.1, behind tool search from 0.23.2. */
+  const offered = (tools: Map<string, string>) =>
+    tools.has('manage_connections') || (tools.get('tool_search') ?? '').includes('manage_connections')
   const disabled = async (agent: string) =>
     ((await api.get(`/api/config?${q(agent)}&include_defaults=false`)).agent?.disabled_toolsets ?? []) as string[]
   const toolset = async (agent: string) =>
@@ -234,7 +237,7 @@ describe('agents and apps through Nous', () => {
     chats.off = runtime
     await turn(socket, runtime, 'Hello', agent)
     const tools = await lastTools()
-    expect(tools.has('manage_connections')).toBe(false)
+    expect(offered(tools)).toBe(false)
     expect([...tools.values()].join('\n')).not.toContain('connectors__')
   })
 
@@ -246,7 +249,7 @@ describe('agents and apps through Nous', () => {
     // Hermes gives a new agent manage_connections: with it, a chat could make a Nous account.
     const before = await newChat(socket, agent)
     await turn(socket, before.runtime, 'Hello', agent)
-    expect((await lastTools()).has('manage_connections')).toBe(true)
+    expect(offered(await lastTools())).toBe(true)
 
     await hideDesktopToolsets(agent)
     expect(await disabled(agent)).toEqual(expect.arrayContaining(['catalog', 'project', HOSTED_TOOLSET]))
@@ -266,7 +269,7 @@ describe('agents and apps through Nous', () => {
     chats.on = after.runtime
     await turn(socket, after.runtime, 'Hello', agent)
     const tools = await lastTools()
-    expect(tools.has('manage_connections')).toBe(true)
+    expect(offered(tools)).toBe(true)
     expect(tools.get('tool_search')).toContain('connectors__')
 
     // Still no Nous account: none is made until an app is connected.
