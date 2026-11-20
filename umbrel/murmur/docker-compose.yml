@@ -32,7 +32,7 @@ services:
   # gated by a username and password only Murmur knows. Its data (and the API
   # keys in its .env) has its own folder, which Murmur's container can't see.
   hermes:
-    image: ghcr.io/getumbrel/hermes-agent-umbrel:v0.23.2@sha256:db175a91bbe1794a294a1ca7b2e9754160ad99da1c9bd89ee9047158610dadd3
+    image: ghcr.io/getumbrel/hermes-agent-umbrel:v0.23.3@sha256:7389affe7e1f7b9d35453f9b3c7804eb88fd417ae543682402f5aa8d21a778ad
     restart: on-failure
     stop_grace_period: 1m
     volumes:
