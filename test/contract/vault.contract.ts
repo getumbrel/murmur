@@ -164,10 +164,10 @@ describe('the agent’s browser', () => {
     await turn(socket, runtime, `Pay ${toolsTag([page(`${site}/checkout.html`), fill(cardId), lengths])}`)
 
     const fills = results(socket, runtime).filter((r) => r.name === 'browser_vault').map((r) => r.result)
-    expect(fills[0]).toMatchObject({ success: true, filled_fields: 1, kind: 'login', origin: site })
+    expect(fills[0]).toMatchObject({ success: true, filled_fields: 2, kind: 'login', origin: site })
     expect(fills[1]).toMatchObject({ success: true, kind: 'payment', origin: site })
-    // The password went in, and the username was left for the agent to type.
-    expect(typed(socket, runtime)[0]).toBe('0,14')
+    // The username and the password both went in (up to Hermes 0.23.3 only the password did).
+    expect(typed(socket, runtime)[0]).toBe('6,14')
     // Name, number, MM/YY and the code. (Read back as lengths: Hermes blanks out any secret the browser echoes.)
     expect(typed(socket, runtime)[1]).toBe('3,16,5,3')
     expect(socket.requests.find((r) => r.method === 'approval')?.params).toMatchObject({ pattern_keys: ['mcp_elicitation'] })
