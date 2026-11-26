@@ -25,11 +25,17 @@ export const isRunBrief = (text: string) => text.includes('You are running as a 
 // ── Silence ─────────────────────────────────────────────────────────────────
 // A port of Hermes's `gateway/response_filters.is_autonomous_silence_response`.
 
-const MARKERS = new Set(['[SILENT]', 'SILENT', 'NO_REPLY', 'NO REPLY', '[静默]', '静默', '[沉默]', '沉默'])
+// "[审核]" ("reviewed") isn't the word for silence: it's a label Hermes saw a
+// routine drift to as its whole answer, so Hermes holds it back too.
+const MARKERS = new Set(['[SILENT]', 'SILENT', 'NO_REPLY', 'NO REPLY', '[静默]', '静默', '[沉默]', '沉默', '[审核]', '审核'])
 const BRACKETED = [...MARKERS].filter((m) => m.startsWith('[')).sort()
 const MARKER_CAP = 64
 
-const canonical = (text: string) => text.trim().toUpperCase().split(/\s+/).join(' ')
+// Invisible characters a model can slip into a marker: zero-width spaces, BOMs, bidi marks.
+const visible = (text: string) => text.replace(/\p{Cf}/gu, '')
+// "[ SILENT ]" is "[SILENT]": only the space just inside the brackets goes.
+const unpadded = (text: string) => text.replace(/\[\s+/g, '[').replace(/\s+\]/g, ']')
+const canonical = (text: string) => unpadded(visible(text).trim().toUpperCase().split(/\s+/).join(' '))
 // Square brackets stay, so a malformed "[SILENT" can't become "SILENT".
 const edge = (ch: string) => ch !== '[' && ch !== ']' && /\p{P}/u.test(ch)
 
@@ -50,16 +56,70 @@ function isMarker(text: string | undefined) {
   return (bare === stripped ? [stripped] : [stripped, bare]).some((form) => MARKERS.has(canonical(form)))
 }
 
+/** The text inside code formatting that wraps all of it: "`[SILENT]`", or a fenced block. */
+function unwrapCode(text: string) {
+  let t = text.trim()
+  if (t.startsWith('```') && t.endsWith('```') && t.length >= 6) {
+    const inner = t.slice(3, -3)
+    // The fence's first line is its language, if any.
+    t = (inner.includes('\n') ? inner.slice(inner.indexOf('\n') + 1) : inner).trim()
+  }
+  while (t.length >= 2 && t.startsWith('`') && t.endsWith('`')) t = t.replace(/^`+|`+$/g, '').trim()
+  return t
+}
+
+/** What's inside a code span that opens the text on its line ("`[SILENT]` nothing new"), or the text as it is. */
+function openingCode(text: string) {
+  const fence = /^`+/.exec(text)?.[0]
+  if (!fence) return text
+  const close = text.indexOf(fence, fence.length)
+  const inside = close === -1 ? '' : text.slice(fence.length, close)
+  return close !== -1 && !inside.includes('\n') ? inside.trim() : text
+}
+
+/** One letter dropped, added, changed or swapped. */
+function withinOneEdit(x: string, y: string) {
+  const [a, b] = [[...x], [...y]]
+  if (Math.abs(a.length - b.length) > 1) return false
+  if (a.length === b.length) {
+    const diffs = a.flatMap((ch, i) => (ch === b[i] ? [] : [i]))
+    const [i, j] = diffs
+    return diffs.length <= 1 || (diffs.length === 2 && j === i + 1 && a[i] === b[j] && a[j] === b[i])
+  }
+  const [short, long] = a.length < b.length ? [a, b] : [b, a]
+  return long.some((_, i) => [...long.slice(0, i), ...long.slice(i + 1)].join('') === short.join(''))
+}
+
+const DAMAGED = /^\[\s*([^\s[\]]*)\s*(\]?)$/u
+
+/**
+ * The whole answer is a "[SILENT]" that came out damaged: misspelt by one
+ * letter ("[SLENT]"), or cut off ("[SIL", even a lone "["). One bracketed
+ * word and nothing else, so "[URGENT]" or "[SLENT] and more" is content.
+ */
+function isDamagedMarker(text: string) {
+  const form = stripEdges(unwrapCode(visible(text).normalize('NFKC').toLowerCase()))
+  const shape = [...form].length <= MARKER_CAP ? DAMAGED.exec(form) : null
+  if (!shape) return false
+  const [, letters, closed] = shape
+  return (!closed && 'silent'.startsWith(letters)) || withinOneEdit(letters, 'silent')
+}
+
 /**
  * Did the agent decide there was nothing to report? A marker as the whole
- * answer, or on its own first or last line, or "[SILENT]" opening it. One
- * buried mid-sentence is content.
+ * answer, or on its own first or last line, or "[SILENT]" opening it, even
+ * wrapped as code or damaged on the way. One buried mid-sentence is content.
  */
 export function isQuiet(answer: string) {
-  const text = answer.trim()
+  const text = visible(answer).trim()
   if (!text) return false
-  const lines = text.split(/\r?\n/).filter((line) => line.trim())
-  return BRACKETED.some((m) => text.toUpperCase().startsWith(m)) || [text, lines[0], lines.at(-1)].some(isMarker)
+  const lines = text.split(/\r\n|[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]/).filter((line) => line.trim())
+  const opening = canonical(openingCode(text))
+  return (
+    BRACKETED.some((m) => opening.startsWith(m)) ||
+    isDamagedMarker(text) ||
+    [text, lines[0], lines.at(-1)].some((line) => isMarker(line) || isMarker(unwrapCode(line ?? '')))
+  )
 }
 
 /**

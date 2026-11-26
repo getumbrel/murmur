@@ -284,13 +284,15 @@ describe('a quiet run', () => {
   })
 
   it('is told apart the way Hermes tells it apart', async () => {
-    // The cases Murmur's port is tested with (src/features/routines/runs.test.ts),
+    // The cases Murmur's port is tested with (shared/routines.test.ts),
     // asked of Hermes's own gateway/response_filters.is_autonomous_silence_response.
     const answers = [
       '[SILENT]', ' [silent] ', 'SILENT', 'NO_REPLY', 'no reply', '*NO_REPLY*', '.SILENT.', '[静默]', '沉默',
       'Nothing changed since this morning.\n[SILENT]', 'NO_REPLY\n\nInbox is empty.', '[SILENT] No new mail.',
       'The agent replied [SILENT] when there was nothing new.', 'Silent retry succeeded', '[SILENT', '',
       'Good morning! Octopuses have three hearts.',
+      '`[SILENT]`', '```\n[SILENT]\n```', '`[SILENT]` Nothing new.', '[ SILENT ]', '[\u200bSILENT]', '[SLENT]', '[SLIENT]',
+      '[SIL', '[', '[审核]', '[URGENT]', '[SILVER]', '[SLENT] and the rest of the news', '```\n[SILENT]\nmore\n```',
     ]
     const script = 'import json,sys\nfrom gateway.response_filters import is_autonomous_silence_response as quiet\nprint(json.dumps([quiet(a) for a in json.loads(sys.argv[1])]))'
     const { stdout } = await promisify(execFile)('docker', ['exec', '-w', '/opt/hermes', inject('hermes').container, 'python', '-c', script, JSON.stringify(answers)])

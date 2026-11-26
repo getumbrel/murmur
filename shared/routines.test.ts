@@ -44,10 +44,22 @@ describe('quiet runs, as Hermes reads them', () => {
     expect(isQuiet('[SILENT] No new mail.')).toBe(true)
   })
 
+  it('even wrapped as code, padded, or with invisible characters in it', () => {
+    for (const answer of ['`[SILENT]`', '```\n[SILENT]\n```', '`[SILENT]` Nothing new.', '[ SILENT ]', '[\u200bSILENT]'])
+      expect(isQuiet(answer), answer).toBe(true)
+  })
+
+  it('or damaged on the way: misspelt by a letter, or cut off', () => {
+    for (const answer of ['[SLENT]', '[SLIENT]', '[SILENT', '[SIL', '[', '[审核]']) expect(isQuiet(answer), answer).toBe(true)
+  })
+
   it('but not one mid-sentence, a near miss or nothing at all', () => {
     expect(isQuiet('The agent replied [SILENT] when there was nothing new.')).toBe(false)
     expect(isQuiet('Silent retry succeeded')).toBe(false)
-    expect(isQuiet('[SILENT')).toBe(false)
+    expect(isQuiet('[URGENT]')).toBe(false)
+    expect(isQuiet('[SILVER]')).toBe(false)
+    expect(isQuiet('[SLENT] and the rest of the news')).toBe(false)
+    expect(isQuiet('```\n[SILENT]\nmore\n```')).toBe(false)
     expect(isQuiet('')).toBe(false)
     expect(isQuiet('Good morning! Octopuses have three hearts.')).toBe(false)
   })
